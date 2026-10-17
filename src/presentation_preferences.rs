@@ -531,7 +531,11 @@ fn refresh(ui: &AppWindow, p: &Preferences) {
             } else {
                 vec![info(
                     "Audio disabled",
-                    "Playback and recording are disabled in this build.",
+                    if cfg!(target_os = "macos") {
+                        "Playback and recording are disabled in this build."
+                    } else {
+                        "This build was compiled without GStreamer audio support."
+                    },
                 )]
             },
         ),

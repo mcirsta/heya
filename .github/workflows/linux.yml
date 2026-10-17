@@ -1,0 +1,59 @@
+name: Linux
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUSTUP_TOOLCHAIN: 1.99.1
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Linux build and runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential clang libclang-dev cmake ninja-build pkg-config \
+            libfontconfig1-dev libfreetype6-dev libxkbcommon-dev libwayland-dev \
+            libx11-dev libx11-xcb-dev libxcursor-dev libxi-dev libxrandr-dev \
+            libxinerama-dev libgl1-mesa-dev libssl-dev dbus \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad gstreamer1.0-libav \
+            fonts-inter fonts-noto-color-emoji poppler-utils bubblewrap util-linux
+      - name: Install Rust
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: linux-rust-1.99.1-${{ hashFiles('Cargo.lock', '.github/workflows/linux.yml') }}-${{ github.sha }}
+          restore-keys: |
+            linux-rust-1.99.1-${{ hashFiles('Cargo.lock', '.github/workflows/linux.yml') }}-
+      - name: Check formatting
+        run: cargo fmt --check
+      - name: Lint default Linux build
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Test Linux with GStreamer
+        run: cargo test --locked
+      - name: Lint Linux without audio
+        run: cargo clippy --locked --all-targets --no-default-features -- -D warnings
+      - name: Test Linux without audio
+        run: cargo test --locked --no-default-features

@@ -32,6 +32,10 @@ uses Metal, AppKit file dialogs, Keychain and Quartz PDF previews. Playback and
 recording are disabled while native audio support is pending; GStreamer is only
 used on Linux.
 
+macOS adaptations are scoped to that platform. Linux keeps its existing media,
+desktop services, renderers and layout; CI builds and tests Linux with and
+without GStreamer support.
+
 ```sh
 cargo run --release --locked
 ```

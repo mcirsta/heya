@@ -39,7 +39,10 @@ This is an ad-hoc-signed development app, not a notarized distribution.
 
 GStreamer dependencies and their implementations are gated to Linux, including
 when the default feature is enabled on macOS. No Mac GStreamer installation is
-needed. Linux's existing desktop portal and media paths remain available.
+needed. Linux retains GStreamer audio, desktop portals, Secret Service,
+sandboxed Poppler PDF previews and Skia's Vulkan/OpenGL renderers. Apple-specific
+dependencies, service implementations, fonts and layout adjustments are scoped
+to macOS; shared application features continue to support both platforms.
 SQLCipher and the WhatsApp protocol implementation remain shared application
 dependencies. Apple's ordinary SQLite cannot replace SQLCipher without losing
 the encrypted archive; the vendored OpenSSL dependency supplies its encryption.
@@ -64,8 +67,8 @@ vendored Parley crate still emits its existing ICU deprecation warning.
 The Objective-C bridge also passes Clang with `-Wall -Wextra -Werror`. The
 compiled release PDF helper renders all three fixtures and rejects corrupt PDF
 input. The UI suite covers Command shortcuts using Slint's normalized key
-events, and a shared minimum message height keeps the menu target contained
-with compact platform fonts.
+events, and a macOS-only minimum message height keeps the menu target contained
+with compact Apple fonts. Linux retains its existing message sizing.
 
 ```sh
 cargo fmt --check
@@ -73,6 +76,11 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 cargo check --locked --no-default-features
 ```
+
+The Linux GitHub Actions workflow compiles, lints and runs the synthetic suite
+both with default GStreamer audio and with `--no-default-features`. It runs on
+Linux with the real Linux dependencies, including the PDF sandbox and media
+plugins. Mac checks alone cannot establish Linux build or runtime compatibility.
 
 The existing synthetic PDF fixtures cover portrait, landscape, rotated crop
 boxes, invalid input, thumbnail detail, and encrypted-cache presentation. Native

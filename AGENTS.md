@@ -15,6 +15,11 @@ proposed components or acceptance targets as implemented or measured behavior.
   and eventually AVFoundation/Core Audio). Do not add GStreamer, X11, D-Bus,
   Poppler or Linux command-line helpers to the macOS runtime. Audio playback
   and recording may remain disabled until a native implementation is ready.
+- Keep Apple-specific dependencies, services and UI adjustments scoped to macOS.
+  Preserve Linux's existing behavior, GStreamer audio, desktop portals, Secret
+  Service, sandboxed Poppler previews and Vulkan/OpenGL renderers. Changes to the
+  macOS port must continue to build and pass tests on Linux with and without the
+  default media feature.
 - ZapFast supplies the visual reference: layout, colors, spacing and appearance.
   It may also inform interaction and general design ideas. Write Heya's behavior,
   state, backend, storage and media logic independently;

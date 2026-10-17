@@ -33,11 +33,13 @@ fn command() -> Command {
             "--ro-bind",
             "/usr",
             "/usr",
-            "--symlink",
-            "usr/lib",
+            // Mirror the host's library layout: /lib64 is not /usr/lib on
+            // every distribution (Ubuntu keeps its loader in /usr/lib64).
+            "--ro-bind",
             "/lib",
-            "--symlink",
-            "usr/lib",
+            "/lib",
+            "--ro-bind-try",
+            "/lib64",
             "/lib64",
             "--ro-bind",
             "/etc/fonts",
