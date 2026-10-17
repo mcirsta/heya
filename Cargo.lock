@@ -2511,6 +2511,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "cc",
  "chrono",
  "diesel",
  "directories",
@@ -2535,8 +2536,8 @@ dependencies = [
  "slint-build",
  "tempfile",
  "tokio",
- "ureq",
  "unicode-segmentation",
+ "ureq",
  "url",
  "webbrowser",
  "whatsapp-rust",
@@ -2659,6 +2660,7 @@ dependencies = [
  "cfg_aliases",
  "i-slint-common",
  "i-slint-core",
+ "i-slint-renderer-skia",
  "i-slint-renderer-software",
  "vtable",
 ]

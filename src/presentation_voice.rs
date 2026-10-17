@@ -28,7 +28,7 @@ pub fn attach(
 }
 fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>) {
     let weak = ui.as_weak();
-    ui.set_voice_supported(cfg!(feature = "media-gstreamer"));
+    ui.set_voice_supported(cfg!(all(feature = "media-gstreamer", target_os = "linux")));
     ui.on_voice_control(move |action| {
         let Some(ui) = weak.upgrade() else { return };
         let command = match action {
@@ -116,7 +116,7 @@ pub(crate) fn check_ui() {
     ui.set_draft("".into());
     ui.show().unwrap();
     i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(1));
-    if cfg!(feature = "media-gstreamer") {
+    if cfg!(all(feature = "media-gstreamer", target_os = "linux")) {
         ElementHandle::find_by_accessible_label(&ui, "Record a voice message")
             .next()
             .unwrap()
@@ -182,7 +182,7 @@ pub(crate) fn check_ui() {
     assert!(ui.get_timeline_rows() == model);
     key(slint::platform::Key::Escape.into());
     assert!(!ui.get_microphone_dialog());
-    if cfg!(feature = "media-gstreamer") {
+    if cfg!(all(feature = "media-gstreamer", target_os = "linux")) {
         ElementHandle::find_by_accessible_label(&ui, "Record a voice message")
             .next()
             .unwrap()

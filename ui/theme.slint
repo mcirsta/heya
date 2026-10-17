@@ -38,6 +38,8 @@ export struct ThemeColors {
 }
 
 export global Theme {
+    in property <bool> macos: false;
+    out property <string> primary-modifier: macos ? "⌘" : "Ctrl+";
     in-out property <bool> dark: false;
     in property <bool> follow-system: false;
     public function sync-widgets() {

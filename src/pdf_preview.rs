@@ -1,6 +1,8 @@
-//! Render only the first-page strip in a short-lived, isolated Poppler process.
+//! Render page one's strip in a short-lived helper: Quartz on macOS, Poppler on Linux.
 //! PDF bytes and pixels travel over pipes, never through plaintext cache files.
-use crate::document_previews::{HEIGHT, MAX_BYTES, WIDTH};
+use crate::document_previews::MAX_BYTES;
+#[cfg(any(not(target_os = "macos"), test))]
+use crate::document_previews::{HEIGHT, WIDTH};
 use std::{process::Stdio, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -75,7 +77,24 @@ fn command() -> Command {
         ]);
         command
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    {
+        // The helper exits before creating UI, preferences or account services.
+        let mut command = Command::new(std::env::current_exe().unwrap_or_default());
+        #[cfg(not(test))]
+        command.arg("--heya-pdf-worker");
+        #[cfg(test)]
+        command
+            .args([
+                "--exact",
+                "pdf_preview::tests::native_pdf_child",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("HEYA_TEST_PDF_WORKER", "1");
+        command
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         Command::new("pdftoppm")
     }
@@ -87,7 +106,10 @@ pub async fn render(bytes: Vec<u8>) -> Result<Vec<u8>, Error> {
     if bytes.len() > MAX_PDF_BYTES || !bytes.starts_with(b"%PDF-") {
         return Err(Error::Invalid);
     }
-    let mut command = command();
+    let command = command();
+    #[cfg(not(target_os = "macos"))]
+    let mut command = command;
+    #[cfg(not(target_os = "macos"))]
     command.args([
         "-f",
         "1",
@@ -116,14 +138,22 @@ pub async fn render(bytes: Vec<u8>) -> Result<Vec<u8>, Error> {
 }
 
 async fn run(mut command: Command, bytes: Vec<u8>, timeout: Duration) -> Result<Vec<u8>, Error> {
-    let mut child = command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|_| Error::Unavailable)?;
+    command.stdin(Stdio::piped()).kill_on_drop(true);
+    #[cfg(all(target_os = "macos", test))]
+    command.stdout(Stdio::null()).stderr(Stdio::piped());
+    #[cfg(not(all(target_os = "macos", test)))]
+    command.stdout(Stdio::piped()).stderr(Stdio::null());
+    let mut child = command.spawn().map_err(|_| Error::Unavailable)?;
     let mut input = child.stdin.take().ok_or(Error::Failed)?;
+    // The libtest child writes PNG to stderr so its stdout banners cannot
+    // enter the image stream. Production helpers use stdout exclusively.
+    #[cfg(all(target_os = "macos", test))]
+    let mut output = child
+        .stderr
+        .take()
+        .ok_or(Error::Failed)?
+        .take((MAX_BYTES + 1) as u64);
+    #[cfg(not(all(target_os = "macos", test)))]
     let mut output = child
         .stdout
         .take()

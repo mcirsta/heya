@@ -51,7 +51,7 @@ impl Error {
                 "The destination changed during download. Choose it again to retry."
             }
             Self::Picker => {
-                "The native Save As dialog is unavailable. Check your desktop file chooser portal."
+                "The native file chooser is unavailable. Close other dialogs and try again."
             }
             Self::Cancelled => "Download cancelled.",
             Self::Archive => "The encrypted attachment could not be read.",

@@ -86,7 +86,12 @@ pub(crate) fn check_ui() {
                     let a = arrow.absolute_position();
                     let b = bubble.absolute_position();
                     assert!(a.x >= b.x && a.x + arrow.size().width <= b.x + bubble.size().width);
-                    assert!(a.y >= b.y && a.y + arrow.size().height <= b.y + bubble.size().height);
+                    assert!(
+                        a.y >= b.y && a.y + arrow.size().height <= b.y + bubble.size().height,
+                        "menu target outside bubble: {width}x{height}, chat {chat}, outgoing {outgoing}, arrow {a:?} {:?}, bubble {b:?} {:?}",
+                        arrow.size(),
+                        bubble.size()
+                    );
                     let geometry = (ui.get_timeline_height(), bubble.size());
                     let model = ui.get_timeline_rows();
                     click(&ui, center(&arrow));

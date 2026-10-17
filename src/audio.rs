@@ -14,13 +14,22 @@ pub enum Error {
     Download,
     Unavailable,
     TooLarge,
-    #[cfg_attr(not(feature = "media-gstreamer"), allow(dead_code))]
+    #[cfg_attr(
+        not(all(feature = "media-gstreamer", target_os = "linux")),
+        allow(dead_code)
+    )]
     TooLong,
     Archive,
-    #[cfg_attr(not(feature = "media-gstreamer"), allow(dead_code))]
+    #[cfg_attr(
+        not(all(feature = "media-gstreamer", target_os = "linux")),
+        allow(dead_code)
+    )]
     Codec,
     Playback,
-    #[cfg_attr(not(feature = "media-gstreamer"), allow(dead_code))]
+    #[cfg_attr(
+        not(all(feature = "media-gstreamer", target_os = "linux")),
+        allow(dead_code)
+    )]
     Seek,
 }
 impl Error {
@@ -80,7 +89,7 @@ async fn load(
     id: i32,
     demo: bool,
 ) -> Result<(Option<Request>, Arc<[u8]>), Error> {
-    if !cfg!(feature = "media-gstreamer") {
+    if !cfg!(all(feature = "media-gstreamer", target_os = "linux")) {
         return Err(Error::NotBuilt);
     }
     if demo {
@@ -328,6 +337,6 @@ async fn run_with_player(
     }
 }
 
-#[cfg(all(test, feature = "media-gstreamer"))]
+#[cfg(all(test, feature = "media-gstreamer", target_os = "linux"))]
 #[path = "audio_tests.rs"]
 mod tests;

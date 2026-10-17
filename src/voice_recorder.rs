@@ -1,11 +1,14 @@
 //! One microphone/encoder lifetime, created explicitly and torn down before completion.
 use std::sync::Arc;
-#[cfg(feature = "media-gstreamer")]
+#[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
 use std::time::Duration;
 use tokio::sync::watch;
 pub const MAX_SECONDS: u32 = 30 * 60;
 pub const MAX_BYTES: usize = crate::audio::MAX_BYTES;
-#[cfg_attr(not(feature = "media-gstreamer"), allow(dead_code))]
+#[cfg_attr(
+    not(all(feature = "media-gstreamer", target_os = "linux")),
+    allow(dead_code)
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
     Disabled,
@@ -80,16 +83,16 @@ impl Worker {
     }
 }
 
-#[cfg(feature = "media-gstreamer")]
+#[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
 struct Pipeline(gstreamer::Pipeline);
-#[cfg(feature = "media-gstreamer")]
+#[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
 impl Drop for Pipeline {
     fn drop(&mut self) {
         use gstreamer::prelude::*;
         let _ = self.0.set_state(gstreamer::State::Null);
     }
 }
-#[cfg(feature = "media-gstreamer")]
+#[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
 #[derive(Default)]
 struct Data {
     bytes: Vec<u8>,
@@ -97,7 +100,7 @@ struct Data {
     levels: Vec<u8>,
     error: Option<Error>,
 }
-#[cfg(feature = "media-gstreamer")]
+#[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
 pub(crate) fn capture(
     input: Input,
     settings: crate::audio_devices::Settings,
@@ -330,16 +333,16 @@ pub(crate) fn capture(
     }
 }
 
-#[cfg(not(feature = "media-gstreamer"))]
+#[cfg(not(all(feature = "media-gstreamer", target_os = "linux")))]
 pub(crate) fn probe_input() -> Result<(), Error> {
     Err(Error::Disabled)
 }
-#[cfg(feature = "media-gstreamer")]
+#[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
 pub(crate) fn probe_input() -> Result<(), Error> {
     crate::audio_devices::element(true, "").map(|_| ())
 }
 
-#[cfg(all(test, feature = "media-gstreamer"))]
+#[cfg(all(test, feature = "media-gstreamer", target_os = "linux"))]
 mod input_tests {
     use super::*;
     #[test]
@@ -369,7 +372,7 @@ mod input_tests {
         ));
     }
 }
-#[cfg(not(feature = "media-gstreamer"))]
+#[cfg(not(all(feature = "media-gstreamer", target_os = "linux")))]
 pub(crate) fn capture(
     _: Input,
     _: crate::audio_devices::Settings,
@@ -378,7 +381,7 @@ pub(crate) fn capture(
 ) -> Result<Clip, Error> {
     Err(Error::Disabled)
 }
-#[cfg(feature = "media-gstreamer")]
+#[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
 fn compact(levels: &[u8]) -> Vec<u8> {
     if levels.is_empty() {
         return vec![0; 64];

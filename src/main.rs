@@ -15,6 +15,8 @@ mod downloads_picker;
 mod fixtures;
 mod live_presentation;
 mod local_worker;
+#[cfg(target_os = "macos")]
+mod macos;
 mod media_process;
 mod message_actions;
 mod message_content;
@@ -155,6 +157,10 @@ fn options_from(args: impl IntoIterator<Item = String>) -> Result<Option<Options
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(target_os = "macos")]
+    if std::env::args().nth(1).as_deref() == Some("--heya-pdf-worker") {
+        macos::pdf_worker();
+    }
     // A short-lived media helper must never initialize the UI or account services.
     if std::env::args().nth(1).as_deref() == Some("--heya-media-worker") {
         media_process::child_main(&std::env::args().nth(2).unwrap_or_default());
@@ -181,6 +187,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ui = AppWindow::new()?;
     // Set this after backend initialization, before creating the native window.
     // Match the desktop entry so Wayland/X11 taskbars resolve Heya's icon.
+    #[cfg(target_os = "linux")]
     slint::set_xdg_app_id("org.heya.Heya")?;
     presentation_scroll::bind(&ui);
     let _wheel_trace = (options.demo && std::env::var_os("HEYA_TEST_WHEEL_TRACE").is_some())

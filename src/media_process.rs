@@ -33,7 +33,7 @@ pub struct Worker {
 }
 impl Worker {
     pub fn start(mode: Mode, progress: watch::Sender<Progress>) -> Result<Self, Error> {
-        if !cfg!(feature = "media-gstreamer") {
+        if !cfg!(all(feature = "media-gstreamer", target_os = "linux")) {
             return Err(Error::Disabled);
         }
         let (control, commands) = watch::channel(Desired::Record);
@@ -474,7 +474,7 @@ mod tests {
             child_main(&mode);
         }
     }
-    #[cfg(feature = "media-gstreamer")]
+    #[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
     #[tokio::test]
     async fn missing_microphone_returns_error_after_helper_exit_without_recording() {
         for _ in 0..2 {
@@ -515,7 +515,7 @@ mod tests {
             Err(Error::Device)
         ));
     }
-    #[cfg(feature = "media-gstreamer")]
+    #[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
     #[tokio::test]
     async fn cancel_and_parent_eof_stop_and_reap_synthetic_helpers() {
         let (tx, mut status) = watch::channel(Progress::default());

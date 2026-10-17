@@ -104,7 +104,8 @@ export component MessageBubble inherits Rectangle {
         x: root.message.outgoing ? parent.width - self.width - Metrics.gutter : Metrics.gutter + root.avatar-space;
         y: 0px;
         width: root.message.has-document ? min(root.max-bubble,352px) : root.message.has-audio ? min(root.max-bubble,340px) : root.message.has-photo ? min(root.max-bubble,max(root.photo-width + 12px,root.footer-width + 20px)) : min(root.max-bubble, max(root.has-preview || root.has-actions || root.quote-height > 0px ? 320px : 0px, max(root.footer-width, max(root.show-sender ? sender.preferred-width : 0px, natural.preferred-width + (root.inline-time ? root.footer-width + 8px : 0px))) + 20px));
-        height: (root.message.has-audio ? 48px : root.photo-only || root.document-only ? 0px : body.preferred-height) + root.sender-height + root.metadata-height + root.preview-height + root.photo-space + root.document-space + 11px + (root.inline-time || root.photo-only ? 0px : stamp.height + 4px) + actions.height;
+        // Compact platform fonts must still contain the 26px menu target with 2px margins.
+        height: max(30px, (root.message.has-audio ? 48px : root.photo-only || root.document-only ? 0px : body.preferred-height) + root.sender-height + root.metadata-height + root.preview-height + root.photo-space + root.document-space + 11px + (root.inline-time || root.photo-only ? 0px : stamp.height + 4px) + actions.height);
         background: root.fill;
         border-radius: 10px;
         border-top-left-radius: root.message.first-in-run && !root.message.outgoing ? 0px : 10px;

@@ -208,6 +208,8 @@ pub(crate) fn check_ui() {
         position,
         button: PointerEventButton::Left,
     });
+    // Slint's macOS backend normalizes Command to logical Control before
+    // widget dispatch. The testing backend injects these normalized events.
     ui.window().dispatch_event(WindowEvent::KeyPressed {
         text: Key::Control.into(),
     });

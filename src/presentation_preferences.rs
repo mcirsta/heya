@@ -206,7 +206,7 @@ pub fn attach(
         if let Some(ui) = weak.upgrade()
             && !ui.get_audio_devices_loaded()
             && !ui.get_settings_io_busy()
-            && cfg!(feature = "media-gstreamer")
+            && cfg!(all(feature = "media-gstreamer", target_os = "linux"))
             && operations
                 .try_send(crate::presentation_settings_io::Command::Devices {
                     demo: ui.get_demo_mode(),
@@ -227,6 +227,7 @@ pub fn attach(
 
 fn apply(ui: &AppWindow, preferences: &Preferences) {
     let theme = ui.global::<Theme>();
+    theme.set_macos(cfg!(target_os = "macos"));
     theme.set_emoji_font(
         if cfg!(target_os = "windows") {
             "Segoe UI Emoji"
@@ -466,7 +467,11 @@ fn refresh(ui: &AppWindow, p: &Preferences) {
                 toggle(
                     "enter_sends",
                     "Enter sends",
-                    "When off, Ctrl+Enter sends. Shift+Enter always adds a line.",
+                    if cfg!(target_os = "macos") {
+                        "When off, ⌘Enter sends. Shift+Enter always adds a line."
+                    } else {
+                        "When off, Ctrl+Enter sends. Shift+Enter always adds a line."
+                    },
                     p.enter_sends,
                 ),
                 toggle(
@@ -491,7 +496,7 @@ fn refresh(ui: &AppWindow, p: &Preferences) {
         ),
         (
             "Audio",
-            if cfg!(feature = "media-gstreamer") {
+            if cfg!(all(feature = "media-gstreamer", target_os = "linux")) {
                 vec![
                     audio_choice(ui, "audio_input", "Microphone", p, true),
                     SettingRow {
@@ -526,7 +531,7 @@ fn refresh(ui: &AppWindow, p: &Preferences) {
             } else {
                 vec![info(
                     "Audio disabled",
-                    "This build was compiled without GStreamer audio support.",
+                    "Playback and recording are disabled in this build.",
                 )]
             },
         ),
@@ -691,7 +696,11 @@ fn refresh(ui: &AppWindow, p: &Preferences) {
                 ),
                 info(
                     "Keyboard shortcuts",
-                    "Ctrl+, — settings · Ctrl+B — chat list · Ctrl+N — new chat · Esc — back. Ctrl+Enter always sends; Shift+Enter adds a line.",
+                    if cfg!(target_os = "macos") {
+                        "⌘, — settings · ⌘B — chat list · ⌘N — new chat · Esc — back. ⌘Enter always sends; Shift+Enter adds a line."
+                    } else {
+                        "Ctrl+, — settings · Ctrl+B — chat list · Ctrl+N — new chat · Esc — back. Ctrl+Enter always sends; Shift+Enter adds a line."
+                    },
                 ),
             ],
         ),
@@ -793,9 +802,16 @@ pub(crate) fn check_ui(runtime: &tokio::runtime::Runtime) {
     assert_eq!(current.borrow().download_directory, download);
     ui.show().unwrap();
     ui.window().set_size(slint::LogicalSize::new(1200., 800.));
-    let settings = ElementHandle::find_by_accessible_label(&ui, "Settings (Ctrl+,)")
-        .next()
-        .unwrap();
+    let settings = ElementHandle::find_by_accessible_label(
+        &ui,
+        if cfg!(target_os = "macos") {
+            "Settings (⌘,)"
+        } else {
+            "Settings (Ctrl+,)"
+        },
+    )
+    .next()
+    .unwrap();
     settings.invoke_accessible_default_action();
     assert!(ui.get_settings_open());
     for index in 0..THEMES.len() {
@@ -890,10 +906,17 @@ pub(crate) fn check_ui(runtime: &tokio::runtime::Runtime) {
     assert!((header.size().height - 60.).abs() < 0.5);
     assert!((actions.size().width - 106.).abs() < 0.5);
     assert!((element(&ui, "AppWindow::chat-list").absolute_position().y - 148.).abs() < 0.5);
-    ElementHandle::find_by_accessible_label(&ui, "Collapse the chat list (Ctrl+B)")
-        .next()
-        .unwrap()
-        .invoke_accessible_default_action();
+    ElementHandle::find_by_accessible_label(
+        &ui,
+        if cfg!(target_os = "macos") {
+            "Collapse the chat list (⌘B)"
+        } else {
+            "Collapse the chat list (Ctrl+B)"
+        },
+    )
+    .next()
+    .unwrap()
+    .invoke_accessible_default_action();
     assert!(ui.get_sidebar_hidden());
     assert!(
         (element(&ui, "AppWindow::conversation")
@@ -960,10 +983,17 @@ pub(crate) fn check_ui(runtime: &tokio::runtime::Runtime) {
     );
     ui.set_settings_open(false);
     ui.set_chats(model(vec![]));
-    ElementHandle::find_by_accessible_label(&ui, "Show the chat list (Ctrl+B)")
-        .next()
-        .unwrap()
-        .invoke_accessible_default_action();
+    ElementHandle::find_by_accessible_label(
+        &ui,
+        if cfg!(target_os = "macos") {
+            "Show the chat list (⌘B)"
+        } else {
+            "Show the chat list (Ctrl+B)"
+        },
+    )
+    .next()
+    .unwrap()
+    .invoke_accessible_default_action();
     assert!(!ui.get_sidebar_hidden());
     ui.set_new_chat_open(true);
     let dialog = element(&ui, "NewChatDialog::dialog");

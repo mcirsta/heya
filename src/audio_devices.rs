@@ -44,7 +44,7 @@ pub struct Device {
     pub input: bool,
 }
 
-#[cfg(feature = "media-gstreamer")]
+#[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
 fn devices(input: bool) -> Result<Vec<gstreamer::Device>, Error> {
     use gstreamer::{self as gst, prelude::*};
     gst::init().map_err(|_| Error::Codec)?;
@@ -60,7 +60,7 @@ fn devices(input: bool) -> Result<Vec<gstreamer::Device>, Error> {
         .take(64)
         .collect())
 }
-#[cfg(feature = "media-gstreamer")]
+#[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
 fn info(device: &gstreamer::Device, input: bool) -> Device {
     use gstreamer::prelude::*;
     use sha2::{Digest, Sha256};
@@ -86,7 +86,7 @@ fn info(device: &gstreamer::Device, input: bool) -> Device {
     );
     Device { id, name, input }
 }
-#[cfg(feature = "media-gstreamer")]
+#[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
 pub fn snapshot() -> Result<Vec<Device>, Error> {
     let mut result = Vec::new();
     for input in [true, false] {
@@ -94,12 +94,12 @@ pub fn snapshot() -> Result<Vec<Device>, Error> {
     }
     Ok(result)
 }
-#[cfg(not(feature = "media-gstreamer"))]
+#[cfg(not(all(feature = "media-gstreamer", target_os = "linux")))]
 pub fn snapshot() -> Result<Vec<Device>, Error> {
     Err(Error::Disabled)
 }
 
-#[cfg(feature = "media-gstreamer")]
+#[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
 pub fn element(input: bool, id: &str) -> Result<gstreamer::Element, Error> {
     use gstreamer::prelude::*;
     let mut devices = devices(input)?;
@@ -116,7 +116,7 @@ pub fn element(input: bool, id: &str) -> Result<gstreamer::Element, Error> {
         .create_element(None)
         .map_err(|_| error)
 }
-#[cfg(feature = "media-gstreamer")]
+#[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
 fn select_device(
     devices: Vec<gstreamer::Device>,
     input: bool,
@@ -131,7 +131,7 @@ fn select_device(
             Error::Playback
         })
 }
-#[cfg(feature = "media-gstreamer")]
+#[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
 pub(crate) fn usable_input(p: &gstreamer::StructureRef) -> bool {
     !["device.class", "media.class"].iter().any(|key| {
         p.get::<String>(*key)
@@ -141,7 +141,7 @@ pub(crate) fn usable_input(p: &gstreamer::StructureRef) -> bool {
         .any(|key| p.get::<String>(*key).is_ok_and(|v| v.ends_with(".monitor")))
 }
 
-#[cfg(all(test, feature = "media-gstreamer"))]
+#[cfg(all(test, feature = "media-gstreamer", target_os = "linux"))]
 pub fn select_empty_input_for_test() -> Result<(), Error> {
     // Selection is checked before creating any source or pipeline.
     select_device(Vec::new(), true, "").map(|_| ())

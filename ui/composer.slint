@@ -176,7 +176,7 @@ export component Composer inherits Rectangle {
                 hint-label := Text {
                     horizontal-stretch: 1;
                     height: 25px;
-                    text: root.enter-sends ? @tr("Enter sends · Shift+Enter for a new line") : @tr("Ctrl+Enter sends · Enter for a new line");
+                    text: root.enter-sends ? @tr("Enter sends · Shift+Enter for a new line") : Theme.primary-modifier + @tr("Enter sends · Enter for a new line");
                     color: Theme.dim;
                     font-size: 11px;
                     vertical-alignment: center;

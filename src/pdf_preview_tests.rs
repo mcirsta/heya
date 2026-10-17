@@ -1,5 +1,14 @@
 use super::*;
 
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "subprocess fixture, invoked only by synthetic PDF tests"]
+fn native_pdf_child() {
+    if std::env::var_os("HEYA_TEST_PDF_WORKER").is_some() {
+        crate::macos::pdf_worker();
+    }
+}
+
 #[tokio::test]
 async fn actual_pdf_renders_first_page_at_card_resolution_without_plaintext_files() {
     for (name, pdf) in [
@@ -19,7 +28,7 @@ async fn actual_pdf_renders_first_page_at_card_resolution_without_plaintext_file
         let started = std::time::Instant::now();
         let png = render(pdf.to_vec())
             .await
-            .expect("Poppler/bubblewrap must be installed for PDF integration tests");
+            .expect("the platform PDF renderer must be available");
         let pixels = crate::document_previews::decode(&png).unwrap();
         assert_eq!((pixels.width, pixels.height), (WIDTH, HEIGHT), "{name}");
         assert!(crate::document_previews::sharp_enough(&png));

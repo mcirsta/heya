@@ -10,7 +10,11 @@ proposed components or acceptance targets as implemented or measured behavior.
 ## Technical direction
 
 - Rust application, Slint UI, oxidezap/whatsapp-rust protocol implementation.
-- Linux first, followed by Windows and macOS.
+- Linux and macOS are active targets. On macOS, prefer native Apple frameworks
+  for platform services (AppKit panels/clipboard, Keychain, Metal, Quartz PDF,
+  and eventually AVFoundation/Core Audio). Do not add GStreamer, X11, D-Bus,
+  Poppler or Linux command-line helpers to the macOS runtime. Audio playback
+  and recording may remain disabled until a native implementation is ready.
 - ZapFast supplies the visual reference: layout, colors, spacing and appearance.
   It may also inform interaction and general design ideas. Write Heya's behavior,
   state, backend, storage and media logic independently;

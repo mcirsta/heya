@@ -258,6 +258,11 @@ is required for this preview. Publication metadata can be settled at release tim
 
 ## M5 Expand feature and platform coverage
 
+The initial macOS build and native service adapters are now described in
+[macOS development](macos.md). A successful build and synthetic tests do not
+close the desktop and live-account acceptance gates below. Native macOS audio
+and video remain disabled pending AVFoundation/Core Audio work.
+
 Add Windows and macOS builds, native clipboard/menu/notification/keyring
 behavior and installers. Then prioritize polls/stickers/GIFs,
 advanced organization and additional accounts. Calls and other advanced service

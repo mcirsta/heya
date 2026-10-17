@@ -13,9 +13,7 @@ media-gstreamer = ["dep:gstreamer", "dep:gstreamer-app"]
 [dependencies]
 emojis = "0.9"
 unicode-segmentation = "=1.13.3"
-# Prefer Skia/Vulkan; retain OpenGL for Slint's startup fallback.
-# FemtoVG can be enabled with --features slint/renderer-femtovg for comparisons.
-slint = { version = "=1.18.1", default-features = false, features = ["std", "backend-winit", "renderer-skia-vulkan", "renderer-skia-opengl", "renderer-software", "accessibility", "compat-1-18", "unstable-winit-030"] }
+slint = { version = "=1.18.1", default-features = false, features = ["std", "backend-winit", "renderer-software", "accessibility", "compat-1-18", "unstable-winit-030"] }
 # Isolated in presentation_scroll: retain the wheel gesture phase, which the
 # public PointerScrolled event cannot carry in this exact Slint release.
 i-slint-core = { version = "=1.18.1", default-features = false }
@@ -41,15 +39,24 @@ tempfile = "3"
 sha2 = "0.10"
 futures-util = "0.3"
 libc = "0.2"
-gstreamer = { version = "0.25", optional = true }
-gstreamer-app = { version = "0.25", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "3.6", features = ["sync-secret-service", "crypto-rust"] }
 zbus = "=5.19.0"
+gstreamer = { version = "0.25", optional = true }
+gstreamer-app = { version = "0.25", optional = true }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+# Preserve the existing Linux renderer selection.
+slint = { version = "=1.18.1", default-features = false, features = ["renderer-skia-vulkan", "renderer-skia-opengl"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3.6", features = ["apple-native"] }
+# Skia's platform renderer uses Metal on macOS.
+slint = { version = "=1.18.1", default-features = false, features = ["renderer-skia"] }
+
+[target.'cfg(target_os = "macos")'.build-dependencies]
+cc = "1.8"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { version = "3.6", features = ["windows-native"] }

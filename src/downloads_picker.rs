@@ -1,4 +1,4 @@
-//! Native Linux SaveFile portal. No blocking dialog thread or shell command.
+//! Native file choosers: Linux desktop portal and macOS AppKit sheets.
 use crate::downloads::{Control, Error, Picker};
 use std::path::PathBuf;
 pub struct NativePicker(pub tokio::sync::watch::Receiver<crate::preferences::Preferences>);
@@ -23,7 +23,21 @@ impl Picker for NativePicker {
                 .map_err(|_| Error::Destination)?;
             portal(name, parent, Some(&folder), control).await
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "macos")]
+        {
+            let _ = parent;
+            let folder = self.0.borrow().download_directory.clone();
+            let create = folder.clone();
+            crate::local_worker::run(move || std::fs::create_dir_all(create))
+                .await
+                .map_err(|_| Error::Storage)?
+                .map_err(|_| Error::Destination)?;
+            Ok(crate::macos::choose(0, name, Some(&folder), control)
+                .await?
+                .into_iter()
+                .next())
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
             let _ = (name, parent);
             Err(Error::Picker)
@@ -97,7 +111,12 @@ pub async fn open(images: bool, parent: &str, control: &Control) -> Result<Vec<P
         let _ = connection.close().await;
         result
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    {
+        let _ = parent;
+        crate::macos::choose(if images { 2 } else { 1 }, "", None, control).await
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let _ = (images, parent, control);
         Err(Error::Picker)
@@ -140,7 +159,15 @@ pub async fn folder(
         }
         Ok(path)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    {
+        let _ = parent;
+        Ok(crate::macos::choose(3, "", Some(current), control)
+            .await?
+            .into_iter()
+            .next())
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let _ = (parent, current, control);
         Err(Error::Picker)

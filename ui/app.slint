@@ -440,7 +440,7 @@ export component AppWindow inherits Window {
                                 spacing: 8px;
                                 if !root.narrow: IconButton {
                                     icon: @image-url("icons/panel-left.svg");
-                                    label: @tr("Collapse the chat list (Ctrl+B)");
+                                    label: @tr("Collapse the chat list") + " (" + Theme.primary-modifier + "B)";
                                     activated => { root.sidebar-hidden = true; }
                                 }
                                 IconButton {
@@ -452,7 +452,7 @@ export component AppWindow inherits Window {
                                 IconButton {
                                     icon: @image-url("icons/settings.svg");
                                     active: root.settings-open;
-                                    label: @tr("Settings (Ctrl+,)");
+                                    label: @tr("Settings") + " (" + Theme.primary-modifier + ",)";
                                     activated => { root.toggle-settings(); }
                                 }
                             }
@@ -706,7 +706,7 @@ export component AppWindow inherits Window {
                         x: 15px;
                         y: 15px;
                         icon: @image-url("icons/panel-left.svg");
-                        label: @tr("Show the chat list (Ctrl+B)");
+                        label: @tr("Show the chat list") + " (" + Theme.primary-modifier + "B)";
                         activated => { root.sidebar-hidden = false; }
                     }
 
@@ -976,7 +976,7 @@ export component AppWindow inherits Window {
                                 x: 14px;
                                 y: 15px;
                                 icon: @image-url("icons/panel-left.svg");
-                                label: @tr("Show the chat list (Ctrl+B)");
+                                label: @tr("Show the chat list") + " (" + Theme.primary-modifier + "B)";
                                 activated => { root.sidebar-hidden = false; root.show-conversation = false; }
                             }
                             Rectangle {
@@ -1024,7 +1024,7 @@ export component AppWindow inherits Window {
                                 y: parent.height / 2 + 16px;
                                 width: parent.width;
                                 height: 20px;
-                                text: @tr("Ctrl+, for settings · Ctrl+N for a new chat");
+                                text: Theme.primary-modifier + @tr(", for settings · ") + Theme.primary-modifier + @tr("N for a new chat");
                                 color: Theme.dim;
                                 font-size: 12.5px;
                                 horizontal-alignment: center;

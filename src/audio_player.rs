@@ -1,12 +1,12 @@
 //! One GStreamer pipeline on a thread created for playback, never by a chat row.
 //! Compressed data is fed from bounded memory; no plaintext temporary files.
 use crate::audio::{Error, Status};
-#[cfg(feature = "media-gstreamer")]
+#[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
 use gstreamer::{self as gst, prelude::*};
-#[cfg(feature = "media-gstreamer")]
+#[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
 use gstreamer_app::{AppSrc, AppSrcCallbacks, AppStreamType};
 use std::sync::Arc;
-#[cfg(feature = "media-gstreamer")]
+#[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
 use std::{
     sync::Mutex,
     time::{Duration, Instant},
@@ -15,7 +15,10 @@ use tokio::sync::{oneshot, watch};
 
 #[derive(Clone)]
 pub enum Output {
-    #[cfg_attr(not(feature = "media-gstreamer"), allow(dead_code))]
+    #[cfg_attr(
+        not(all(feature = "media-gstreamer", target_os = "linux")),
+        allow(dead_code)
+    )]
     Desktop(crate::audio_devices::Settings),
     Silent,
 }
@@ -106,7 +109,10 @@ impl Worker {
     }
 }
 
-#[cfg_attr(not(feature = "media-gstreamer"), allow(dead_code))]
+#[cfg_attr(
+    not(all(feature = "media-gstreamer", target_os = "linux")),
+    allow(dead_code)
+)]
 #[derive(Clone, Default)]
 pub struct Desired {
     pub generation: u64,
@@ -126,16 +132,16 @@ impl Desired {
     }
 }
 
-#[cfg(feature = "media-gstreamer")]
+#[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
 struct Pipeline(gst::Pipeline);
-#[cfg(feature = "media-gstreamer")]
+#[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
 impl Drop for Pipeline {
     fn drop(&mut self) {
         let _ = self.0.set_state(gst::State::Null);
     }
 }
 
-#[cfg(feature = "media-gstreamer")]
+#[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
 impl Pipeline {
     fn new(bytes: Arc<[u8]>, output: Output) -> Result<Self, Error> {
         gst::init().map_err(|_| Error::Playback)?;
@@ -257,7 +263,7 @@ impl Pipeline {
 /// Commands coalesce instead of accumulating while a decoder starts or seeks.
 /// Stop, completion and failure end the thread. Paused players wait for controls
 /// without polling; progress/preroll updates are at most 10 Hz.
-#[cfg(feature = "media-gstreamer")]
+#[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
 fn run(
     mut desired: watch::Receiver<Desired>,
     updates: watch::Sender<Status>,
@@ -400,7 +406,7 @@ fn run(
 }
 
 /// An explicit unavailable result for UI/domain-only builds, never fake playback.
-#[cfg(not(feature = "media-gstreamer"))]
+#[cfg(not(all(feature = "media-gstreamer", target_os = "linux")))]
 fn run(
     desired: watch::Receiver<Desired>,
     updates: watch::Sender<Status>,

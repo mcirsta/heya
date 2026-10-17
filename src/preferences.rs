@@ -38,7 +38,12 @@ impl Default for Preferences {
         Self {
             version: 1,
             theme: "Light".into(),
-            font: "Inter".into(),
+            font: if cfg!(target_os = "macos") {
+                "System"
+            } else {
+                "Inter"
+            }
+            .into(),
             enter_sends: true,
             show_shortcut_hint: true,
             show_wallpaper: true,

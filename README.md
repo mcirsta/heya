@@ -11,7 +11,8 @@ independently, with particular attention to video and desktop clipboard handling
 Use whatsapp-rust unchanged through its public API wherever possible.
 
 **Status: first live text-messaging and encrypted-archive implementation.**
-Linux is the first target, followed by Windows and macOS. Heya implements QR
+Linux is the reference implementation, and the native macOS port is now active.
+Windows remains a roadmap target. Heya implements QR
 pairing, encrypted session resume, incoming direct/group text, history import,
 saved drafts, paged conversations, outgoing file/photo attachments, voice recording/sending and a durable outbox. Automated tests
 are offline. The owner has reached the connected chat list, and reopening the
@@ -26,11 +27,16 @@ remaining differences. Earlier prototype screenshots are not the current UI.
 
 ## Run Heya
 
+On macOS, see [the native macOS build guide](docs/macos.md). The macOS build
+uses Metal, AppKit file dialogs, Keychain and Quartz PDF previews. Playback and
+recording are disabled while native audio support is pending; GStreamer is only
+used on Linux.
+
 ```sh
 cargo run --release --locked
 ```
 
-The default `media-gstreamer` feature links the installed GStreamer runtime and
+On Linux, the default `media-gstreamer` feature links the installed GStreamer runtime and
 app library. `--no-default-features` builds the UI/domain without playback or recording.
 Use the optimized build for everyday desktop testing. `cargo run --locked`
 is the slower development build.

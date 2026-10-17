@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inspect Heya's proposed Linux build prerequisites without changing the host."""
+"""Inspect Heya's platform build prerequisites without changing the host."""
 
 import argparse
 import json
@@ -38,9 +38,12 @@ def main():
     parser.add_argument("--media", action="store_true", help="require Linux media spike prerequisites")
     parser.add_argument("--json", action="store_true", help="print a JSON report")
     args = parser.parse_args()
+    # Apple's Command Line Tools provide Python 3.9, sufficient for this check.
+    python_minimum = (3, 9) if platform.system() == "Darwin" else (3, 11)
+    python_requirement = ".".join(map(str, python_minimum))
     checks = [
-        {"check": "Python", "status": "OK" if sys.version_info >= (3, 11) else "FAIL",
-         "detail": platform.python_version() + " (requires 3.11+)"},
+        {"check": "Python", "status": "OK" if sys.version_info >= python_minimum else "FAIL",
+         "detail": platform.python_version() + f" (requires {python_requirement}+)"},
         inspect_command("Rust candidate", ["rustc", "--version"], minimum=(1, 99, 0)),
         inspect_command("Cargo", ["cargo", "--version"]),
         inspect_command("rustfmt", ["cargo", "fmt", "--version"]),
@@ -68,6 +71,17 @@ def main():
                        "qtdemux", "avdec_h264", "avdec_aac", "opusdec"):
             checks.append(inspect_command("GStreamer " + plugin,
                                           ["gst-inspect-1.0", plugin], required=args.media))
+    elif platform.system() == "Darwin":
+        checks.extend([
+            inspect_command("Apple developer tools", ["xcode-select", "-p"]),
+            inspect_command("macOS SDK", ["xcrun", "--sdk", "macosx", "--show-sdk-path"]),
+            inspect_command("Apple C/Objective-C compiler", ["clang", "--version"]),
+            inspect_command("Perl for SQLCipher's vendored OpenSSL", ["perl", "-e", "print $^V"]),
+            inspect_command("Make for SQLCipher's vendored OpenSSL", ["make", "--version"]),
+        ])
+        if args.media:
+            checks.append({"check": "macOS audio/video", "status": "FAIL",
+                           "detail": "Native playback/recording is not implemented; GStreamer is Linux-only"})
     else:
         checks.append({"check": "Platform", "status": "FAIL" if args.media else "WARN",
                        "detail": "Native checks currently cover Linux; Windows/macOS are roadmap work"})

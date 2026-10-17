@@ -74,7 +74,7 @@ fn metadata_is_bounded_and_view_once_stays_unopened() {
     assert!(crate::protocol_content::extract(&msg).1.audio.is_none());
 }
 
-#[cfg(feature = "media-gstreamer")]
+#[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
 #[tokio::test]
 async fn encrypted_cache_guards_mutations_limits_and_offline_loading() {
     let (_temp, db) = fixture();
@@ -109,7 +109,7 @@ async fn encrypted_cache_guards_mutations_limits_and_offline_loading() {
 
 // Exercise the real installed Ogg/Opus encoder and decoder, without any desktop
 // audio device. No real account media or encoded fixture files are involved.
-#[cfg(feature = "media-gstreamer")]
+#[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
 fn opus() -> Vec<u8> {
     use gstreamer::{self as gst, prelude::*};
     gst::init().unwrap();
@@ -129,7 +129,7 @@ fn opus() -> Vec<u8> {
     bytes
 }
 
-#[cfg(feature = "media-gstreamer")]
+#[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
 #[tokio::test(flavor = "multi_thread")]
 async fn gstreamer_opus_pause_seek_speed_eos_replace_and_bad_media() {
     let bytes = tokio::task::spawn_blocking(opus).await.unwrap();
@@ -207,7 +207,7 @@ impl Source for Delayed {
         std::future::pending().await
     }
 }
-#[cfg(feature = "media-gstreamer")]
+#[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
 #[tokio::test(flavor = "multi_thread")]
 async fn cancelled_download_never_starts_playback_or_survives_shutdown() {
     let (_temp, db) = fixture();
