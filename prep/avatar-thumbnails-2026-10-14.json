@@ -1,0 +1,238 @@
+{
+  "date": "2026-10-14",
+  "workload": "500 synthetic chats, 0/66 thumbnails, 100 then 10000 loaded messages, 27 seconds per run",
+  "build": "cargo build --locked --offline --release --features slint/unstable-wgpu-30",
+  "renderer": "Slint 1.18.1 Skia wgpu, hardware Vulkan RADV, AMD RX 550 PCI 0000:04:00.0",
+  "desktop": "KDE Wayland; no renderer override; no concurrent compilation",
+  "binary_sha256": "e033644536edcd864cbe60fd0ef18fb35e3b47b669f5f4a92a2cfb4a7f4bee0b",
+  "source_sha256": {
+    "Cargo.toml": "89bc0bdf4003671d74096fb0e93a26e2c5ac7929bc08460039fe0e057ee321df",
+    "Cargo.lock": "57e4776970d31625f1f60fdd1faafa38d24dc77f5488b17b3811eb744fb7f201",
+    "src/avatars.rs": "2365b853f9285120e17e9c9b42ca2f0ef1bf3bb1b62d7651d6a250b5b33d8ef5",
+    "src/archive_avatars.rs": "ff6e3023ae49a5f035c36d3c18400242905bd2a5f4d1b9df4747ce43e3952c62",
+    "src/protocol_avatars.rs": "fd54a3eb3939a2ab80204426481861900bf59466cdede381d36bfff44a9c9e8b",
+    "src/presentation_avatars.rs": "809078b2ab37a6e551469f25000dd3e2b67e229e7735c74fcf8bc30b903cab12",
+    "src/presentation_chat_list.rs": "2640baa3c4720419995fcdcf9391abacd1b5628219dea59c3292c50457b77d82",
+    "src/presentation_benchmark.rs": "0559459fc5afc67ad05a9630586390a823ba2fd131c3463d54ecf924b60c8e83",
+    "ui/components.slint": "5d3e796534b5a2f7276293643898f6ee77fe65d6e12e727f9f84a8a606075a73",
+    "ui/app.slint": "0f4bae567194bb3aefba2f5ec299d77aceab4f476356087382b310973a56ce60"
+  },
+  "runs": [
+    {
+      "pictures": "off",
+      "phases": [
+        {
+          "phase": "idle",
+          "frames": 2,
+          "render_p50_ms": 292.52,
+          "render_p95_ms": 292.52,
+          "frame_interval_p95_ms": 314.9,
+          "timer_lateness_p95_ms": 0.16,
+          "timer_lateness_max_ms": 281.74,
+          "snapshot_count": 0,
+          "snapshot_apply_p95_ms": 0.0
+        },
+        {
+          "phase": "unchanged-updates",
+          "frames": 0,
+          "render_p50_ms": 0.0,
+          "render_p95_ms": 0.0,
+          "frame_interval_p95_ms": 0.0,
+          "timer_lateness_p95_ms": 0.5,
+          "timer_lateness_max_ms": 0.65,
+          "snapshot_count": 599,
+          "snapshot_apply_p95_ms": 0.04
+        },
+        {
+          "phase": "changing-updates",
+          "frames": 89,
+          "render_p50_ms": 15.42,
+          "render_p95_ms": 21.6,
+          "frame_interval_p95_ms": 58.03,
+          "timer_lateness_p95_ms": 18.65,
+          "timer_lateness_max_ms": 23.25,
+          "snapshot_count": 423,
+          "snapshot_apply_p95_ms": 0.59
+        },
+        {
+          "phase": "resize",
+          "frames": 59,
+          "render_p50_ms": 9.98,
+          "render_p95_ms": 18.55,
+          "frame_interval_p95_ms": 80.76,
+          "timer_lateness_p95_ms": 19.47,
+          "timer_lateness_max_ms": 44.81,
+          "snapshot_count": 1,
+          "snapshot_apply_p95_ms": 0.42
+        },
+        {
+          "phase": "maximize-restore",
+          "frames": 24,
+          "render_p50_ms": 5.81,
+          "render_p95_ms": 30.75,
+          "frame_interval_p95_ms": 424.47,
+          "timer_lateness_p95_ms": 13.61,
+          "timer_lateness_max_ms": 68.47,
+          "snapshot_count": 0,
+          "snapshot_apply_p95_ms": 0.0
+        },
+        {
+          "phase": "scroll-100",
+          "frames": 46,
+          "render_p50_ms": 18.75,
+          "render_p95_ms": 33.61,
+          "frame_interval_p95_ms": 82.34,
+          "timer_lateness_p95_ms": 24.43,
+          "timer_lateness_max_ms": 32.89,
+          "snapshot_count": 0,
+          "snapshot_apply_p95_ms": 0.0
+        },
+        {
+          "phase": "scroll-10000",
+          "frames": 47,
+          "render_p50_ms": 20.47,
+          "render_p95_ms": 21.9,
+          "frame_interval_p95_ms": 68.91,
+          "timer_lateness_p95_ms": 19.58,
+          "timer_lateness_max_ms": 23.73,
+          "snapshot_count": 0,
+          "snapshot_apply_p95_ms": 0.0
+        },
+        {
+          "phase": "resize-10000",
+          "frames": 40,
+          "render_p50_ms": 16.3,
+          "render_p95_ms": 27.67,
+          "frame_interval_p95_ms": 110.31,
+          "timer_lateness_p95_ms": 34.74,
+          "timer_lateness_max_ms": 68.01,
+          "snapshot_count": 0,
+          "snapshot_apply_p95_ms": 0.0
+        },
+        {
+          "phase": "composer-10000",
+          "frames": 47,
+          "render_p50_ms": 15.79,
+          "render_p95_ms": 20.72,
+          "frame_interval_p95_ms": 71.45,
+          "timer_lateness_p95_ms": 16.98,
+          "timer_lateness_max_ms": 26.82,
+          "snapshot_count": 0,
+          "snapshot_apply_p95_ms": 0.0
+        }
+      ],
+      "raw_log": "UI benchmark: synthetic 500-chat sidebar with 0 thumbnails / 100 then 10000 loaded messages; 200 snapshots/s during update phases; 27s total. Render CPU excludes compositor presentation. Profile: release.\nSlint: Build config: release; Backend: Skia renderer (skia backend wgpu; surface: 32 bpp)\naverage frames per second: 2 \naverage frames per second: 0 \nUI benchmark idle: frames=2, render CPU p50=292.52ms p95=292.52ms; frame interval p95=314.90ms; timer lateness p95=0.16ms max=281.74ms; snapshot apply count=0 p95=0.00ms\nTimeline idle: layout calls=4, p95=519.90ms; measured rows=12\naverage frames per second: 0 \naverage frames per second: 0 \naverage frames per second: 0 \nUI benchmark unchanged-updates: frames=0, render CPU p50=0.00ms p95=0.00ms; frame interval p95=0.00ms; timer lateness p95=0.50ms max=0.65ms; snapshot apply count=599 p95=0.04ms\nTimeline unchanged-updates: layout calls=599, p95=0.03ms; measured rows=0\naverage frames per second: 11 \naverage frames per second: 30 \naverage frames per second: 29 \nUI benchmark changing-updates: frames=89, render CPU p50=15.42ms p95=21.60ms; frame interval p95=58.03ms; timer lateness p95=18.65ms max=23.25ms; snapshot apply count=423 p95=0.59ms\nTimeline changing-updates: layout calls=423, p95=0.03ms; measured rows=0\naverage frames per second: 25 \naverage frames per second: 20 \naverage frames per second: 22 \nUI benchmark resize: frames=59, render CPU p50=9.98ms p95=18.55ms; frame interval p95=80.76ms; timer lateness p95=19.47ms max=44.81ms; snapshot apply count=1 p95=0.42ms\nTimeline resize: layout calls=380, p95=15.32ms; measured rows=1134\naverage frames per second: 15 \naverage frames per second: 9 \naverage frames per second: 6 \nUI benchmark maximize-restore: frames=24, render CPU p50=5.81ms p95=30.75ms; frame interval p95=424.47ms; timer lateness p95=13.61ms max=68.47ms; snapshot apply count=0 p95=0.00ms\nTimeline maximize-restore: layout calls=18, p95=31.31ms; measured rows=90\naverage frames per second: 12 \naverage frames per second: 15 \naverage frames per second: 16 \nUI benchmark scroll-100: frames=46, render CPU p50=18.75ms p95=33.61ms; frame interval p95=82.34ms; timer lateness p95=24.43ms max=32.89ms; snapshot apply count=0 p95=0.00ms\nTimeline scroll-100: layout calls=167, p95=3.23ms; measured rows=66\naverage frames per second: 14 \naverage frames per second: 16 \naverage frames per second: 16 \nUI benchmark scroll-10000: frames=47, render CPU p50=20.47ms p95=21.90ms; frame interval p95=68.91ms; timer lateness p95=19.58ms max=23.73ms; snapshot apply count=0 p95=0.00ms\nTimeline scroll-10000: layout calls=143, p95=0.30ms; measured rows=0\naverage frames per second: 15 \naverage frames per second: 14 \naverage frames per second: 12 \nUI benchmark resize-10000: frames=40, render CPU p50=16.30ms p95=27.67ms; frame interval p95=110.31ms; timer lateness p95=34.74ms max=68.01ms; snapshot apply count=0 p95=0.00ms\nTimeline resize-10000: layout calls=214, p95=19.27ms; measured rows=1269\naverage frames per second: 15 \naverage frames per second: 15 \naverage frames per second: 16 \nUI benchmark composer-10000: frames=47, render CPU p50=15.79ms p95=20.72ms; frame interval p95=71.45ms; timer lateness p95=16.98ms max=26.82ms; snapshot apply count=0 p95=0.00ms\nTimeline composer-10000: layout calls=37, p95=0.04ms; measured rows=14\n"
+    },
+    {
+      "pictures": "on",
+      "phases": [
+        {
+          "phase": "idle",
+          "frames": 2,
+          "render_p50_ms": 230.95,
+          "render_p95_ms": 230.95,
+          "frame_interval_p95_ms": 253.49,
+          "timer_lateness_p95_ms": 0.14,
+          "timer_lateness_max_ms": 220.81,
+          "snapshot_count": 0,
+          "snapshot_apply_p95_ms": 0.0
+        },
+        {
+          "phase": "unchanged-updates",
+          "frames": 0,
+          "render_p50_ms": 0.0,
+          "render_p95_ms": 0.0,
+          "frame_interval_p95_ms": 0.0,
+          "timer_lateness_p95_ms": 0.52,
+          "timer_lateness_max_ms": 0.85,
+          "snapshot_count": 600,
+          "snapshot_apply_p95_ms": 0.04
+        },
+        {
+          "phase": "changing-updates",
+          "frames": 48,
+          "render_p50_ms": 14.31,
+          "render_p95_ms": 20.05,
+          "frame_interval_p95_ms": 66.67,
+          "timer_lateness_p95_ms": 14.34,
+          "timer_lateness_max_ms": 22.01,
+          "snapshot_count": 493,
+          "snapshot_apply_p95_ms": 0.45
+        },
+        {
+          "phase": "resize",
+          "frames": 45,
+          "render_p50_ms": 9.33,
+          "render_p95_ms": 17.46,
+          "frame_interval_p95_ms": 104.76,
+          "timer_lateness_p95_ms": 16.92,
+          "timer_lateness_max_ms": 29.95,
+          "snapshot_count": 1,
+          "snapshot_apply_p95_ms": 0.14
+        },
+        {
+          "phase": "maximize-restore",
+          "frames": 28,
+          "render_p50_ms": 19.74,
+          "render_p95_ms": 37.46,
+          "frame_interval_p95_ms": 375.01,
+          "timer_lateness_p95_ms": 20.1,
+          "timer_lateness_max_ms": 95.59,
+          "snapshot_count": 0,
+          "snapshot_apply_p95_ms": 0.0
+        },
+        {
+          "phase": "scroll-100",
+          "frames": 66,
+          "render_p50_ms": 17.98,
+          "render_p95_ms": 35.28,
+          "frame_interval_p95_ms": 77.5,
+          "timer_lateness_p95_ms": 28.07,
+          "timer_lateness_max_ms": 41.31,
+          "snapshot_count": 0,
+          "snapshot_apply_p95_ms": 0.0
+        },
+        {
+          "phase": "scroll-10000",
+          "frames": 47,
+          "render_p50_ms": 20.95,
+          "render_p95_ms": 23.27,
+          "frame_interval_p95_ms": 68.13,
+          "timer_lateness_p95_ms": 19.63,
+          "timer_lateness_max_ms": 38.77,
+          "snapshot_count": 0,
+          "snapshot_apply_p95_ms": 0.0
+        },
+        {
+          "phase": "resize-10000",
+          "frames": 46,
+          "render_p50_ms": 9.35,
+          "render_p95_ms": 26.3,
+          "frame_interval_p95_ms": 106.15,
+          "timer_lateness_p95_ms": 22.95,
+          "timer_lateness_max_ms": 39.53,
+          "snapshot_count": 0,
+          "snapshot_apply_p95_ms": 0.0
+        },
+        {
+          "phase": "composer-10000",
+          "frames": 69,
+          "render_p50_ms": 15.41,
+          "render_p95_ms": 21.88,
+          "frame_interval_p95_ms": 65.51,
+          "timer_lateness_p95_ms": 19.21,
+          "timer_lateness_max_ms": 23.22,
+          "snapshot_count": 0,
+          "snapshot_apply_p95_ms": 0.0
+        }
+      ],
+      "raw_log": "UI benchmark: synthetic 500-chat sidebar with 66 thumbnails / 100 then 10000 loaded messages; 200 snapshots/s during update phases; 27s total. Render CPU excludes compositor presentation. Profile: release.\nSlint: Build config: release; Backend: Skia renderer (skia backend wgpu; surface: 32 bpp)\naverage frames per second: 2 \naverage frames per second: 0 \nUI benchmark idle: frames=2, render CPU p50=230.95ms p95=230.95ms; frame interval p95=253.49ms; timer lateness p95=0.14ms max=220.81ms; snapshot apply count=0 p95=0.00ms\nTimeline idle: layout calls=4, p95=418.55ms; measured rows=12\naverage frames per second: 0 \naverage frames per second: 0 \naverage frames per second: 0 \nUI benchmark unchanged-updates: frames=0, render CPU p50=0.00ms p95=0.00ms; frame interval p95=0.00ms; timer lateness p95=0.52ms max=0.85ms; snapshot apply count=600 p95=0.04ms\nTimeline unchanged-updates: layout calls=600, p95=0.03ms; measured rows=0\naverage frames per second: 6 \naverage frames per second: 15 \naverage frames per second: 16 \nUI benchmark changing-updates: frames=48, render CPU p50=14.31ms p95=20.05ms; frame interval p95=66.67ms; timer lateness p95=14.34ms max=22.01ms; snapshot apply count=493 p95=0.45ms\nTimeline changing-updates: layout calls=493, p95=0.03ms; measured rows=0\naverage frames per second: 14 \naverage frames per second: 16 \naverage frames per second: 16 \nUI benchmark resize: frames=45, render CPU p50=9.33ms p95=17.46ms; frame interval p95=104.76ms; timer lateness p95=16.92ms max=29.95ms; snapshot apply count=1 p95=0.14ms\nTimeline resize: layout calls=393, p95=15.45ms; measured rows=1193\naverage frames per second: 16 \naverage frames per second: 7 \naverage frames per second: 9 \nUI benchmark maximize-restore: frames=28, render CPU p50=19.74ms p95=37.46ms; frame interval p95=375.01ms; timer lateness p95=20.10ms max=95.59ms; snapshot apply count=0 p95=0.00ms\nTimeline maximize-restore: layout calls=18, p95=31.67ms; measured rows=90\naverage frames per second: 13 \naverage frames per second: 23 \naverage frames per second: 27 \nUI benchmark scroll-100: frames=66, render CPU p50=17.98ms p95=35.28ms; frame interval p95=77.50ms; timer lateness p95=28.07ms max=41.31ms; snapshot apply count=0 p95=0.00ms\nTimeline scroll-100: layout calls=157, p95=3.61ms; measured rows=66\naverage frames per second: 15 \naverage frames per second: 16 \naverage frames per second: 16 \nUI benchmark scroll-10000: frames=47, render CPU p50=20.95ms p95=23.27ms; frame interval p95=68.13ms; timer lateness p95=19.63ms max=38.77ms; snapshot apply count=0 p95=0.00ms\nTimeline scroll-10000: layout calls=144, p95=0.30ms; measured rows=1\naverage frames per second: 15 \naverage frames per second: 16 \naverage frames per second: 15 \nUI benchmark resize-10000: frames=46, render CPU p50=9.35ms p95=26.30ms; frame interval p95=106.15ms; timer lateness p95=22.95ms max=39.53ms; snapshot apply count=0 p95=0.00ms\nTimeline resize-10000: layout calls=254, p95=19.52ms; measured rows=1501\naverage frames per second: 16 \naverage frames per second: 18 \naverage frames per second: 30 \nUI benchmark composer-10000: frames=69, render CPU p50=15.41ms p95=21.88ms; frame interval p95=65.51ms; timer lateness p95=19.21ms max=23.22ms; snapshot apply count=0 p95=0.00ms\nTimeline composer-10000: layout calls=37, p95=0.17ms; measured rows=16\n"
+    }
+  ],
+  "notes": [
+    "One sequential comparison pair, pictures off then on. Not a statistically established speed comparison.",
+    "Both unchanged-update phases render zero frames after fixing repeated assignment of empty Slint images.",
+    "Scrolling/resize frame intervals are substantially worse than the earlier backend comparison, including with pictures disabled; overall responsiveness remains unresolved.",
+    "Does not measure account/network behavior, compositor presentation latency, GPU memory, or live photo downloads."
+  ]
+}

@@ -1,0 +1,74 @@
+{
+  "date": "2026-10-14",
+  "binary_sha256": "ed10931d9f2d862770375cf1a4c002007818cb24c8b6457d69e7862e46c290c9",
+  "method": "Separate offline demo processes; no account data, screenshots or sends. Each child is terminated after verifying renderer startup and continued operation. Not a performance or shutdown test.",
+  "tests": [
+    {
+      "name": "default",
+      "renderer": "Slint: Build config: release; Backend: Skia renderer (skia backend wgpu; surface: 32 bpp)",
+      "passed": true,
+      "log": [
+        "Slint: Build config: release; Backend: Skia renderer (skia backend wgpu; surface: 32 bpp)",
+        "average frames per second: 2 ",
+        "average frames per second: 0 ",
+        "average frames per second: 0 ",
+        "average frames per second: 0 ",
+        "average frames per second: 0 ",
+        "average frames per second: 3 ",
+        "average frames per second: 1 "
+      ],
+      "driver_libraries": [
+        "/usr/lib/libvulkan.so.1.4.363",
+        "/usr/lib/libvulkan_radeon.so"
+      ],
+      "overrides": {
+        "SLINT_DEBUG_PERFORMANCE": "refresh_lazy,console"
+      }
+    },
+    {
+      "name": "vulkan-unavailable",
+      "renderer": "Slint: Build config: release; Backend: Skia renderer (skia backend opengl; surface: 32 bpp)",
+      "passed": true,
+      "log": [
+        "Failed to initialize Skia wgpu surface: Error creating wgpu window surface: Failed to create surface for any enabled backend: {} . Falling back to the next surface candidate",
+        "Slint: Build config: release; Backend: Skia renderer (skia backend opengl; surface: 32 bpp)",
+        "average frames per second: 2 ",
+        "average frames per second: 1 ",
+        "average frames per second: 0 ",
+        "average frames per second: 0 ",
+        "average frames per second: 0 ",
+        "average frames per second: 0 ",
+        "average frames per second: 0 "
+      ],
+      "driver_libraries": [
+        "/usr/lib/libEGL.so.1.1.0",
+        "/usr/lib/libEGL_mesa.so.0.0.0"
+      ],
+      "overrides": {
+        "VK_DRIVER_FILES": "/tmp/heya-vulkan-startup/deliberately-missing-vulkan-icd.json",
+        "VK_ICD_FILENAMES": "/tmp/heya-vulkan-startup/deliberately-missing-vulkan-icd.json",
+        "SLINT_DEBUG_PERFORMANCE": "refresh_lazy,console"
+      }
+    }
+  ],
+  "source_sha256": {
+    "Cargo.toml": "3bfc741e51ecf99c4de60d753d973729a593759644beaca14c5eb82bcc2dfa3e",
+    "Cargo.lock": "675f1d4d6b1edbd9c36defa3a6a20c1f6938a0c9bfa9f89fa16ddc177d41fd3a"
+  },
+  "features": [
+    "std",
+    "backend-winit",
+    "renderer-skia-vulkan",
+    "renderer-skia-opengl",
+    "renderer-software",
+    "accessibility",
+    "compat-1-18"
+  ],
+  "fallback_scope": "Automatic surface selection at startup; Vulkan failure to OpenGL was verified. No claim of runtime device-loss recovery or tested software fallback.",
+  "validation": {
+    "release_build": "passed",
+    "format": "passed",
+    "clippy": "passed: cargo clippy --locked --offline --all-targets -- -D warnings",
+    "offline_tests": "passed: cargo test --locked --offline; 30 unit/UI tests and 1 integration test; desktop keyring test intentionally ignored"
+  }
+}

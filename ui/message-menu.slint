@@ -1,0 +1,225 @@
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+
+export struct MessageMenuEntry { action: int, label: string, enabled: bool, reason: string, separator: bool, offset:int }
+
+// Only the open window overlay owns menu rows. Native WhatsApp Material3
+// MenuFlyout.xaml supplies 250px width, 10px padding, 18px corners, 40px rows,
+// 15px labels and 16px icons. The detached reaction strip follows the reference
+// screenshot; it is not claimed to be defined by that native XAML.
+component MenuControl inherits Rectangle {
+    in property <bool> enabled: true;
+    in property <bool> selected;
+    in property <string> label;
+    in property <string> reason;
+    callback activated();
+    callback focused();
+    background: root.enabled && (hit.has-hover || focus.has-focus) ? Theme.hover : transparent;
+    border-radius: 8px;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if root.enabled { root.activated(); } }
+    focus := FocusScope {
+        enabled: root.enabled;
+        init => { if root.selected { self.focus(); } }
+        changed has-focus => { if self.has-focus { root.focused(); } }
+        key-pressed(event) => {
+            if event.text == Key.Return || event.text == " " { root.activated(); return accept; }
+            return reject;
+        }
+    }
+
+    changed selected => { if root.selected && root.enabled { focus.focus(); } }
+    @children
+    hit := TouchArea {
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { if root.enabled { focus.focus(); root.activated(); } }
+    }
+
+    if root.reason != "": Tooltip {
+        text: @markdown("\{root.reason}");
+    }
+}
+
+export component MessageMenu inherits Rectangle {
+    in property <bool> context;
+    in property <[string]> reactions;
+    private property <[string]> choices:root.context ? root.reactions : ["👍", "❤️", "😂", "😮", "😢", "🙏", "+"];
+    in property <[MessageMenuEntry]> entries;
+    in property <length> anchor-x;
+    in property <length> anchor-y;
+    in property <bool> can-react;
+    in property <string> own-emoji;
+    in-out property <int> selection: 7;
+    callback close();
+    callback choose(int);
+    callback react(string);
+    callback navigate(int);
+    private property <length> edge: 8px;
+    private property <length> strip-height: 44px;
+    // ZapFast's 28px item plus its theme's 6px vertical spacing.
+    private property <length> row-height:root.context ? 34px : 40px;
+    private property <length> list-height:root.entries.length * root.row-height + (root.entries.length>0 ? root.entries[root.entries.length - 1].offset * 1px : 0px);
+    private property <length> natural-height: root.list-height + 20px;
+    private property <length> menu-height: min(root.natural-height,max(40px,root.height - 2 * root.edge - root.strip-height - 6px));
+    private property <length> menu-width: min(root.context ? root.choices.length * 36px + 12px : 250px,root.width - 2 * root.edge);
+    private property <length> strip-width: min(root.context ? root.menu-width : 286px,root.width - 2 * root.edge);
+    private property <length> total-height: root.strip-height + 6px + root.menu-height;
+    private property <length> left: clamp(root.context ? root.anchor-x : root.anchor-x - (root.strip-width - root.menu-width) / 2,root.edge,max(root.edge,root.width - max(root.menu-width,root.strip-width) - root.edge));
+    // Align the menu to the chevron with the reaction strip above it, so
+    // the strip never covers the trigger. Flip above when needed, then clamp.
+    // The one list scrolls only when the window cannot contain it.
+    private property <length> top: clamp(root.context ? root.anchor-y : root.anchor-y - 26px + root.menu-height <= root.height - root.edge ? root.anchor-y - 26px - root.strip-height - 6px : root.anchor-y - root.total-height - 26px,root.edge,max(root.edge,root.height - root.total-height - root.edge));
+    FocusScope {
+        // The backdrop belongs inside the focus scope: a sibling focus scope
+        // would accept outside pointer presses before the dismiss target.
+        x: 0px;
+        y: 0px;
+        width: root.width;
+        height: root.height;
+        dismiss := TouchArea {
+            x: 0px;
+            y: 0px;
+            width: root.width;
+            height: root.height;
+            clicked => { root.close(); }
+            scroll-event(event) => { root.close(); return accept; }
+        }
+
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.close(); return accept; }
+            if event.text == Key.DownArrow { root.navigate(1); return accept; }
+            if event.text == Key.UpArrow { root.navigate(-1); return accept; }
+            if event.text == Key.Home { root.navigate(-100); return accept; }
+            if event.text == Key.End { root.navigate(100); return accept; }
+            return reject;
+        }
+        if root.context:Rectangle {
+            x:root.left;y:root.top;width:root.menu-width;height:root.total-height;
+            background:Theme.overlay;border-radius:8px;border-width:1px;border-color:Theme.outline;
+            drop-shadow-offset-y:4px;drop-shadow-blur:14px;drop-shadow-color:Theme.modal-shadow;
+            TouchArea { }
+            Rectangle {x:12px;y:root.strip-height + 2px;width:parent.width - 24px;height:1px;background:Theme.outline;}
+        }
+        strip := Rectangle {
+            x: root.left;
+            y: root.top;
+            width: root.strip-width;
+            height: root.strip-height;
+            background: root.context ? transparent : Theme.overlay;
+            border-radius: 22px;
+            drop-shadow-offset-y: 3px;
+            drop-shadow-blur: 12px;
+            drop-shadow-color: root.context ? transparent : Theme.modal-shadow;
+            TouchArea { }
+
+            for emoji[index] in root.choices: MenuControl {
+                x: 6px + index * (parent.width - 12px) / root.choices.length;
+                y: root.context ? 6px : 4px;
+                width: root.context ? 34px : (parent.width - 12px) / root.choices.length;
+                height: root.context ? 34px : 36px;
+                enabled: emoji == "+" || root.can-react;
+                selected: root.selection == index;
+                label: emoji == "+" ? @tr("More reactions") : emoji == root.own-emoji ? @tr("Remove your reaction") : @tr("React with {}",emoji);
+                reason: !self.enabled ? @tr("Connect to react") : "";
+                focused => { root.selection = index; }
+                activated => { if emoji == "+" { root.choose(0); } else { root.react(emoji); } }
+                Rectangle {
+                    width: parent.width;
+                    height: parent.height;
+                    border-radius: root.context ? 17px : 18px;
+                    background: emoji == root.own-emoji ? Theme.selected : root.context && emoji=="+" ? Theme.surface : transparent;
+                    border-width:root.context && emoji==root.own-emoji ? 1.5px : root.context && emoji=="+" ? 1px : 0px;border-color:emoji==root.own-emoji ? Theme.accent : Theme.outline;
+                    if root.context && emoji=="+":Image {
+                        x:(parent.width - 16px)/2;y:(parent.height - 16px)/2;width:16px;height:16px;
+                        source:@image-url("icons/plus.svg");colorize:Theme.secondary;
+                    }
+                    Text {
+                        visible:!root.context || emoji!="+";
+                        text: emoji;
+                        font-size: root.context && emoji!="+" ? 20px : 24px;
+                        font-family: emoji == "+" ? Theme.font-family : Theme.emoji-font;
+                        color: Theme.text;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+
+        panel := Rectangle {
+            x: root.left + (root.strip-width - root.menu-width) / 2;
+            y: root.top + root.strip-height + 6px;
+            width: root.menu-width;
+            height: root.menu-height;
+            background: root.context ? transparent : Theme.overlay;
+            border-radius: 18px;
+            drop-shadow-offset-y: 4px;
+            drop-shadow-blur: 14px;
+            drop-shadow-color: root.context ? transparent : Theme.modal-shadow;
+            TouchArea { }
+
+            list := ScrollView {
+                x: 10px;
+                y: 10px;
+                width: parent.width - 20px;
+                height: parent.height - 20px;
+                horizontal-scrollbar-policy: always-off;
+                content-width: self.visible-width;
+                content-height: root.list-height;
+                for entry[index] in root.entries: Rectangle {
+                    y: index * root.row-height + entry.offset * 1px;
+                    width: list.visible-width;
+                    height: root.row-height;
+                    if entry.separator: Rectangle {
+                        x: 4px;
+                        y: -5px;
+                        width: parent.width - 8px;
+                        height: 1px;
+                        background: Theme.outline;
+                    }
+                    MenuControl {
+                        width: parent.width;
+                        height: root.context ? 28px : root.row-height;
+                        enabled: entry.enabled;
+                        selected: root.selection == index + root.choices.length;
+                        label: entry.label;
+                        reason: entry.reason;
+                        focused => { root.selection = index + root.choices.length; list.content-y = clamp(list.content-y,-max(0px,list.content-height - list.visible-height),0px); }
+                        activated => { root.choose(entry.action); }
+                        Image {
+                            x: 10px;
+                            y: (parent.height - 16px)/2;
+                            width: 16px;
+                            height: 16px;
+                            colorize: entry.enabled ? (root.context ? Theme.secondary : Theme.text) : Theme.dim;
+                            source: entry.action == 0 ? @image-url("icons/smile.svg") : entry.action == 1 ? @image-url("icons/reply.svg") : entry.action == 2 ? (root.context ? @image-url("icons/forward-single.svg") : @image-url("icons/forward.svg")) : entry.action == 4 || entry.action==16 ? @image-url("icons/copy.svg") : entry.action == 5 ? @image-url("icons/photo-download.svg") : entry.action == 6 ? @image-url("icons/pin.svg") : entry.action == 7 ? @image-url("icons/star.svg") : entry.action == 8 ? @image-url("icons/report.svg") : entry.action == 9 || entry.action==13 ? @image-url("icons/trash.svg") : entry.action==11 ? @image-url("icons/check.svg") : entry.action==12 ? @image-url("icons/square-pen.svg") : entry.action==14 ? @image-url("icons/eye-off.svg") : entry.action==15 ? @image-url("icons/info.svg") : @image-url("icons/ai.svg");
+                        }
+
+                        Text {
+                            x: 42px;
+                            y: 0px;
+                            width: parent.width - 50px;
+                            height: parent.height;
+                            text: entry.label;
+                            color: entry.enabled ? Theme.text : Theme.dim;
+                            font-size: root.context ? 13.5px : 15px;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    changed selection => {
+        if root.selection >= root.choices.length {
+            // Keep keyboard selection visible in a short window.
+            let top=(root.selection - root.choices.length) * root.row-height + root.entries[root.selection - root.choices.length].offset * 1px;
+            if top + list.content-y < 0px { list.content-y = -top; }
+            if top + root.row-height + list.content-y > list.visible-height { list.content-y = min(0px,list.visible-height - top - root.row-height); }
+        }
+    }
+}

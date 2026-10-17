@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <title>Heya</title>
+  <desc>A white rounded lowercase h in a teal speech bubble.</desc>
+  <path fill="#008f83" d="M64 7C32.52 7 7 32.52 7 64c0 11.51 3.41 22.23 9.29 31.2l-8.14 20.5c-1.85 4.65 2.68 9.18 7.33 7.33l21.12-8.39A56.73 56.73 0 0 0 64 121c31.48 0 57-25.52 57-57S95.48 7 64 7Z"/>
+  <path fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round" stroke-width="18.5" d="M46 91V37m0 40c0-10.22 8.28-18.5 18.5-18.5S83 66.78 83 77v14"/>
+</svg>

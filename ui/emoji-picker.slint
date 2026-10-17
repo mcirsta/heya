@@ -1,0 +1,112 @@
+import { ListView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { IconButton } from "components.slint";
+import { ContentTarget } from "message-content.slint";
+
+export struct EmojiChoice {emoji:string,name:string,index:int}
+export struct EmojiGridRow {heading:string,category:int,cells:[EmojiChoice]}
+export struct EmojiCategory {emoji:string,name:string,index:int}
+
+// ZapFast reference: 420×400 inner area, 10px frame margin, 40px cells,
+// 24px emoji and 12.5px section labels. Only visible grid rows are instantiated.
+export component EmojiPicker inherits Rectangle {
+    in property <bool> composer;
+    in property <bool> busy;
+    in property <bool> available;
+    in property <string> error;
+    in property <string> summary;
+    in property <string> own-emoji;
+    in property <length> anchor-x;
+    in property <length> anchor-y;
+    in property <[EmojiGridRow]> rows;
+    in property <[EmojiCategory]> categories;
+    in property <int> selected;
+    in property <int> scroll-row;
+    in property <int> jump-revision;
+    in-out property <string> query;
+    callback close();
+    callback columns-changed(int);
+    callback searched();
+    callback choose(string);
+    callback category(int);
+    callback navigate(int);
+    private property <length> body-width: min(root.composer ? 420px : clamp(root.width - root.anchor-x - 60px,260px,420px),root.width - 36px);
+    private property <int> columns: max(1,floor((root.body-width - 6px)/40px));
+    changed columns => {root.columns-changed(root.columns);}
+    init=>{root.columns-changed(root.columns);search.focus();}
+    changed jump-revision=>{grid.content-y=clamp(-root.scroll-row * 40px,min(0px,grid.visible-height - grid.content-height),0px);}
+    changed selected=>{
+        if root.scroll-row * 40px + grid.content-y < 0px {grid.content-y=-root.scroll-row * 40px;}
+        if (root.scroll-row + 1) * 40px + grid.content-y > grid.visible-height {grid.content-y=grid.visible-height - (root.scroll-row + 1) * 40px;}
+    }
+    function handle-key(key:string)->bool {
+            if key==Key.Escape {root.close();return true;}
+            if key==Key.DownArrow {root.navigate(root.columns);return true;}
+            if key==Key.UpArrow {root.navigate(-root.columns);return true;}
+            if key==Key.LeftArrow {root.navigate(-1);return true;}
+            if key==Key.RightArrow {root.navigate(1);return true;}
+            if key==Key.Return {root.navigate(0);return true;}
+            return false;
+    }
+    TouchArea {clicked=>{root.close();}}
+    frame := FocusScope {
+        width: root.body-width + 20px;
+        height: min(420px,root.height - 16px);
+        private property <bool> beside: !root.composer && root.anchor-x + 28px + self.width + 16px <= root.width;
+        x: self.beside ? root.anchor-x + 36px : clamp(root.anchor-x,8px,root.width - self.width - 8px);
+        y: clamp(self.beside ? root.anchor-y : root.anchor-y - self.height - 10px >= 8px ? root.anchor-y - self.height - 10px : root.anchor-y + 30px,8px,root.height - self.height - 8px);
+        key-pressed(event)=>{if !event.modifiers.control && !event.modifiers.shift && !event.modifiers.alt && !event.modifiers.meta && root.handle-key(event.text) {return accept;} return reject;}
+        panel := Rectangle {
+            width:parent.width;height:parent.height;background:Theme.overlay;
+            border-radius:12px;border-width:1px;border-color:Theme.outline;
+            drop-shadow-offset-y:6px;drop-shadow-blur:20px;drop-shadow-color:Theme.modal-shadow;
+            TouchArea {}
+            VerticalLayout {
+                padding:10px;spacing:6px;
+                if !root.composer: HorizontalLayout {
+                    height:24px;
+                    Text {text:@tr("React to message");font-size:13px;font-weight:600;color:Theme.text;vertical-alignment:center;horizontal-stretch:1;}
+                    IconButton {width:24px;height:24px;icon-size:14px;icon:@image-url("icons/close.svg");label:@tr("Close reactions");activated=>{root.close();}}
+                }
+                if !root.composer: Text {height:18px;text:root.summary;font-size:12px;color:Theme.secondary;overflow:elide;vertical-alignment:center;}
+                Rectangle {
+                    height:32px;border-radius:18px;background:Theme.surface;
+                    border-width:search.has-focus ? 1px : 0px;border-color:Theme.accent;
+                    Image {x:10px;y:8px;width:16px;height:16px;source:@image-url("icons/search.svg");colorize:Theme.secondary;}
+                    Text {x:32px;y:0px;height:parent.height;text:@tr("Search emoji");visible:root.query=="";font-size:14px;color:Theme.secondary;vertical-alignment:center;}
+                    search := TextInput {x:32px;y:0px;width:parent.width - 42px;height:parent.height;text <=> root.query;single-line:true;font-size:14px;color:Theme.text;vertical-alignment:center;accessible-label:@tr("Search emoji");key-pressed(event)=>{if !event.modifiers.control && !event.modifiers.shift && !event.modifiers.alt && !event.modifiers.meta && root.handle-key(event.text) {return accept;} return reject;} edited=>{root.searched();}}
+                }
+                grid := ListView {
+                    horizontal-stretch:1;vertical-stretch:1;
+                    for row in root.rows: Rectangle {
+                        height:40px;
+                        if row.heading!="": Text {x:4px;y:14px;width:parent.width - 8px;height:22px;text:row.heading;font-size:12.5px;font-weight:600;color:Theme.secondary;overflow:elide;}
+                        for item[i] in row.cells: Rectangle {
+                            x:i * (grid.visible-width - 6px)/root.columns;y:2px;
+                            width:(grid.visible-width - 6px)/root.columns - 4px;height:36px;border-radius:6px;
+                            background:root.selected==item.index ? Theme.accent.with-alpha(0.22) : transparent;
+                            border-width:root.selected==item.index ? 1px : 0px;border-color:Theme.accent;
+                            Text {text:item.emoji;font-family:Theme.emoji-font;font-size:24px;horizontal-alignment:center;vertical-alignment:center;}
+                            ContentTarget {label:item.emoji==root.own-emoji ? @tr("Remove your reaction") : root.composer ? @tr("Insert {}",item.name) : @tr("React with {}",item.name);enabled:root.available&&!root.busy;activated=>{root.choose(item.emoji);}}
+                        }
+                    }
+                }
+                if root.busy || root.error!="" || !root.available: Text {height:18px;text:root.error!="" ? root.error : root.busy ? @tr("Please wait…") : @tr("Connect to send.");font-size:12px;color:Theme.secondary;overflow:elide;}
+                HorizontalLayout {
+                    height:36px;padding:0px;spacing:0px;
+                    Rectangle {horizontal-stretch:1;}
+                    for tab in root.categories: Rectangle {
+                        width:clamp((root.body-width - 4px)/root.categories.length,24px,36px);height:self.width;
+                        private property <int> first-row: clamp(floor(-grid.content-y/40px),0,root.rows.length - 1);
+                        private property <bool> active: root.query=="" && root.rows.length>0 && root.rows[self.first-row].category==tab.index;
+                        Rectangle {x:2px;y:2px;width:parent.width - 4px;height:parent.height - 4px;border-radius:6px;background:parent.active ? Theme.accent.with-alpha(0.22) : transparent;}
+                        Text {text:tab.emoji;font-family:Theme.emoji-font;font-size:16px;horizontal-alignment:center;vertical-alignment:center;}
+                        if self.active: Rectangle {x:6px;y:parent.height - 3px;width:parent.width - 12px;height:2px;background:Theme.accent;}
+                        ContentTarget {label:tab.name;activated=>{root.category(tab.index);search.focus();}}
+                    }
+                    Rectangle {horizontal-stretch:1;}
+                }
+            }
+        }
+    }
+}

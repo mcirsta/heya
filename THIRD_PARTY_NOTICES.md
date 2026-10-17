@@ -1,0 +1,149 @@
+# Heya third party notices
+
+Choose dependencies for technical fit; the project has no permissive-only
+licensing requirement. Retain upstream attribution as routine housekeeping,
+without blocking development on licensing choices. Dependencies and reference
+assets retain their own licenses; Heya's publication metadata can be settled
+when a release is prepared.
+
+## ZapFast reference material
+
+ZapFast is Copyright (c) 2026 Carmine Paolino, licensed under MIT.
+The full notice is in [third_party/licenses/ZapFast-MIT.txt](third_party/licenses/ZapFast-MIT.txt).
+
+The following files derive from
+[`crmne/zapfast` at c73ce57522d28eff4da1a5cc9e3b6de0f27b0de0](https://github.com/crmne/zapfast/tree/c73ce57522d28eff4da1a5cc9e3b6de0f27b0de0):
+
+| Heya file | Original source | Use |
+| --- | --- | --- |
+| `docs/reference/zapfast-dark.png` | `docs/screenshot.png` | Unmodified documentation screenshot |
+| `docs/reference/zapfast-light.png` | `docs/screenshot-light.png` | Unmodified documentation screenshot |
+| `prep/zapfast-theme.json` | `src/theme.rs`, `Palette::dark` and `Palette::light` | Selected color constants transcribed into JSON |
+| `ui/*.slint` | `src/theme.rs`, `src/ui/{chats,conversation,widgets,login,settings}.rs` | Visual dimensions, typography and palette adapted to Slint; independently implemented behavior |
+| `ui/assets/wallpaper.svg` | `assets/wallpaper.svg` | Unmodified Lucide doodle tile (ISC) |
+| `ui/assets/wallpaper.png` | `assets/wallpaper.svg` | Rasterized 374×666 Lucide doodle tile (ISC) |
+| `ui/icons/send.svg` | `assets/icons/send.svg` | Unmodified Lucide send icon (ISC) |
+| `ui/icons/photo.svg` | Lucide image outline vocabulary | Attachment-menu outline, adapted to the existing icon style (ISC) |
+| `ui/icons/reply.svg`, `ui/icons/forward.svg` | `assets/icons/reply.svg`, `assets/icons/forward.svg` | Lucide message-action icons (ISC); Reply unmodified, Forward adapted with a second arrowhead |
+| `ui/icons/forward-single.svg` | Existing `ui/icons/forward.svg` / pinned ZapFast forward icon | Single-arrow version for the context menu (ISC) |
+| `ui/icons/eye-off.svg`, `ui/icons/info.svg` | Existing Lucide outline vocabulary | Independently drawn menu outlines in the existing style (ISC) |
+| `ui/icons/play.svg`, `ui/icons/pause.svg`, `ui/icons/stop.svg` | Lucide media outline vocabulary | Recording/review outlines, adapted to the existing icon style (ISC) |
+
+The documentation screenshots remain unmodified visual references. The SVG
+assets listed above are also bundled in Heya; their Lucide ISC notice is retained. ZapFast's logo/name are not
+Heya branding. Preserve the MIT notice when adapting substantial source, document
+the original path/revision, and record meaningful changes.
+
+The wallpaper PNG is the runtime tile; the original SVG is retained as its
+source. It was generated with librsvg 2.63.2 (Cairo 1.18.6), without changing its
+dimensions or artwork:
+
+```sh
+rsvg-convert --width 374 --height 666 --output ui/assets/wallpaper.png ui/assets/wallpaper.svg
+```
+
+## Protocol library
+
+whatsapp-rust is MIT licensed, Copyright (c) 2025 João Lucas de Oliveira Lopes.
+Its notice is recorded in
+[third_party/licenses/whatsapp-rust-MIT.txt](third_party/licenses/whatsapp-rust-MIT.txt).
+Use the pinned repository as a dependency; retain notices in distributed credits
+and audit transitive dependencies once the lockfile exists.
+
+## Slint
+
+The toolkit offers GPLv3, a royalty-free desktop/mobile/web license, and commercial
+terms. Recommended desktop route for Heya: evaluate the royalty-free license
+and provide the official `AboutSlint` widget in an About dialog reachable from
+the application's top-level menu. This keeps Heya's source-license choice
+separate. A plain arbitrary credit line is not a substitute for the specified
+attribution route. Slint's examples are MIT licensed and copied example code must
+retain its notice.
+
+Read the [Slint license overview](https://github.com/slint-ui/slint/blob/372cf0ee5577c3dfec309a45e7b778ba4e81b734/LICENSE.md)
+and [royalty-free license text](https://slint.dev/agreements/slint-royalty-free-license.pdf)
+when selecting the distribution terms. The license choice is not settled merely
+by adding a Cargo dependency.
+
+## Assets and media dependencies
+
+ZapFast documents Inter and Noto Color Emoji under SIL OFL, Lucide icons and
+wallpaper doodles under ISC, and its Pidgin notification sounds under GPL-2.0.
+See its [README](https://github.com/crmne/zapfast/blob/c73ce57522d28eff4da1a5cc9e3b6de0f27b0de0/README.md)
+and per-asset notices. For Heya, prefer system fonts plus a documented fallback,
+selected Lucide SVGs with their notice, and system notification sounds or new
+appropriately licensed sounds. Do not assume the repository's MIT license
+relicenses these assets. The current demo uses system fonts, procedural geometric
+avatars with initial fallbacks, Lucide SVG controls in `ui/icons/`, and the
+reference wallpaper. Its synthetic avatar pixels are generated by Heya. It does
+not bundle ZapFast's fonts, photos or sounds.
+
+The reference asset notices are also retained locally:
+[Lucide ISC](third_party/licenses/Lucide-ISC.txt),
+[Inter OFL](third_party/licenses/Inter-OFL.txt), and
+[Noto Color Emoji OFL](third_party/licenses/NotoColorEmoji-OFL.txt).
+
+Before distributing GStreamer, inventory the runtime and the actual plugin/codec
+builds shipped. Their terms and codec availability can differ. System-installed
+decoders on the developer's machine do not establish redistribution rights or
+availability in a package. Record notices from the chosen builds during M4.
+
+
+## Fastframe palette and icon reference
+
+ZapFast's pinned lockfile resolves Fastframe v0.5.1 to commit
+`491f719` (the full revision is recorded in `prep/upstreams.json`). The eight
+unmodified JSON files in `ui/themes/` come from
+`crates/fastframe-theme/themes/`. Their chat-role colours are derived using the
+visual rules in ZapFast's `src/theme.rs`, implemented independently without an
+egui/Fastframe runtime dependency. The Fastframe MIT notice is retained in
+[Fastframe-MIT.txt](third_party/licenses/Fastframe-MIT.txt).
+
+The settings, square-pen, panel-left, ellipsis, plus, mic, chevron-down, search,
+sun, copy, check, external-link, smartphone, arrow-left (`back.svg`) and x (`close.svg`) SVGs in `ui/icons/`
+come from Fastframe's `crates/fastframe-icons/icons/lucide/` at that revision.
+`smile.svg`, `reply.svg` and `forward.svg` come from the pinned ZapFast `assets/icons/` directory.
+Forward adds a second arrowhead; the other Lucide assets are unmodified. All are
+covered by the retained ISC notice. Heya keeps its own
+branding. Settings → About includes Slint's official `AboutSlint` component.
+
+## GStreamer audio runtime
+
+Received audio uses the system GStreamer runtime and the Rust `gstreamer` /
+`gstreamer-app` bindings (MIT OR Apache-2.0, as recorded in their crate manifests).
+The lockfile records the selected versions. GStreamer core and plugin libraries
+retain their own notices; this checkout does not vendor the system binaries.
+The player's Rust code, synthetic silent audio and waveform paths are original
+Heya code. ZapFast supplies only the visual measurements documented in the UI audit.
+
+## Emoji names and validation
+
+The locked `emojis` 0.9.0 crate (MIT OR Apache-2.0) supplies Unicode emoji names
+and validation for reactions. Its generated data includes Unicode data covered
+by the retained [Unicode data notice](third_party/licenses/Unicode-data.txt).
+The application uses system emoji fonts; no additional font is bundled.
+
+
+## Owner-supplied WhatsApp Desktop visual reference
+
+The message dropdown uses dimensions observed in
+`WhatsAppDesktop_2.2640.100.0_x64__cv1g1gvanyjgm/WhatsApp.Design/Styles/Material3/MenuFlyout.xaml`
+and the owner's screenshots as visual guidance. WhatsApp/Meta retains ownership
+of the supplied package. Heya's Slint menu, input handling and action routing are
+independently implemented; no package binaries, fonts, XAML implementations or
+private screenshots are bundled in Heya. The pin, star, report, trash and AI-ring
+SVGs introduced with this menu were drawn for Heya.
+
+The document-card layout also follows the owner's WhatsApp screenshot as visual
+guidance. Its Slint implementation, folded-file SVG and synthetic document
+fixture are original Heya work. The screenshot and its document contents are not
+bundled. The pinned whatsapp-rust schema supplies optional document metadata;
+ZapFast's extraction/rendering was inspected for context without porting its code.
+
+## Parley text shaper
+
+Parley 0.11.1 is Copyright the Parley Authors and is available under
+Apache-2.0 OR MIT. Its source and both license texts are retained in
+`vendor/parley`. Heya's isolated color-emoji fallback fix is recorded in
+[docs/color-emoji.md](docs/color-emoji.md) and
+`patches/parley-color-emoji.patch`.

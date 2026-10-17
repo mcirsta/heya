@@ -1,0 +1,49 @@
+{
+  "source": "https://github.com/crmne/zapfast/blob/c73ce57522d28eff4da1a5cc9e3b6de0f27b0de0/src/theme.rs",
+  "copyright": "Copyright (c) 2026 Carmine Paolino",
+  "license": "MIT",
+  "notice": "../third_party/licenses/ZapFast-MIT.txt",
+  "purpose": "Selected reference colors; recheck contrast when adapting to Slint",
+  "palettes": {
+    "dark": {
+      "window": "#0b141a",
+      "panel": "#111b21",
+      "surface": "#202c33",
+      "surface_hover": "#2a3942",
+      "surface_active": "#35444d",
+      "outline": "#222d34",
+      "text": "#e9edef",
+      "secondary": "#97a5ae",
+      "dim": "#8a989f",
+      "accent": "#00a884",
+      "accent_hover": "#06cf9c",
+      "danger": "#f15c6d",
+      "warning": "#ffd279",
+      "chat": "#0b141a",
+      "bubble_in": "#202c33",
+      "bubble_out": "#005c4b",
+      "link": "#53bdeb",
+      "read": "#53bdeb"
+    },
+    "light": {
+      "window": "#f0f2f5",
+      "panel": "#ffffff",
+      "surface": "#f0f2f5",
+      "surface_hover": "#e6e9ec",
+      "surface_active": "#d9dde1",
+      "outline": "#e9edef",
+      "text": "#111b21",
+      "secondary": "#515f67",
+      "dim": "#636b72",
+      "accent": "#008069",
+      "accent_hover": "#006e5a",
+      "danger": "#ea0038",
+      "warning": "#a06b00",
+      "chat": "#efeae2",
+      "bubble_in": "#ffffff",
+      "bubble_out": "#d9fdd3",
+      "link": "#027eb5",
+      "read": "#027eb5"
+    }
+  }
+}

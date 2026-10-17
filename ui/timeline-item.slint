@@ -1,0 +1,86 @@
+import { Theme } from "theme.slint";
+import { RaisedSurface } from "components.slint";
+import { MessageBubble, MessageRow } from "message.slint";
+import { SystemNotice } from "system-notice.slint";
+
+export struct TimelineRow {
+    message: MessageRow,
+    top: float,
+    first: bool,
+    last: bool,
+    day-label: string,
+    body-height: float,
+}
+
+// The measuring instance and displayed instances share this spacing. Body
+// height comes from the fixed probes of the same concrete content components.
+export component TimelineItem inherits Rectangle {
+    in property <MessageRow> message;
+    in property <bool> first;
+    in property <bool> last;
+    in property <string> day-label;
+    in property <length> body-height;
+    in property <bool> measurement-only;
+    in property <bool> group;
+    in property <color> tint;
+    callback activate(int,int);
+    callback audio-control(int,int,float);
+    callback message-action(int,int,length,length);
+    in property <bool> actions-enabled;
+    in property <bool> menu-open;
+    in property <bool> can-reply: true;
+    in property <bool> selection-mode;
+    in property <bool> selected;
+    in property <length> viewport-top;
+    in property <length> viewport-bottom;
+    private property <bool> new-day: root.day-label != "";
+    // ZapFast: 10px list inset, 8px before a chip, 4px after it plus
+    // the list's 3px item spacing. Same-day sender changes add 5px.
+    private property <length> top-inset: root.first ? 10px : 0px;
+    private property <length> date-height: date-size.preferred-height + 10px;
+    private property <length> before-bubble: root.top-inset + (root.new-day ? 8px + root.date-height + 7px : (!root.first && root.message.first-in-run ? 5px : 0px));
+    out property <length> bubble-offset: root.before-bubble;
+    height: root.before-bubble + root.body-height + (root.last ? 14px : 0px);
+    if root.selection-mode && root.selected:Rectangle {
+        width:root.width;height:root.height;background:Theme.selected.with-alpha(0.5);
+    }
+    // Keep measurement independent of lazy conditional instantiation.
+    date-size := Text { visible: false; text: "Hy"; font-size: 12px; font-weight: 500; }
+    if root.new-day: date := RaisedSurface {
+        x: (parent.width - self.width) / 2; y: root.top-inset + 8px;
+        width: min(parent.width - 36px, date-label.preferred-width + 20px);
+        height: root.date-height;
+        border-radius: self.height / 2; fill: Theme.date;
+        date-label := Text {
+            x: 10px; width: parent.width - 20px; height: parent.height;
+            text: root.day-label;
+            color: Theme.secondary; font-size: 12px; font-weight: 500;
+            overflow: elide;
+            horizontal-alignment: center; vertical-alignment: center;
+        }
+    }
+    if !root.measurement-only && root.message.system-notice: SystemNotice {
+        y: root.before-bubble;
+        width: root.width; text: root.message.text;
+    }
+    if !root.measurement-only && !root.message.system-notice: bubble := MessageBubble {
+        y: root.before-bubble;
+        width: root.width;
+        message: root.message; group: root.group; tint: root.tint;
+        actions-enabled: root.actions-enabled; can-reply: root.can-reply;
+        menu-open: root.menu-open;
+        viewport-top: root.viewport-top - root.before-bubble;
+        viewport-bottom: root.viewport-bottom - root.before-bubble;
+        message-action(action,x,y) => {root.message-action(root.message.id,action,x,y);}
+        audio-control(action,value) => {root.audio-control(root.message.id,action,value);}
+        activate(index) => { root.activate(root.message.id,index); }
+    }
+    if root.selection-mode && !root.measurement-only && root.message.actionable:TouchArea {
+        y:root.before-bubble;width:root.width;height:root.body-height;
+        mouse-cursor:pointer;
+        accessible-role:checkbox;accessible-label:@tr("Select message from {}",root.message.sender);accessible-checked:root.selected;
+        accessible-action-default=>{root.message-action(root.message.id,11,0px,0px);}
+        clicked=>{root.message-action(root.message.id,11,0px,0px);}
+    }
+    if root.selected && root.selection-mode:Rectangle {x:1px;y:root.before-bubble;width:3px;height:root.body-height;background:Theme.accent;}
+}

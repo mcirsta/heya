@@ -1,0 +1,99 @@
+import { Theme } from "theme.slint";
+import { SoftButton } from "settings.slint";
+
+export component ConnectionBanner inherits Rectangle {
+    in property <int> state;
+    in property <string> error;
+    in property <bool> blocked;
+    in property <bool> can-relink;
+    callback connect();
+    callback disconnect();
+    callback relink();
+    background: Theme.surface;
+    preferred-height: contents.preferred-height;
+    contents := VerticalLayout {
+        padding: 12px;
+        spacing: 6px;
+        Text {
+            text: root.state == 9 ? root.error : root.state == 1 ? @tr("Opening your encrypted chats…") : root.state == 2 ? @tr("Connecting… Your saved chats are available.") : root.state == 6 ? @tr("Connection lost. Reconnecting automatically…") : root.state == 7 ? @tr("Saving and disconnecting…") : @tr("Offline. Your saved chats and drafts are available.");
+            color: Theme.secondary;
+            wrap: word-wrap;
+            font-size: 13px;
+            accessible-role: text;
+            accessible-label: self.text;
+        }
+
+        if root.state != 7 && (!root.blocked || root.can-relink): HorizontalLayout {
+            alignment: start;
+            SoftButton {
+                text: root.can-relink ? @tr("Link again") : root.state > 0 && root.state < 7 ? @tr("Cancel connection") : @tr("Connect");
+                activated => {
+                    if root.can-relink { root.relink(); }
+                    else if root.state > 0 && root.state < 7 { root.disconnect(); }
+                    else { root.connect(); }
+                }
+            }
+        }
+    }
+}
+
+export component AccountDialog inherits Rectangle {
+    in property <bool> unlink;
+    callback close();
+    callback confirm();
+    background: #00000080;
+    TouchArea {
+        clicked => { root.close(); }
+    }
+
+    FocusScope {
+        init => { self.focus(); }
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.close(); return accept; }
+            return reject;
+        }
+        dialog := Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: min(460px, parent.width - 32px);
+            height: content.preferred-height;
+            background: Theme.panel;
+            border-radius: 12px;
+            drop-shadow-offset-y: 12px;
+            drop-shadow-blur: 40px;
+            drop-shadow-color: Theme.modal-shadow;
+            TouchArea { }
+
+            content := VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+                Text {
+                    text: root.unlink ? @tr("Unlink this computer?") : @tr("Link this account again?");
+                    color: Theme.text;
+                    font-size: 20px;
+                    font-weight: 700;
+                    wrap: word-wrap;
+                }
+
+                Text {
+                    text: root.unlink ? @tr("Heya will ask WhatsApp to remove this linked device. Your encrypted chats and drafts stay on this computer. To reconnect afterwards, scan a new QR code with the same account.") : @tr("The previous session credentials will be replaced. Your encrypted chats and drafts stay on this computer. Scan the new QR code with the same WhatsApp account. Remove the old Heya entry from Linked devices on your phone if it is still listed.");
+                    color: Theme.secondary;
+                    wrap: word-wrap;
+                }
+
+                HorizontalLayout {
+                    spacing: 12px;
+                    SoftButton {
+                        text: @tr("Cancel");
+                        activated => { root.close(); }
+                    }
+
+                    confirm := SoftButton {
+                        text: root.unlink ? @tr("Unlink this computer") : @tr("Link again");
+                        activated => { root.confirm(); }
+                    }
+                }
+            }
+        }
+    }
+}

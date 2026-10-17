@@ -1,0 +1,301 @@
+import { AudioPlayer } from "audio.slint";
+import { MessageHoverControls, MessageMenuArrow } from "message-hover.slint";
+import { Theme, Metrics } from "theme.slint";
+import { PhotoTile } from "photo.slint";
+import { DocumentCard } from "document.slint";
+import { Avatar } from "components.slint";
+import { PreviewCard, MessageAction, MessageActionRow, ContentTarget } from "message-content.slint";
+export { MessageActionRow }
+
+export struct MessageRow {
+    wire-id: string,
+    sent-at: string,
+    operation-busy: bool,
+    system-notice: bool,
+    has-attachment:bool,
+    actionable:bool,
+    quote-sender:string,
+    quote-text:string,
+    forwarded:bool,
+    reactions:string,
+    own-reaction:string,
+    reaction-status:string,
+    id: int,
+    sender: string,
+    sender-initials: string,
+    text: string,
+    large-emoji: bool,
+    time: string,
+    outgoing: bool,
+    local: bool,
+    first-in-run: bool,
+    preview-url: string,
+    preview-title: string,
+    preview-description: string,
+    preview-domain: string,
+    has-thumbnail: bool,
+    thumbnail: image,
+    body-url: string,
+    actions: [MessageActionRow],
+    has-audio: bool,
+    has-document: bool,
+    document-name: string,
+    document-type: string,
+    document-details: string,
+    audio-waveform: string,
+    audio-duration: string,
+    has-photo: bool,
+    photo-width: float,
+    photo-height: float,
+    photo-image: image,
+    photo-state: int,
+    photo-status: string,
+}
+
+export component MessageBubble inherits Rectangle {
+    in property <MessageRow> message;
+    in property <bool> group;
+    in property <color> tint;
+    callback activate(int);
+    callback audio-control(int,float);
+    callback message-action(int,length,length);
+    in property <bool> actions-enabled;
+    in property <bool> menu-open;
+    in property <bool> can-reply: true;
+    in property <length> viewport-top;
+    in property <length> viewport-bottom;
+    private property <length> body-size: root.message.large-emoji ? Metrics.body * 2.4 : Metrics.body;
+    private property <bool> has-preview: root.message.preview-url != "";
+    private property <length> quote-height: root.message.quote-text!="" ? 50px : 0px;
+    private property <length> forwarded-height: root.message.forwarded ? 18px : 0px;
+    private property <length> metadata-height: root.quote-height+root.forwarded-height;
+    private property <bool> has-actions: root.message.actions.length > 0;
+    private property <length> preview-height: root.has-preview ? Metrics.message-preview-height + 6px : 0px;
+    private property <bool> show-sender: root.group && !root.message.outgoing && root.message.first-in-run;
+    private property <length> avatar-space: root.group && !root.message.outgoing ? 36px : 0px;
+    private property <length> max-bubble: min((root.width - 2 * Metrics.gutter) * 0.72, Metrics.bubble-cap) - root.avatar-space;
+    private property <length> sender-height: root.show-sender ? sender.preferred-height + 4px : 0px;
+    private property <length> footer-width: stamp.preferred-width;
+    // Single-line messages share a baseline with the footer. Wrapped text keeps
+    // a separate footer until the text renderer exposes last-line metrics.
+    private property <bool> inline-time: (root.message.has-audio && root.footer-width + 100px <= root.max-bubble) || (!root.message.has-audio && !root.message.has-photo && !root.message.has-document && natural.preferred-width + root.footer-width + 28px <= root.max-bubble && natural.preferred-height <= line-probe.preferred-height + 1px);
+    private property <length> photo-cap: max(1px,min(320px,root.max-bubble - 12px));
+    private property <float> photo-scale: min(1,min(root.photo-cap / 1px / max(1,root.message.photo-width), 440 / max(1,root.message.photo-height)));
+    private property <length> photo-width: max(min(120px,root.photo-cap),root.message.photo-width * root.photo-scale * 1px);
+    private property <length> photo-height: min(440px,max(90px,root.message.photo-height * root.photo-scale * 1px));
+    private property <bool> photo-only: root.message.has-photo && root.message.text == "";
+    private property <length> photo-space: root.message.has-photo ? root.photo-height + (root.photo-only ? 0px : 6px) : 0px;
+    private property <bool> document-only: root.message.has-document && root.message.text == "";
+    private property <length> document-preview-height: root.message.has-thumbnail ? min(140px,max(80px,(bubble.width - 12px) * 0.4)) : 0px;
+    private property <length> document-space: root.message.has-document ? root.document-preview-height + 84px + (root.document-only ? 0px : 6px) : 0px;
+    private property <color> fill: root.message.outgoing ? Theme.outgoing : Theme.incoming;
+    height: bubble.height + 3px + (root.message.reactions!="" || root.message.reaction-status!="" ? 22px : 0px);
+    hover := TouchArea {
+    x: 0px; y: 0px; width: root.width; height: root.height;
+    if root.show-sender: Avatar {
+        x: Metrics.gutter;
+        y: 0px;
+        width: 28px;
+        height: 28px;
+        initials: root.message.sender-initials;
+        tint: root.tint;
+    }
+    bubble := Rectangle {
+        x: root.message.outgoing ? parent.width - self.width - Metrics.gutter : Metrics.gutter + root.avatar-space;
+        y: 0px;
+        width: root.message.has-document ? min(root.max-bubble,352px) : root.message.has-audio ? min(root.max-bubble,340px) : root.message.has-photo ? min(root.max-bubble,max(root.photo-width + 12px,root.footer-width + 20px)) : min(root.max-bubble, max(root.has-preview || root.has-actions || root.quote-height > 0px ? 320px : 0px, max(root.footer-width, max(root.show-sender ? sender.preferred-width : 0px, natural.preferred-width + (root.inline-time ? root.footer-width + 8px : 0px))) + 20px));
+        height: (root.message.has-audio ? 48px : root.photo-only || root.document-only ? 0px : body.preferred-height) + root.sender-height + root.metadata-height + root.preview-height + root.photo-space + root.document-space + 11px + (root.inline-time || root.photo-only ? 0px : stamp.height + 4px) + actions.height;
+        background: root.fill;
+        border-radius: 10px;
+        border-top-left-radius: root.message.first-in-run && !root.message.outgoing ? 0px : 10px;
+        border-top-right-radius: root.message.first-in-run && root.message.outgoing ? 0px : 10px;
+        drop-shadow-offset-y: 2px;
+        drop-shadow-blur: 6px;
+        drop-shadow-color: Theme.shadow;
+        Rectangle {
+            x: 0px;
+            y: -1px;
+            width: parent.width;
+            height: parent.height;
+            border-radius: 10px;
+            border-top-left-radius: root.message.first-in-run && !root.message.outgoing ? 0px : 10px;
+            border-top-right-radius: root.message.first-in-run && root.message.outgoing ? 0px : 10px;
+            background: Theme.raised-edge(root.fill);
+        }
+
+        if root.message.first-in-run: Path {
+            x: root.message.outgoing ? parent.width - 3px : -8px;
+            y: -1px;
+            width: 11px;
+            height: 15.125px;
+            commands: root.message.outgoing ? "M 0 0 L 11 0 L 0 15.125 Z" : "M 11 0 L 11 15.125 L 0 0 Z";
+            fill: Theme.raised-edge(root.fill);
+        }
+        Rectangle {
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: parent.height;
+            border-radius: 10px;
+            border-top-left-radius: root.message.first-in-run && !root.message.outgoing ? 0px : 10px;
+            border-top-right-radius: root.message.first-in-run && root.message.outgoing ? 0px : 10px;
+            background: root.fill;
+        }
+
+        if root.message.first-in-run: tail := Path {
+            x: root.message.outgoing ? parent.width - 3px : -8px;
+            y: 0px;
+            width: 11px;
+            height: 15.125px;
+            commands: root.message.outgoing ? "M 0 0 L 11 0 L 0 15.125 Z" : "M 11 0 L 11 15.125 L 0 0 Z";
+            fill: root.fill;
+        }
+        sender := Text {
+            visible: root.show-sender;
+            x: 10px;
+            y: 6px + root.forwarded-height;
+            width: parent.width - 20px;
+            text: root.message.sender;
+            font-size: 13px;
+            font-weight: 600;
+            color: Theme.is-dark ? root.tint : #237969;
+            overflow: elide;
+        }
+
+        natural := Text {
+            visible: false;
+            text: root.message.text;
+            font-size: root.body-size;
+        }
+
+        line-probe := Text {
+            visible: false;
+            text: "Hy";
+            font-size: root.body-size;
+        }
+        if root.message.forwarded: Text {
+            x:10px;y:4px;width:parent.width - 20px;height:18px;
+            text:@tr("Forwarded");color:Theme.secondary;font-size:11px;font-italic:true;
+        }
+        if root.quote-height>0px: Rectangle {
+            x:6px;y:6px+root.sender-height+root.forwarded-height;width:parent.width - 12px;height:44px;
+            background:Theme.text.with-alpha(0.05);border-radius:5px;clip:true;
+            Rectangle {x:0px;y:0px;width:3px;height:parent.height;background:Theme.accent;}
+            Text {x:8px;y:4px;width:parent.width - 16px;height:16px;text:root.message.quote-sender;color:Theme.accent;font-size:12px;font-weight:600;overflow:elide;}
+            Text {x:8px;y:23px;width:parent.width - 16px;height:16px;text:root.message.quote-text;color:Theme.secondary;font-size:12px;overflow:elide;}
+        }
+
+        if root.has-preview: preview := PreviewCard {
+            x: 10px; y: 6px + root.sender-height + root.metadata-height; width: parent.width - 20px;
+            title: root.message.preview-title; description: root.message.preview-description;
+            domain: root.message.preview-domain; url: root.message.preview-url;
+            has-thumbnail: root.message.has-thumbnail; thumbnail: root.message.thumbnail;
+            activated => { root.activate(-1); }
+            copy => { root.activate(-4); }
+        }
+
+        if root.message.has-photo: photo := PhotoTile {
+            x: 6px; y: 6px + root.sender-height + root.metadata-height;
+            width: parent.width - 12px; height: root.photo-height;
+            picture: root.message.photo-image; state: root.message.photo-state; status: root.message.photo-status;
+            activated => { root.activate(-5); }
+        }
+        if root.message.has-audio: audio := AudioPlayer {
+            x: 10px; y: 6px + root.sender-height + root.metadata-height; width: parent.width - 20px;
+            message-id: root.message.id; waveform: root.message.audio-waveform; duration: root.message.audio-duration; footer-width: root.inline-time ? root.footer-width : 0px;
+            control(action,value) => { root.audio-control(action,value); }
+        }
+        if root.message.has-document: document := DocumentCard {
+            x: 6px; y: 6px + root.sender-height + root.metadata-height; width: parent.width - 12px;
+            file-name: root.message.document-name; file-type: root.message.document-type; details: root.message.document-details;
+            has-thumbnail: root.message.has-thumbnail; thumbnail: root.message.thumbnail;
+            preview-height: root.document-preview-height;
+        }
+        body := TextInput {
+            visible: root.message.body-url == "" && !root.photo-only && !root.document-only && !root.message.has-audio;
+            x: 10px;
+            y: 6px + root.sender-height + root.metadata-height + root.preview-height + root.photo-space + root.document-space;
+            width: parent.width - 20px - (root.inline-time ? root.footer-width + 8px : 0px);
+            height: self.preferred-height;
+            text: root.message.text;
+            color: Theme.text;
+            font-size: root.body-size;
+            read-only: true;
+            wrap: word-wrap;
+            single-line: false;
+            selection-background-color: Theme.accent;
+            selection-foreground-color: Theme.on-accent;
+            accessible-label: root.message.sender + ": " + root.message.text;
+        }
+
+        if root.message.body-url != "": link-body := Rectangle {
+            x: body.x; y: body.y; width: body.width; height: body.height;
+            StyledText {
+                width: parent.width; height: parent.height;
+                text: @markdown("<u>\{root.message.text}</u>");
+                default-font-size: root.body-size; default-color: Theme.link;
+            }
+            ContentTarget {
+                x: 0px; y: 0px; width: parent.width; height: parent.height;
+                label: root.message.text;
+                activated => { root.activate(-2); }
+                copy => { root.activate(-3); }
+            }
+        }
+
+        if root.photo-only: Rectangle {
+            x: stamp.x - 4px; y: stamp.y - 2px; width: stamp.width + 8px; height: stamp.height + 4px;
+            background: #0008; border-radius: 4px;
+        }
+        stamp := Text {
+            x: parent.width - self.width - 10px;
+            y: parent.height - actions.height - 5px - self.height;
+            width: min(self.preferred-width, parent.width - 20px);
+            height: max(15px, self.preferred-height);
+            wrap: word-wrap;
+            text: root.message.time + (root.message.local ? " · " + @tr("Local only") : "");
+            font-size: 11px;
+            color: root.photo-only ? white : root.message.outgoing ? Theme.outgoing-secondary : Theme.secondary;
+            vertical-alignment: center;
+        }
+        actions := Rectangle {
+            y: parent.height - self.height; width: parent.width;
+            // Fixed hit rows keep measurement independent of lazy repeater
+            // instantiation. Two-line labels fit within the same bounded row.
+            height: root.has-actions ? root.message.actions.length * Metrics.message-action-height + 5px : 0px;
+            clip: true; border-bottom-left-radius: 10px; border-bottom-right-radius: 10px;
+            action-layout := VerticalLayout {
+                padding: 0px; padding-bottom: 5px; spacing: 0px;
+                for action[index] in root.message.actions: MessageAction {
+                    action: action; outgoing: root.message.outgoing;
+                    activated => { root.activate(index); }
+                    copy => { root.activate(index + 100); }
+                }
+            }
+        }
+        if (root.actions-enabled || root.menu-open) && root.message.actionable && root.viewport-top <= 2px && root.viewport-bottom >= 28px: menu-arrow := MessageMenuArrow {
+            x:max(0px,parent.width - self.width - 2px);y:2px;
+            revealed:hover-controls.revealed;open:root.menu-open;fill:root.fill;
+            over-photo:root.message.has-photo && root.metadata-height==0px && !root.show-sender;
+            activated(x,y)=>{root.message-action(3,x,y);}
+        }
+    }
+    hover-controls := MessageHoverControls {
+        x: 0px; y: 0px; width: root.width; height: root.height;
+        bubble-x: bubble.x; bubble-width: bubble.width; bubble-height: bubble.height;
+        viewport-top: root.viewport-top; viewport-bottom: root.viewport-bottom;
+        outgoing: root.message.outgoing; sender: root.message.sender;
+        enabled: root.actions-enabled && root.message.actionable; can-reply: root.can-reply;
+        hovered: hover.has-hover; pointer-x: hover.mouse-x; pointer-y: hover.mouse-y;
+        activated(action,x,y) => {root.message-action(action,x,y);}
+    }
+    if root.message.reactions!="" || root.message.reaction-status!="": reaction-badge := Rectangle {
+        x:root.message.outgoing ? bubble.x+bubble.width - self.width : bubble.x+8px;
+        y:bubble.height - 1px;height:22px;width:min(bubble.width,summary.preferred-width+16px);
+        background:Theme.overlay;border-radius:11px;
+        summary := Text {x:8px;y:0px;width:parent.width - 16px;height:22px;text:root.message.reactions+(root.message.reaction-status!="" ? " · …" : "");font-size:12px;color:Theme.secondary;vertical-alignment:center;overflow:elide;}
+        Tooltip {text:@markdown("\{root.message.reaction-status}");}
+        ContentTarget {label:@tr("Message reactions");activated=>{root.message-action(0,self.absolute-position.x,self.absolute-position.y);}}
+    }
+    }
+}

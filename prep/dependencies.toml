@@ -1,0 +1,26 @@
+# Dependency planning reference, not an application Cargo.toml. The root
+# Cargo.toml and Cargo.lock are authoritative for the implemented application.
+# Versions/features were checked against reference sources. Joint resolution
+# and compilation are acceptance gates in milestone M0.
+[workspace.package]
+edition = "2024"
+rust-version = "1.99"
+publish = false
+
+[workspace.dependencies]
+slint = { version = "=1.18.1", default-features = false, features = ["std", "backend-winit", "renderer-skia-vulkan", "renderer-skia-opengl", "renderer-software", "accessibility", "compat-1-18"] }
+slint-build = "=1.18.1"
+whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "0dc38af07632f48f0cf6c66df285f1643fc22b95", default-features = false, features = ["sqlite-storage", "tokio-transport", "tokio-runtime", "ureq-client", "tokio-native"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs"] }
+# Match libsqlite3-sys 0.38 used by the protocol store. Select one SQLite
+# implementation for the whole process; do not add bundled plain SQLite.
+rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl"] }
+
+# Media spike candidates, aligned with Slint's 1.18.1 GStreamer example.
+# Keep behind the application's eventual `media-gstreamer` feature.
+gstreamer = "0.23"
+gstreamer-app = "0.23"
+gstreamer-video = "0.23"
+
+# Add platform clipboard, keyring, dialog and notification crates only after
+# checking Slint's existing integration and testing on the target desktop.

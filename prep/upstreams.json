@@ -1,0 +1,117 @@
+{
+  "reviewed_on": "2026-10-13",
+  "platform_order": [
+    "linux",
+    "windows",
+    "macos"
+  ],
+  "rust_toolchain_candidate": "1.99.0",
+  "sources": {
+    "whatsapp-rust": {
+      "repository": "https://github.com/oxidezap/whatsapp-rust",
+      "revision": "0dc38af07632f48f0cf6c66df285f1643fc22b95",
+      "package_version": "0.7.0",
+      "role": "protocol dependency, consumed unchanged through a Heya adapter where possible",
+      "license": "MIT",
+      "patches": [
+        {
+          "path": "patches/document-thumbnail.patch",
+          "sha256": "48725c40ebeb152f8cd639f55918fadd28313b1365d6ea08fa91a6ae484ef729",
+          "crate": "wacore",
+          "vendored_path": "vendor/wacore",
+          "status": "local, not submitted",
+          "reason": "Document thumbnail media crypto context missing from MediaType"
+        }
+      ]
+    },
+    "zapfast": {
+      "repository": "https://github.com/crmne/zapfast",
+      "revision": "c73ce57522d28eff4da1a5cc9e3b6de0f27b0de0",
+      "package_version": "0.19.0",
+      "role": "visual reference and design inspiration; no application logic reuse or feature parity requirement; development snapshot",
+      "license": "MIT; assets have separate licenses"
+    },
+    "slint": {
+      "repository": "https://github.com/slint-ui/slint",
+      "revision": "372cf0ee5577c3dfec309a45e7b778ba4e81b734",
+      "tag": "v1.18.1",
+      "package_version": "1.18.1",
+      "role": "UI toolkit and integration examples",
+      "license": "GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR commercial"
+    },
+    "fastframe-visual-assets": {
+      "repository": "https://github.com/crmne/fastframe",
+      "revision": "491f7194d555578bf75e2ce9706b2b2b4d42cf31",
+      "tag": "v0.5.1",
+      "role": "Eight shared palette files and Lucide icons resolved by the pinned ZapFast lockfile; no runtime dependency",
+      "license": "MIT; Lucide assets ISC"
+    },
+    "parley": {
+      "repository": "https://github.com/linebender/parley",
+      "package_version": "0.11.1",
+      "crate_sha256": "22d2ff88bd3f7d68d1d9b09c7e6209f9a8e8c05088295140a2bcf2e9b17038c5",
+      "role": "Slint text shaper; isolated platform color-emoji fallback fix",
+      "license": "Apache-2.0 OR MIT",
+      "patches": [
+        {
+          "path": "patches/parley-color-emoji.patch",
+          "sha256": "9e542df01c01a220b508185f98d90cbf042b48c423c705bef86af5202daa30de",
+          "crate": "parley",
+          "vendored_path": "vendor/parley",
+          "status": "local, not submitted",
+          "reason": "Prefer platform emoji family for emoji clusters while retaining text presentation and ordinary keycap bases"
+        }
+      ]
+    }
+  },
+  "reference_files": {
+    "docs/reference/zapfast-dark.png": {
+      "sha256": "a9ef2841301c4da4870af4ce47bbe3a6a861d8b71fdaa0294ac6a69ac9916fd8"
+    },
+    "docs/reference/zapfast-light.png": {
+      "sha256": "8171b9e8c59fda886b11835f978bd4f515a8c3f6846b4a5c24fe100042d50896"
+    },
+    "third_party/licenses/ZapFast-MIT.txt": {
+      "sha256": "bb88b08f452b933a9e7cd83abc7f009a8e298e41dfc9bca9d6e50f0435b2fa43"
+    },
+    "third_party/licenses/whatsapp-rust-MIT.txt": {
+      "sha256": "6613c7e94b361fdd87fbfe7f03e0344f926066f51f37936ec09a55dd4328dc23"
+    },
+    "third_party/licenses/Lucide-ISC.txt": {
+      "sha256": "b495047bd93a9b06913511076f504daba17d5bbeb3e0650f3bb53a4220329c57"
+    },
+    "third_party/licenses/Inter-OFL.txt": {
+      "sha256": "262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a"
+    },
+    "third_party/licenses/NotoColorEmoji-OFL.txt": {
+      "sha256": "500bb1ccf43df7bbb522112f9133a52b16e1c35e809632f5d8609b179152de5b"
+    },
+    "ui/themes/Catppuccin Latte.json": {
+      "sha256": "b99bef4c810b4909f68428f8cc3ddde03dea80ac8dd8ad1a66f743529212e86e"
+    },
+    "ui/themes/Catppuccin.json": {
+      "sha256": "f88a3b20f470a129001f34b5f3fdec1d7823de5ab75b9ca1503ce72643789d3d"
+    },
+    "ui/themes/Nord.json": {
+      "sha256": "d4e2e8fce15442dd1533e7c5c0c47f7a363ec0d15d201b0bc127b4aef6bcbfeb"
+    },
+    "ui/themes/Ristretto.json": {
+      "sha256": "54a54190d0fe09cae6946a31efaa8a630993d747a5741ab6fdaccfcc85cf911c"
+    },
+    "ui/themes/Rose Pine Dawn.json": {
+      "sha256": "6fa67ef765db32ca7617004fbb82d3a72954fc765275025d35948d55da866f43"
+    },
+    "ui/themes/Rose Pine Moon.json": {
+      "sha256": "1023af76a3fc3e69a3b011ec249b31ff512f23cd4376b6a61337b049cd794913"
+    },
+    "ui/themes/Rose Pine.json": {
+      "sha256": "22a4ec4f1e0bd4acf252e21de2811f554e20ad02c1bc19fa4308bde59a0dc70e"
+    },
+    "ui/themes/Tokyo Night.json": {
+      "sha256": "ac7f407a78c1b647d5515fa15d8d1a6670021b3eae48777122b2df2257b27f4c"
+    },
+    "third_party/licenses/Fastframe-MIT.txt": {
+      "sha256": "bb88b08f452b933a9e7cd83abc7f009a8e298e41dfc9bca9d6e50f0435b2fa43"
+    }
+  }
+}

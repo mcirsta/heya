@@ -1,0 +1,91 @@
+import { Theme } from "theme.slint";
+import { ContentTarget } from "message-content.slint";
+
+export global AudioPlayback {
+    in property <int> id;
+    in property <int> state;
+    in property <float> fraction;
+    in property <string> time;
+    in property <string> speed: "1×";
+    in property <string> error;
+}
+
+export component AudioPlayer inherits Rectangle {
+    in property <int> message-id;
+    in property <string> waveform;
+    in property <string> duration;
+    in property <length> footer-width;
+    callback control(int,float);
+    private property <bool> active: AudioPlayback.id == root.message-id;
+    private property <int> state: root.active ? AudioPlayback.state : 0;
+    private property <float> fraction: root.active ? AudioPlayback.fraction : 0;
+    height: 48px;
+    play := Rectangle {
+        x: 0px; y: 0px; width: 36px; height: 36px; border-radius: 18px;
+        background: Theme.accent.with-alpha(0.22);
+        Path {
+            x: 10px; y: 9px; width: 16px; height: 18px;
+            viewbox-width: 16; viewbox-height: 18;
+            commands: root.state == 2 ? "M 1 1 H 6 V 17 H 1 Z M 10 1 H 15 V 17 H 10 Z" : root.state == 1 ? "M 2 3 H 14 V 15 H 2 Z" : "M 3 1 L 15 9 L 3 17 Z";
+            fill: Theme.accent;
+        }
+        play-target := ContentTarget {
+            width: parent.width; height: parent.height;
+            label: root.state == 2 ? "Pause audio" : root.state == 1 ? "Cancel audio loading" : root.state == 4 ? "Retry audio" : "Play audio";
+            activated => { root.control(0,0); }
+        }
+    }
+    wave := Rectangle {
+        x: 46px; y: 0px; width: max(1px,parent.width - 100px); height: 30px;
+        Path {
+            x: 0px; y: 0px;
+            width: parent.width; height: parent.height; viewbox-width: 192; viewbox-height: 30; fit: fill;
+            commands: root.waveform; fill: Theme.secondary.with-alpha(0.7);
+        }
+        if root.active && root.fraction > 0: played-clip := Rectangle {
+            x: 0px; y: 0px;
+            width: parent.width * root.fraction; height: parent.height; clip: true;
+            played-wave := Path {
+                x: 0px; y: 0px;
+                width: wave.width; height: wave.height; viewbox-width: 192; viewbox-height: 30; fit: fill;
+                commands: root.waveform; fill: Theme.accent;
+            }
+        }
+        if root.state == 2 || root.state == 3: Rectangle {
+            x: max(0px,min(parent.width - 10px,parent.width * root.fraction - 5px)); y: 10px;
+            width: 10px; height: 10px; border-radius: 5px; background: Theme.accent;
+        }
+        TouchArea {
+            enabled: root.state == 2 || root.state == 3;
+            mouse-cursor: pointer;
+            clicked => { seek-focus.focus(); root.control(1,self.mouse-x / self.width); }
+        }
+        seek-focus := FocusScope {
+            enabled: root.state == 2 || root.state == 3;
+            key-pressed(event) => {
+                if event.text == Key.LeftArrow { root.control(1,max(0,root.fraction - 0.05)); return accept; }
+                if event.text == Key.RightArrow { root.control(1,min(1,root.fraction + 0.05)); return accept; }
+                return reject;
+            }
+        }
+        accessible-role: slider;
+        accessible-label: "Audio position";
+        accessible-value: root.fraction * 100;
+        accessible-value-minimum: 0;
+        accessible-value-maximum: 100;
+        accessible-action-increment => { root.control(1,min(1,root.fraction + 0.05)); }
+        accessible-action-decrement => { root.control(1,max(0,root.fraction - 0.05)); }
+    }
+    speed := Rectangle {
+        x: parent.width - 44px; y: 5px; width: 44px; height: 20px; border-radius: 10px;
+        background: Theme.accent.with-alpha(0.12);
+        Text {text: AudioPlayback.speed; color: Theme.accent; font-size: 11.5px; horizontal-alignment: center; vertical-alignment: center;}
+        ContentTarget {width: parent.width; height: parent.height; label: "Playback speed " + AudioPlayback.speed; activated => {root.control(2,0);}}
+    }
+    duration-label := Text {
+        x: 46px; y: 33px; width: max(1px,parent.width - 46px - root.footer-width - 8px); height: 15px; vertical-alignment: center;
+        text: root.state == 1 ? "Loading…" : root.state == 4 ? "Unable to play · retry" : root.active && (root.state == 2 || root.state == 3) ? AudioPlayback.time : root.duration;
+        color: Theme.secondary; font-size: 11.5px; overflow: elide;
+        accessible-label: root.state == 4 ? AudioPlayback.error : self.text;
+    }
+}

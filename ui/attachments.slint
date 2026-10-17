@@ -1,0 +1,120 @@
+import { Theme } from "theme.slint";
+import { IconButton } from "components.slint";
+import { SoftButton } from "settings.slint";
+import { ScrollView } from "std-widgets.slint";
+export struct AttachmentItem { key:string,name:string,size:string,preview:image }
+
+export component AttachmentMenu inherits Rectangle {
+    in property <length> anchor-x;in property <length> anchor-y;
+    callback choose(int);callback close();
+    private property <int> selection;
+    FocusScope {
+        init=>{self.focus();}
+        key-pressed(event)=>{if event.text==Key.Escape {root.close();return accept;}if event.text==Key.DownArrow || event.text==Key.UpArrow {root.selection=1 - root.selection;return accept;}if event.text==Key.Return {root.choose(root.selection);return accept;}return reject;}
+        TouchArea {clicked=>{root.close();}}
+        Rectangle {
+            x:clamp(root.anchor-x,8px,max(8px,root.width - self.width - 8px));
+            y:clamp(root.anchor-y - self.height - 8px,8px,max(8px,root.height - self.height - 8px));
+            width:min(250px,parent.width - 16px);height:100px;
+            background:Theme.overlay;border-radius:18px;
+            drop-shadow-offset-y:4px;drop-shadow-blur:14px;drop-shadow-color:Theme.modal-shadow;
+            TouchArea {}
+            for label[index] in [@tr("Photos"),@tr("Documents")]:Rectangle {
+                x:10px;y:10px + index * 40px;width:parent.width - 20px;height:40px;border-radius:8px;
+                background:hit.has-hover || root.selection==index ? Theme.hover : transparent;
+                accessible-role:button;accessible-label:label;
+                accessible-action-default=>{root.choose(index);}
+                Image{x:10px;y:12px;width:18px;height:18px;source:index==0 ? @image-url("icons/photo.svg") : @image-url("icons/document.svg");colorize:index==0 ? #007bfc : #7f66ff;}
+                Text{x:42px;width:parent.width - 50px;height:parent.height;text:label;color:Theme.text;font-size:15px;vertical-alignment:center;}
+                FocusScope {key-pressed(event)=>{if event.text==Key.Return||event.text==" " {root.choose(index);return accept;}return reject;}}
+                hit:=TouchArea{mouse-cursor:pointer;clicked=>{root.choose(index);}}
+            }
+        }
+    }
+}
+
+export component AttachmentReview inherits Rectangle {
+    in property <int> phase;
+    in property <string> recipient;
+    in property <[AttachmentItem]> items;
+    in property <int> selected;
+    in-out property <string> caption;
+    in property <string> status;
+    in property <float> progress;
+    in property <bool> available;
+    callback cancel();callback send();callback select(int);callback remove();
+    private property <bool> busy:root.phase==1||root.phase==2||root.phase==4||root.phase==5;
+    background:#00000080;
+    FocusScope {
+        init=>{self.focus();}
+        key-pressed(event)=>{if event.text==Key.Escape {root.cancel();return accept;}return reject;}
+        TouchArea {}
+        panel:=Rectangle {
+            x:(parent.width - self.width) / 2;y:(parent.height - self.height) / 2;
+            width:min(660px,parent.width - 24px);height:min(650px,parent.height - 24px);
+            background:Theme.panel;border-radius:12px;
+            drop-shadow-offset-y:8px;drop-shadow-blur:24px;drop-shadow-color:Theme.modal-shadow;
+            TouchArea {}
+            VerticalLayout {
+                padding:root.height<440px ? 12px : 16px;spacing:root.height<440px ? 6px : 10px;
+                HorizontalLayout {
+                    height:32px;
+                    Text{text:root.recipient=="" ? @tr("Send attachments") : @tr("Send to {}",root.recipient);color:Theme.text;font-size:18px;font-weight:600;vertical-alignment:center;overflow:elide;horizontal-stretch:1;}
+                    IconButton{icon:@image-url("icons/close.svg");label:root.busy ? @tr("Cancel attachment upload") : @tr("Close attachments");enabled:root.phase!=5;activated=>{root.cancel();}}
+                }
+                if root.height>=440px: preview:=Rectangle {
+                    vertical-stretch:1;min-height:20px;background:Theme.surface;border-radius:8px;clip:true;
+                    if root.items.length>0 && root.items[root.selected].preview.width>0:Image {
+                        x:8px;y:8px;width:parent.width - 16px;height:parent.height - 16px;source:root.items[root.selected].preview;image-fit:contain;
+                    }
+                    if root.items.length>0 && root.items[root.selected].preview.width==0:VerticalLayout {
+                        padding:12px;spacing:12px;
+                        Rectangle {vertical-stretch:1;}
+                        Image{source:@image-url("icons/document.svg");colorize:Theme.accent;height:48px;image-fit:contain;}
+                        Text{text:root.items[root.selected].name;color:Theme.text;wrap:word-wrap;overflow:elide;horizontal-alignment:center;}
+                        Text{text:root.items[root.selected].size;color:Theme.secondary;horizontal-alignment:center;}
+                        Rectangle {vertical-stretch:1;}
+                    }
+                    if root.items.length==0:Text{text:root.status;color:Theme.secondary;wrap:word-wrap;horizontal-alignment:center;vertical-alignment:center;}
+                }
+                if root.items.length>0: file-list:=ScrollView {
+                    height:root.height<440px ? 40px : 54px;horizontal-scrollbar-policy:always-on;vertical-scrollbar-policy:always-off;
+                    content-width:root.items.length * 94px;content-height:40px;
+                    for item[index] in root.items:Rectangle {
+                        x:index * 94px;y:0px;width:88px;height:min(40px,file-list.visible-height);background:root.selected==index ? Theme.selected : Theme.surface;
+                        border-radius:6px;border-width:root.selected==index ? 1px : 0px;border-color:Theme.accent;
+                        accessible-role:button;accessible-label:item.name;accessible-enabled:!root.busy;
+                        accessible-action-default=>{if !root.busy {root.select(index);}}
+                        if item.preview.width>0:Image{x:4px;y:4px;width:32px;height:32px;source:item.preview;image-fit:contain;}
+                        Text{x:item.preview.width>0 ? 40px : 4px;width:parent.width - self.x - 4px;height:parent.height;text:item.name;font-size:11px;color:Theme.text;overflow:elide;vertical-alignment:center;}
+                        TouchArea{enabled:!root.busy;mouse-cursor:pointer;clicked=>{root.select(index);}}
+                    }
+                }
+                if root.items.length>0:Rectangle {
+                    height:root.height<440px ? 40px : 54px;background:Theme.surface;border-radius:8px;
+                    Text{x:10px;y:8px;text:@tr("Add a caption");color:Theme.dim;visible:root.caption=="";}
+                    caption-field:=Flickable{x:10px;y:8px;width:parent.width - 20px;height:parent.height - 16px;content-width:self.width;content-height:max(self.height,caption.preferred-height);
+                        caption:=TextInput{x:0px;y:0px;width:parent.width;height:max(parent.height,self.preferred-height);text<=>root.caption;color:Theme.text;wrap:word-wrap;single-line:false;enabled:!root.busy;accessible-label:@tr("Attachment caption");page-height:caption-field.height;
+                            cursor-position-changed(pos)=>{
+                                if pos.y + caption-field.content-y < 0px {caption-field.content-y=clamp(-pos.y,caption-field.height - self.height,0px);}
+                                else if pos.y + 20px + caption-field.content-y > caption-field.height {caption-field.content-y=clamp(caption-field.height - pos.y - 20px,caption-field.height - self.height,0px);}
+                            }
+                        }
+                    }
+                }
+                if root.phase==4:Rectangle {
+                    height:3px;background:Theme.outline;
+                    Rectangle{x:0px;y:0px;height:parent.height;width:parent.width * clamp(root.progress,0,1);background:Theme.accent;}
+                }
+                Text {text:root.status;color:Theme.secondary;font-size:12px;wrap:word-wrap;overflow:elide;max-height:42px;}
+                HorizontalLayout {
+                    height:36px;spacing:10px;
+                    if root.items.length>0:IconButton{icon:@image-url("icons/trash.svg");label:@tr("Remove attachment");enabled:!root.busy;activated=>{root.remove();}}
+                    Rectangle{horizontal-stretch:1;}
+                    SoftButton{text:root.busy ? @tr("Cancel") : @tr("Close");enabled:root.phase!=5;activated=>{root.cancel();}}
+                    SoftButton{text:root.phase==6 ? @tr("Retry") : @tr("Send");enabled:!root.busy && root.available && root.items.length>0;activated=>{root.send();}}
+                }
+            }
+        }
+    }
+}

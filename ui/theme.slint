@@ -1,0 +1,93 @@
+import { Palette } from "std-widgets.slint";
+// Visual tokens from the pinned ZapFast UI; see docs/ui-source-audit.md.
+export global Metrics {
+    out property <length> message-action-height: 44px;
+    out property <length> message-preview-height: 88px;
+    out property <length> header: 60px;
+    out property <length> sidebar: 320px;
+    out property <length> narrow: 620px;
+    out property <length> row: 68px;
+    out property <length> search: 34px;
+    out property <length> chip: 28px;
+    out property <length> body: 14.5px;
+    out property <length> gutter: 18px;
+    out property <length> bubble-cap: 560px;
+    out property <length> composer-control: 36px;
+    out property <length> panel-shadow-reach: 9px;
+}
+
+export struct ThemeColors {
+    window: color,
+    panel: color,
+    canvas: color,
+    surface: color,
+    hover: color,
+    selected: color,
+    outline: color,
+    text: color,
+    secondary: color,
+    dim: color,
+    accent: color,
+    accent-hover: color,
+    on-accent: color,
+    incoming: color,
+    outgoing: color,
+    outgoing-secondary: color,
+    date: color,
+    wallpaper-ink: color,
+}
+
+export global Theme {
+    in-out property <bool> dark: false;
+    in property <bool> follow-system: false;
+    public function sync-widgets() {
+        Palette.color-scheme = Theme.follow-system ? ColorScheme.unknown : Theme.dark ? ColorScheme.dark : ColorScheme.light;
+    }
+    changed dark => { Theme.sync-widgets(); }
+    changed follow-system => { Theme.sync-widgets(); }
+    // In Slint 1.18's Fluent style the public color-scheme stays `unknown`
+    // after a reset to system. Its resolved, solid background still follows
+    // native appearance changes. Read that public colour instead of treating
+    // `unknown` as light or depending on SlintInternal.
+    private property <color> widget-background: Palette.background;
+    out property <bool> is-dark: follow-system ? widget-background.red < 128 : dark;
+    in property <bool> custom: false;
+    in property <ThemeColors> colors;
+    in property <string> font-family: "Inter";
+    in property <string> emoji-font: "Noto Color Emoji";
+    in property <bool> show-wallpaper: true;
+    // The app supplies pixels decoded on its startup worker. The embedded
+    // default also keeps the standalone Slint preview usable.
+    in property <image> wallpaper-image: @image-url("assets/wallpaper.png");
+    out property <color> window: custom ? colors.window : is-dark ? #0b141a : #f0f2f5;
+    out property <color> modal-shadow: is-dark ? #0000008c : #00000032;
+    out property <color> panel: custom ? colors.panel : is-dark ? #111b21 : #ffffff;
+    out property <color> overlay: custom ? colors.panel : is-dark ? #233138 : #ffffff;
+    out property <color> canvas: custom ? colors.canvas : is-dark ? #0b141a : #efeae2;
+    out property <color> surface: custom ? colors.surface : is-dark ? #202c33 : #f0f2f5;
+    out property <color> hover: custom ? colors.hover : is-dark ? #2a3942 : #e6e9ec;
+    out property <color> selected: custom ? colors.selected : is-dark ? #35444d : #d9dde1;
+    out property <color> outline: custom ? colors.outline : is-dark ? #222d34 : #e9edef;
+    out property <color> text: custom ? colors.text : is-dark ? #e9edef : #111b21;
+    out property <color> secondary: custom ? colors.secondary : is-dark ? #97a5ae : #515f67;
+    out property <color> dim: custom ? colors.dim : is-dark ? #8a989f : #636b72;
+    out property <color> accent: custom ? colors.accent : is-dark ? #00a884 : #008069;
+    out property <color> link: custom ? colors.accent : is-dark ? #53bdeb : #027eb5;
+    out property <color> accent-hover: custom ? colors.accent-hover : is-dark ? #06cf9c : #006e5a;
+    out property <color> on-accent: custom ? colors.on-accent : is-dark ? #0b141a : #ffffff;
+    out property <color> incoming: custom ? colors.incoming : is-dark ? #202c33 : #ffffff;
+    out property <color> outgoing: custom ? colors.outgoing : is-dark ? #005c4b : #d9fdd3;
+    out property <color> outgoing-secondary: custom ? colors.outgoing-secondary : is-dark ? #bcc5cb : #515f67;
+    out property <color> date: custom ? colors.date : is-dark ? #19242a : #ffffff;
+    out property <color> shadow: #00000034;
+    // ZapFast caps lift shadows at alpha 50 in either theme. Panel edges use
+    // 0.64 of that; chat-row cards use 0.6 of the bubble shadow's alpha 52.
+    out property <color> panel-shadow: #00000020;
+    out property <color> row-shadow: #0000001f;
+    // doodle_ink() evaluated for the default chat backgrounds. The SVG itself
+    // retains its per-path opacity, so the tile stays faint in either theme.
+    out property <color> wallpaper-ink: custom ? colors.wallpaper-ink : is-dark ? #ffffff29 : #1e1e1e1d;
+    public pure function raised-edge(fill: color) -> brush {
+        return Theme.is-dark ? fill.mix(Theme.text, 0.872) : fill.mix(#ffffff, 0.52);
+    }
+}

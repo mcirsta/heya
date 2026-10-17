@@ -1,0 +1,204 @@
+import { Theme } from "theme.slint";
+import { IconButton } from "components.slint";
+import { ScrollView } from "std-widgets.slint";
+
+export component SessionButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> enabled: true;
+    callback activated();
+    height: 38px;
+    border-radius: 19px;
+    background: root.enabled ? (hit.has-hover ? Theme.accent-hover : Theme.accent) : Theme.surface;
+    border-width: focus.has-focus ? 1px : 0px;
+    border-color: Theme.text;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if root.enabled { root.activated(); } }
+    Text {
+        text: root.label;
+        color: root.enabled ? Theme.on-accent : Theme.dim;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    focus := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if event.text == " " || event.text == Key.Return { root.activated(); return accept; }
+            return reject;
+        }
+    }
+
+    hit := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { focus.focus(); root.activated(); }
+    }
+}
+
+// Card dimensions, spacing and shadow follow ZapFast's ui/login.rs at the pin.
+// The connection states and controls are Heya's implementation.
+export component SessionView inherits Rectangle {
+    callback open-settings();
+    in property <int> state;
+    in property <string> error;
+    in property <bool> blocked;
+    in property <bool> can-relink;
+    in property <image> qr;
+    in property <int> seconds;
+    callback connect();
+    callback disconnect();
+    callback relink();
+    private property <bool> active: root.state > 0 && root.state < 8;
+    private property <color> window-color: Theme.window;
+    background: @linear-gradient(180deg, root.window-color.mix(Theme.accent, 0.9), root.window-color);
+    changed state => { scroll.content-y = 0px; }
+
+    scroll := ScrollView {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        content-width: self.visible-width;
+        content-height: max(self.visible-height, card.height + 24px);
+        horizontal-scrollbar-policy: always-off;
+        card := Rectangle {
+            x: (scroll.visible-width - self.width) / 2;
+            y: max(12px, (scroll.visible-height - self.height) / 2);
+            width: min(460px, scroll.visible-width - 24px);
+            height: contents.preferred-height;
+            background: Theme.panel;
+            border-radius: 16px;
+            border-width: 1px;
+            border-color: Theme.outline;
+            drop-shadow-offset-y: 16px;
+            drop-shadow-blur: 48px;
+            drop-shadow-color: Theme.is-dark ? #0000008c : #00000032;
+            contents := VerticalLayout {
+                padding: 32px;
+                spacing: 12px;
+                Rectangle {
+                    height: 64px;
+                    Image {
+                        x: (parent.width - self.width) / 2;
+                        y: 0px;
+                        width: 64px;
+                        height: 64px;
+                        source: @image-url("assets/heya.svg");
+                        image-fit: contain;
+                        accessible-role: image;
+                        accessible-label: "Heya";
+                    }
+                }
+
+                Text {
+                    text: "Heya";
+                    color: Theme.text;
+                    font-size: 28px;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                }
+
+                Text {
+                    text: @tr("Your conversations, at home on your desktop.");
+                    color: Theme.secondary;
+                    font-size: 14.5px;
+                    wrap: word-wrap;
+                    horizontal-alignment: center;
+                }
+
+                Rectangle {
+                    height: 4px;
+                }
+
+                status := Text {
+                    text: root.state == 0 ? @tr("Connect to WhatsApp") : root.state == 1 ? @tr("Opening your saved session…") : root.state == 2 ? @tr("Connecting…") : root.state == 3 ? @tr("Link your phone") : root.state == 4 ? @tr("Finishing pairing…") : root.state == 5 ? @tr("Connected to WhatsApp") : root.state == 6 ? @tr("Reconnecting…") : root.state == 7 ? @tr("Saving and disconnecting…") : root.state == 8 ? @tr("Disconnected") : @tr("Connection needs attention");
+                    color: Theme.text;
+                    font-size: 17px;
+                    font-weight: 600;
+                    wrap: word-wrap;
+                    horizontal-alignment: center;
+                    accessible-role: text;
+                    accessible-label: self.text;
+                }
+
+                if root.state == 3: VerticalLayout {
+                    spacing: 12px;
+                    Rectangle {
+                        height: 256px;
+                        qr-image := Image {
+                            x: (parent.width - self.width) / 2;
+                            y: 0px;
+                            width: 256px;
+                            height: 256px;
+                            source: root.qr;
+                            image-fit: contain;
+                            image-rendering: pixelated;
+                            accessible-role: image;
+                            accessible-label: @tr("WhatsApp pairing QR code");
+                        }
+                    }
+
+                    Text {
+                        text: @tr("This code expires in {} seconds", root.seconds);
+                        color: Theme.dim;
+                        font-size: 12px;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: @tr("Open WhatsApp on your phone. Go to Linked devices, choose Link a device, then scan this code.");
+                        color: Theme.secondary;
+                        font-size: 14.5px;
+                        wrap: word-wrap;
+                        horizontal-alignment: center;
+                    }
+                }
+                if root.state == 9: Text {
+                    text: root.error;
+                    color: Theme.secondary;
+                    font-size: 14.5px;
+                    wrap: word-wrap;
+                    horizontal-alignment: center;
+                }
+                if root.state == 0 || root.state == 8: Text {
+                    text: @tr("Connect to resume a saved session or link your phone. Your session is encrypted and its key is kept in the desktop keyring.");
+                    color: Theme.secondary;
+                    font-size: 14.5px;
+                    wrap: word-wrap;
+                    horizontal-alignment: center;
+                }
+                if root.state == 5: Text {
+                    text: @tr("Your linked session is ready. Disconnecting keeps it saved for your next connection.");
+                    color: Theme.secondary;
+                    font-size: 14.5px;
+                    wrap: word-wrap;
+                    horizontal-alignment: center;
+                }
+                action := SessionButton {
+                    label: root.can-relink ? @tr("Link again") : root.state == 7 ? @tr("Disconnecting…") : root.active ? (root.state == 5 ? @tr("Disconnect") : @tr("Cancel connection")) : @tr("Connect");
+                    enabled: root.state != 7 && (!root.blocked || root.can-relink);
+                    activated => { if root.can-relink { root.relink(); } else if root.active { root.disconnect(); } else { root.connect(); } }
+                }
+
+                Text {
+                    text: @tr("Your session and chat archive are encrypted on this device.");
+                    color: Theme.dim;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+    }
+
+    IconButton {
+        x: parent.width - 44px;
+        y: 12px;
+        icon: @image-url("icons/settings.svg");
+        label: @tr("Settings");
+        activated => { root.open-settings(); }
+    }
+}

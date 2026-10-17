@@ -1,0 +1,188 @@
+import { VoiceRecorder } from "voice.slint";
+import { Theme, Metrics } from "theme.slint";
+import { IconButton, RaisedSurface } from "components.slint";
+
+export component Composer inherits Rectangle {
+    in-out property <string> draft;
+    in property <bool> enter-sends: true;
+    callback hint-dismissed();
+    in-out property <bool> show-hint: true;
+    callback send();
+    callback edited(string);
+    callback emoji(length,length);
+    callback attach(length,length);
+    in property <bool> attachment-enabled:true;
+    in property <bool> voice-supported;
+    in property <bool> voice-send-enabled;
+    in property <int> voice-phase;
+    in property <string> voice-time;
+    in property <string> voice-waveform;
+    in property <string> voice-status;
+    in property <bool> voice-playing;
+    callback voice-control(int);
+    callback insert-emoji-text(string,int,int);
+    public function insert-emoji(value:string) {root.insert-emoji-text(value,editor.anchor-position-byte-offset,editor.cursor-position-byte-offset);}
+    public function set-cursor(position:int) {editor.set-selection-offsets(position,position);}
+    in property <int> reply-id;
+    in property <string> reply-sender;
+    in property <string> reply-text;
+    callback cancel-reply();
+    public function focus-editor() {editor.focus();}
+    in property <bool> enabled: true;
+    in property <bool> can-send: true;
+    out property <length> field-height: pill.height;
+    private property <length> line-height: line-probe.preferred-height;
+    private property <length> band: max(Metrics.composer-control, round((root.line-height + 14px) / 1px) * 1px);
+    private property <length> text-height: max(root.line-height, editor.preferred-height);
+    private property <length> visible-text: min(root.text-height, root.line-height * 6);
+    private property <length> field-margin: round((root.band - root.line-height) / 2px) * 1px;
+    out property <length> natural-height: pill.height + 8px + (root.voice-phase>0 ? 30px : (root.show-hint ? 33px : 0px)) + (root.reply-id>0 ? 58px : 0px);
+    height: root.natural-height;
+    line-probe := Text {
+        visible: false;
+        text: "Hy";
+        font-size: Metrics.body;
+    }
+    // A single flow owns both positions. Free-positioned elements with an
+    // omitted y are centered by Slint, which made the pill overlap the hint.
+    VerticalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        padding-top: 0px;
+        padding-bottom: 8px;
+        spacing: 8px;
+        if root.reply-id>0: Rectangle {
+            height:50px;background:Theme.surface;border-radius:8px;
+            Rectangle {x:0px;y:0px;width:3px;height:parent.height;background:Theme.accent;}
+            Text {x:12px;y:6px;width:parent.width - 52px;height:18px;text:root.reply-sender;color:Theme.accent;font-weight:600;overflow:elide;}
+            Text {x:12px;y:26px;width:parent.width - 52px;height:18px;text:root.reply-text;color:Theme.secondary;font-size:12px;overflow:elide;}
+            IconButton {x:parent.width - 36px;y:9px;icon:@image-url("icons/close.svg");label:@tr("Cancel reply");enabled:root.voice-phase!=5;activated=>{root.cancel-reply();if root.voice-phase==0 {editor.focus();}}}
+        }
+        pill := RaisedSurface {
+            height: root.voice-phase>0 && root.voice-phase!=6 ? root.band + 4px : max(root.band, root.visible-text + root.field-margin * 2) + 4px;
+            border-radius: 24px;
+            fill: Theme.incoming;
+            content:=Rectangle {
+                visible:root.voice-phase==0 || root.voice-phase==6;
+            if editor.has-focus: focus-ring := Rectangle {
+                border-radius: pill.border-radius;
+                border-width: 1px;
+                border-color: Theme.accent;
+            }
+
+            Text {
+                x: field.x;
+                y: field.y;
+                width: field.width;
+                height: root.line-height;
+                text: @tr("Type a message");
+                color: Theme.dim;
+                font-size: Metrics.body;
+                visible: root.draft == "";
+            }
+
+            IconButton {
+                x: 2px + max(0px,(root.band - 34px) / 2);
+                y: parent.height - self.height - 2px;
+                icon-size: 22px;
+                icon: @image-url("icons/plus.svg");
+                label: @tr("Attachments");
+                enabled: root.enabled && root.voice-phase==0 && root.can-send && root.attachment-enabled;
+                activated=>{root.attach(self.absolute-position.x,self.absolute-position.y);}
+            }
+
+            IconButton {
+                x: 32px + max(0px,(root.band - 34px) / 2);
+                y: parent.height - self.height - 2px;
+                icon-size: 22px;
+                icon: @image-url("icons/smile.svg");
+                label: @tr("Emoji");
+                enabled: root.enabled && root.voice-phase==0;
+                activated=>{root.emoji(self.absolute-position.x,self.absolute-position.y);}
+            }
+
+            field := Flickable {
+                x: 72px + max(0px,(root.band - 34px) / 2);
+                y: 2px + root.field-margin;
+                width: parent.width - self.x - root.band - 12px;
+                height: root.visible-text;
+                content-width: self.width;
+                content-height: root.text-height;
+                editor := TextInput {
+                    x: 0px;
+                    y: 0px;
+                    width: parent.width;
+                    height: root.text-height;
+                    text <=> root.draft;
+                    enabled: root.enabled && root.voice-phase==0;
+                    edited => { root.edited(self.text); }
+                    color: Theme.text;
+                    font-size: Metrics.body;
+                    wrap: word-wrap;
+                    single-line: false;
+                    page-height: field.height;
+                    selection-background-color: Theme.accent;
+                    selection-foreground-color: Theme.on-accent;
+                    accessible-label: @tr("Message draft");
+                    cursor-position-changed(pos) => {
+                        if pos.y + field.content-y < 0px {
+                            field.content-y = min(0px, max(field.height - self.height, -pos.y));
+                        } else if pos.y + root.line-height + field.content-y > field.height {
+                            field.content-y = min(0px, max(field.height - self.height, field.height - pos.y - root.line-height));
+                        }
+                    }
+                    key-pressed(event) => {
+                        if event.text == Key.Return && !event.modifiers.shift && !event.modifiers.alt && (event.modifiers.control || (root.enter-sends && !event.modifiers.meta)) {
+                            if root.enabled && root.can-send { root.send(); }
+                            return accept;
+                        }
+                        return reject;
+                    }
+                }
+            }
+
+            send-button := IconButton {
+                x: parent.width - self.width - 2px;
+                y: parent.height - self.height - 2px;
+                width: root.band;
+                height: root.band;
+                icon-size: root.band * 0.46;
+                icon: root.draft.is-empty ? @image-url("icons/mic.svg") : @image-url("icons/send.svg");
+                label: root.draft.is-empty ? @tr("Record a voice message") : @tr("Send message");
+                muted-background: root.draft.is-empty;
+                filled: true;
+                enabled: root.enabled && root.voice-phase==0 && root.can-send && (!root.draft.is-empty || (root.voice-supported && root.attachment-enabled));
+                activated => { if root.draft.is-empty { root.voice-control(0); } else { root.send(); editor.focus(); } }
+            }
+            }
+            if root.voice-phase>0 && root.voice-phase!=6:VoiceRecorder {phase:root.voice-phase;time:root.voice-time;waveform:root.voice-waveform;status:root.voice-status;playing:root.voice-playing;can-send:root.voice-send-enabled && root.enabled && root.can-send;control(action)=>{root.voice-control(action);}}
+        }
+        if root.voice-phase>0:Text{text:root.voice-status;height:22px;color:Theme.secondary;font-size:11px;overflow:elide;vertical-alignment:center;}
+
+        if root.show-hint && root.voice-phase==0: shortcut-hint := Rectangle {
+            height: 25px;
+            HorizontalLayout {
+                padding: 0px;
+                spacing: 8px;
+                dismiss-hint := IconButton {
+                    width: 25px;
+                    height: 25px;
+                    icon-size: 13px;
+                    icon: @image-url("icons/close.svg");
+                    label: @tr("Hide shortcut hint");
+                    activated => { root.show-hint = false; root.hint-dismissed(); }
+                }
+
+                hint-label := Text {
+                    horizontal-stretch: 1;
+                    height: 25px;
+                    text: root.enter-sends ? @tr("Enter sends · Shift+Enter for a new line") : @tr("Ctrl+Enter sends · Enter for a new line");
+                    color: Theme.dim;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+        }
+    }
+}

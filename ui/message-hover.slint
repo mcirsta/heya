@@ -1,0 +1,124 @@
+import { Theme } from "theme.slint";
+
+export component MessageMenuArrow inherits Rectangle {
+    in property <bool> revealed;
+    in property <bool> open;
+    in property <bool> over-photo;
+    in property <color> fill;
+    callback activated(length,length);
+    width: 30px; height: 26px;
+    accessible-role: button;
+    accessible-label: @tr("Message menu");
+    accessible-action-default => {root.activate();}
+    function activate() {root.activated(root.absolute-position.x + root.width,root.absolute-position.y + root.height);}
+    if root.revealed || root.open || focus.has-focus: Rectangle {
+        width:parent.width;height:parent.height;border-radius:5px;
+        background:root.over-photo ? #0007 : @linear-gradient(90deg,root.fill.with-alpha(0),root.fill 35%);
+        border-width:focus.has-focus ? 1px : 0px;border-color:Theme.accent;
+        glyph := Image {x:5px;y:3px;width:20px;height:20px;source:@image-url("icons/chevron-down.svg");colorize:root.over-photo ? white : Theme.secondary;}
+    }
+    focus := FocusScope {
+        key-pressed(event)=>{if event.text==Key.Return || event.text==" " || event.text==Key.DownArrow {root.activate();return accept;}return reject;}
+    }
+    TouchArea {mouse-cursor:pointer;clicked=>{focus.focus();root.activate();}}
+}
+
+// Visual measurements from the pinned ZapFast reaction affordance. The input
+// observer belongs to the message's ancestor, so selecting text or using media
+// controls never loses hover and this layer never covers the bubble's input.
+component HoverButton inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    in property <string> accessible-name: root.label;
+    in property <bool> revealed;
+    callback activated();
+    out property <bool> focused: focus.has-focus;
+    private property <bool> painted: root.revealed || focus.has-focus;
+    width: 26px; height: 26px;
+    accessible-role: button;
+    accessible-label: root.accessible-name;
+    accessible-action-default => { root.activated(); }
+    // Keep keyboard/input targets present, but create no rounded rectangles,
+    // shadow cache entries or icon render nodes for an unrevealed control.
+    if root.painted: Rectangle {
+        x: 0px; y: 0px; width: root.width; height: root.height;
+        border-radius: 13px;
+        background: hit.has-hover ? Theme.hover : Theme.overlay;
+        drop-shadow-offset-y: 2px;
+        drop-shadow-blur: 6px;
+        drop-shadow-color: Theme.shadow;
+        border-width: focus.has-focus ? 1px : 0px;
+        border-color: Theme.accent;
+        glyph := Image {
+            x: 5.5px; y: 5.5px; width: 15px; height: 15px;
+            source: root.icon;
+            colorize: hit.has-hover ? Theme.text : Theme.secondary;
+        }
+    }
+    focus := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Return || event.text == " " {root.activated(); return accept;}
+            return reject;
+        }
+    }
+    hit := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { focus.focus(); root.activated(); }
+    }
+    Tooltip { text: @markdown("\{root.label}"); }
+}
+
+export component MessageHoverControls inherits Rectangle {
+    in property <length> bubble-x;
+    in property <length> bubble-width;
+    in property <length> bubble-height;
+    in property <length> viewport-top;
+    in property <length> viewport-bottom;
+    in property <bool> outgoing;
+    in property <string> sender;
+    in property <bool> enabled;
+    in property <bool> can-reply: true;
+    in property <bool> can-forward: true;
+    in property <bool> hovered;
+    in property <length> pointer-x;
+    in property <length> pointer-y;
+    callback activated(int,length,length); // 0 react, 1 reply, 2 forward
+    private property <length> shown-top: max(0px,root.viewport-top + 2px);
+    private property <length> shown-bottom: min(root.bubble-height,root.viewport-bottom - 2px);
+    private property <length> before: root.bubble-x - 32px;
+    private property <length> after: root.bubble-x + root.bubble-width + 6px;
+    private property <length> preferred: root.outgoing ? root.before : root.after;
+    private property <length> fallback: root.outgoing ? root.after : root.before;
+    private property <length> react-x: root.fits(root.preferred) ? root.preferred : root.fits(root.fallback) ? root.fallback : clamp(root.preferred,2px,max(2px,root.width - 28px));
+    private property <length> step: root.react-x + 13px < root.bubble-x + root.bubble-width / 2 ? -30px : 30px;
+    private property <length> reply-x: root.react-x + root.step;
+    // Separate forwarding from the React/Reply pair: 10px gap instead of 4px.
+    private property <length> forward-x: root.react-x + root.step * (root.reply-fits ? 2 : 1) + (root.step < 0px ? -6px : 6px);
+    private property <bool> reply-fits: root.can-reply && root.fits(root.reply-x);
+    private property <bool> forward-fits: root.can-forward && root.fits(root.forward-x);
+    private property <length> reach-left: min(root.bubble-x, min(root.react-x,min(root.reply-fits ? root.reply-x : root.react-x,root.forward-fits ? root.forward-x : root.react-x)));
+    private property <length> reach-right: max(root.bubble-x + root.bubble-width,max(root.react-x,max(root.reply-fits ? root.reply-x : root.react-x,root.forward-fits ? root.forward-x : root.react-x)) + 26px);
+    out property <bool> revealed: root.enabled && root.hovered && root.pointer-x >= root.reach-left && root.pointer-x <= root.reach-right && root.pointer-y >= root.shown-top && root.pointer-y <= root.shown-bottom;
+    private property <bool> shown: root.enabled && root.shown-bottom - root.shown-top >= 26px && root.width >= 30px;
+    private property <length> button-y: (root.shown-top + root.shown-bottom - 26px) / 2;
+    function fits(x: length) -> bool { return x >= 2px && x + 26px <= root.width - 2px; }
+    if root.shown: react := HoverButton {
+        x: root.react-x; y: root.button-y;
+        icon: @image-url("icons/smile.svg"); label: @tr("React");
+        accessible-name: root.outgoing ? @tr("React to your message") : @tr("React to {}'s message", root.sender);
+        revealed: root.revealed;
+        activated => {root.activated(0,react.absolute-position.x,react.absolute-position.y);}
+    }
+    if root.shown && root.reply-fits: reply := HoverButton {
+        x: root.reply-x; y: root.button-y;
+        icon: @image-url("icons/reply.svg"); label: @tr("Reply");
+        revealed: root.revealed;
+        activated => {root.activated(1,reply.absolute-position.x,reply.absolute-position.y);}
+    }
+    if root.shown && root.forward-fits: forward := HoverButton {
+        x: root.forward-x; y: root.button-y;
+        icon: @image-url("icons/forward.svg"); label: @tr("Forward");
+        revealed: root.revealed;
+        activated => {root.activated(2,forward.absolute-position.x,forward.absolute-position.y);}
+    }
+}

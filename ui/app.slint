@@ -1,0 +1,1197 @@
+export { AudioPlayback } from "audio.slint";
+import { ListView, ScrollView } from "std-widgets.slint";
+import { Theme, Metrics } from "theme.slint";
+import {
+    IconButton,
+    Pill,
+    Avatar,
+    Wallpaper,
+    RaisedSurface,
+    PanelShadow,
+} from "components.slint";
+import { PhotoViewer } from "photo.slint";
+import { Composer } from "composer.slint";
+import { MicrophoneDialog } from "voice.slint";
+import { MessageOperationDialog, ForwardDestination } from "message-actions.slint";
+import { EmojiPicker, EmojiChoice, EmojiGridRow, EmojiCategory } from "emoji-picker.slint";
+import { MessageMenu, MessageMenuEntry } from "message-menu.slint";
+import { MessageDetails, MessageInfoRow, SelectionBar } from "message-details.slint";
+export { MessageInfoRow }
+import { AttachmentMenu, AttachmentReview, AttachmentItem } from "attachments.slint";
+export { AttachmentItem }
+import { DownloadStatus } from "download-status.slint";
+export { EmojiChoice, EmojiGridRow, EmojiCategory, ForwardDestination }
+import { MessageBubble, MessageRow, MessageActionRow } from "message.slint";
+import { SystemNotice } from "system-notice.slint";
+import { SessionView } from "session.slint";
+import { TimelineItem, TimelineRow } from "timeline-item.slint";
+import {
+    SettingsPage,
+    SettingRow,
+    SettingSection,
+    AudioDeviceRow,
+    SoftButton,
+} from "settings.slint";
+import { NewChatDialog } from "new-chat.slint";
+import { CompactChat } from "compact-chat.slint";
+import { ConnectionBanner, AccountDialog } from "connection.slint";
+export { Theme, MessageRow, MessageActionRow, TimelineRow, SettingRow, SettingSection, AudioDeviceRow }
+export { ThemeColors } from "theme.slint";
+
+export struct ChatRow {
+    id: int,
+    title: string,
+    initials: string,
+    tint: color,
+    preview: string,
+    time: string,
+    unread: int,
+    marked-unread: bool,
+    avatar: image,
+}
+
+export component AppWindow inherits Window {
+    title: root.demo-mode ? "Heya — offline demo" : "Heya";
+    icon: @image-url("assets/heya.svg");
+    preferred-width: 1200px;
+    preferred-height: 800px;
+    min-width: 520px;
+    min-height: 480px;
+    default-font-family: Theme.font-family;
+    default-font-size: 14px;
+    background: Theme.panel;
+    in property <bool> demo-mode: true;
+    in-out property <bool> attachment-menu;
+    in-out property <length> attachment-x;
+    in-out property <length> attachment-y;
+    in property <bool> voice-supported;
+    in property <[AudioDeviceRow]> audio-devices;
+    in property <bool> audio-devices-loaded;
+    in property <bool> settings-io-busy;
+    callback audio-devices-ready();
+    callback request-audio-devices();
+    callback download-folder-ready(string);
+    in property <int> voice-phase;
+    in property <bool> voice-playing;
+    in property <string> voice-time;
+    in property <string> voice-waveform;
+    in property <string> voice-status;
+    in-out property <bool> microphone-dialog;
+    public function close-microphone-dialog() {
+        root.microphone-dialog = false;
+        root.focus-composer();
+    }
+    callback voice-control(int);
+    in property <bool> attachment-voice;
+    in property <int> attachment-phase;
+    in-out property <bool> attachment-review-open;
+    out property <bool> attachment-modal:root.attachment-menu || (root.attachment-phase>0 && root.attachment-review-open);
+    in property <string> attachment-title;
+    in property <[AttachmentItem]> attachment-items;
+    in property <int> attachment-selected;
+    in-out property <string> attachment-caption;
+    in property <string> attachment-status;
+    in property <float> attachment-progress;
+    callback pick-attachments(int);
+    callback attachment-control(int,int,string);
+
+    in-out property <bool> settings-open;
+    changed settings-open=>{if root.settings-open {root.selection-control(0);if root.voice-phase>0 && root.voice-phase!=5 {root.voice-control(1);}root.request-audio-devices();}}
+    in-out property <bool> new-chat-open;
+    in-out property <string> new-chat-error;
+    changed new-chat-open => { if root.new-chat-open { root.selection-control(0); if root.voice-phase>0 && root.voice-phase!=5 {root.voice-control(1);} root.new-chat-error = ""; } }
+    in-out property <bool> sidebar-hidden;
+    in-out property <string> settings-query;
+    in property <[SettingSection]> settings-sections;
+    in property <string> settings-status;
+    in property <bool> enter-sends: true;
+    in property <bool> auto-download-photos: true;
+    changed auto-download-photos => { root.request-photos(); }
+    callback request-photos();
+    callback activate-photo(int);
+    callback audio-control(int,int,float);
+    callback message-action(int,int,length,length);
+    in-out property <int> message-dialog;
+    in-out property <bool> action-context-menu;
+    in-out property <string> action-edit-text;
+    in-out property <string> action-expected-text;
+    in-out property <int> control-count:1;
+    in property <string> info-sent;
+    in property <string> info-status;
+    in property <string> info-wire;
+    in property <[MessageInfoRow]> info-receipts;
+    callback open-message-control(int);
+    callback confirm-message-control();
+    callback close-message-info();
+    in-out property <bool> selection-active;
+    in-out property <int> selection-count;
+    in-out property <int> selection-revision;
+    pure callback message-selected(int,int)->bool;
+    callback select-message(int);
+    callback selection-control(int);
+    in-out property <int> action-message;
+    in-out property <int> action-chat;
+    in-out property <length> action-x;
+    in-out property <length> action-y;
+    in-out property <string> action-summary;
+    in-out property <string> action-own-emoji;
+    in-out property <bool> action-source-actionable;
+    in property <[string]> menu-reactions;
+    callback prepare-quick-reactions(string);
+    callback remember-reaction(string);
+    in-out property <string> action-error;
+    in-out property <int> action-request;
+    in-out property <bool> action-pending;
+    in property <[MessageMenuEntry]> message-menu-entries;
+    in-out property <int> message-menu-selection: 7;
+    callback choose-message-menu(int);
+    callback navigate-message-menu(int);
+    in property <[EmojiGridRow]> emoji-rows;
+    in property <[EmojiCategory]> emoji-categories;
+    in-out property <int> emoji-columns:10;
+    in-out property <string> emoji-query;
+    in-out property <int> emoji-selection;
+    in-out property <int> emoji-scroll-row;
+    in-out property <int> emoji-jump-revision;
+    callback begin-emoji-picker();
+    callback request-emojis();
+    callback choose-emoji(string);
+    callback jump-emoji-category(int);
+    callback navigate-emoji(int);
+    callback open-composer-emoji(length,length);
+    callback insert-composer-emoji(string,int,int);
+    public function insert-draft-emoji(value:string) {composer.insert-emoji(value);}
+    public function set-composer-cursor(position:int) {composer.set-cursor(position);}
+    in property <[ForwardDestination]> action-destinations;
+    in property <[ForwardDestination]> action-all-destinations;
+    in property <int> reply-id;
+    in property <string> reply-sender;
+    in property <string> reply-text;
+    callback cancel-reply();
+    callback search-message-actions(string);
+    callback react-message(string);
+    callback forward-message(int);
+    public function focus-composer() {
+        if !root.settings-open && !root.new-chat-open && root.account-dialog==0
+            && root.photo-viewer-id==0 && root.message-dialog==0 && !root.attachment-modal
+            && root.voice-phase==0 && !root.microphone-dialog && !root.selection-active && root.show-conversation {
+            composer.focus-editor();
+        }
+    }
+    public function close-message-actions() {if root.message-dialog==8 {root.close-message-info();}let was-composer = root.message-dialog==4;root.message-dialog=0;if was-composer {composer.focus-editor();} else {app-focus.focus();}}
+    in-out property <int> photo-viewer-id;
+    in property <image> photo-viewer-image;
+    in property <string> photo-viewer-status;
+    in property <bool> photo-viewer-ready;
+    changed photo-viewer-id => { root.request-photos(); }
+    in-out property <bool> show-shortcut-hint: true;
+    callback preference-changed(string, int);
+    callback search-settings(string);
+    callback refresh-settings();
+    changed connection-state => { if root.message-dialog==3 {root.close-message-actions();} root.refresh-settings(); root.request-photos(); }
+    out property <string> text-layout-font: Theme.font-family;
+    changed text-layout-font => { root.layout-timeline(); }
+    public function toggle-settings() {
+        root.settings-open = !root.settings-open;
+        root.settings-query = "";
+        root.search-settings("");
+    }
+    in property <int> connection-state;
+    in property <string> connection-error;
+    in property <bool> connection-blocked;
+    in property <bool> connection-can-relink;
+    changed account-dialog=>{if root.account-dialog!=0 && root.voice-phase>0 && root.voice-phase!=5{root.voice-control(1);}}
+    in-out property <int> account-dialog; // 1: relink, 2: unlink
+    in property <image> pairing-qr;
+    in property <int> qr-seconds;
+    in property <bool> archive-ready;
+    in property <bool> live-chat-view;
+    changed live-chat-view => { if !root.live-chat-view {root.audio-control(0,3,0);} }
+    in property <bool> live-can-send;
+    in-out property <int> live-revision;
+    in property <int> live-shown-revision: -1;
+    // One signal for the window, independent of materialized message widgets.
+    in property <bool> read-window-active;
+    in property <bool> read-window-occluded;
+    in property <int> read-tail;
+    in property <bool> read-needs-clear;
+    changed read-needs-clear => { if root.read-needs-clear { root.read-visible(); } }
+    out property <int> read-visible-message: !root.demo-mode && root.live-chat-view
+        && root.read-window-active && !root.read-window-occluded && !root.minimized
+        && !root.settings-open && !root.new-chat-open && root.account-dialog==0
+        && root.photo-viewer-id==0 && root.message-dialog==0 && !root.attachment-modal && !root.microphone-dialog
+        && (!root.narrow || root.show-conversation)
+        && root.live-revision==root.live-shown-revision ? root.read-tail : 0;
+    callback read-visible();
+    changed read-visible-message => { root.read-visible(); }
+    in property <int> draft-revision;
+    in property <int> send-draft-version;
+    in property <int> send-request-id;
+    in property <bool> send-pending;
+    callback draft-edited(string);
+    callback new-chat(string);
+    callback connect-account();
+    callback disconnect-account();
+    callback relink-account();
+    callback logout-account();
+    in property <[ChatRow]> chats;
+    in property <[MessageRow]> messages;
+    in property <int> selected-id: 1;
+    in property <string> chat-title: "Ada Lovelace";
+    in property <string> chat-initials: "AL";
+    in property <color> chat-tint: #c6a1e4;
+    in property <image> chat-avatar;
+    in property <image> account-avatar;
+    in-out property <int> avatar-first;
+    in-out property <int> avatar-count: 16;
+    callback request-avatars();
+    changed avatar-first => { root.request-avatars(); }
+    changed avatar-count => { root.request-avatars(); }
+    changed selected-id => { if root.message-dialog==8 {root.close-message-info();} root.selection-control(0); if root.voice-phase>0 && root.voice-phase!=5 {root.voice-control(1);} root.attachment-menu=false; root.message-dialog=0; root.audio-control(0,3,0); root.photo-viewer-id = 0; root.request-avatars(); }
+    in property <string> chat-presence;
+    in property <bool> chat-online;
+    out property <int> presence-chat: !root.demo-mode && root.live-chat-view
+        && !root.settings-open && !root.minimized
+        && (!root.narrow || root.show-conversation)
+        && root.live-revision==root.live-shown-revision ? root.selected-id : 0;
+    callback request-presence();
+    changed presence-chat => { root.request-presence(); }
+    in property <bool> chat-is-group;
+    in-out property <string> transcript;
+    callback prepare-transcript() -> string;
+    in property <int> older-count;
+    in property <bool> phone-history-available;
+    in property <bool> phone-history-loading;
+    callback fetch-phone-history();
+    changed phone-history-available => {root.layout-timeline();}
+    out property <bool> history-active: root.selected-id > 0
+        && (root.demo-mode || root.live-chat-view)
+        && !root.settings-open && !root.minimized
+        && (!root.narrow || root.show-conversation)
+        && !root.new-chat-open && root.account-dialog==0
+        && root.photo-viewer-id==0 && root.message-dialog==0 && !root.attachment-modal && !root.microphone-dialog
+        && (root.demo-mode || root.live-revision==root.live-shown-revision);
+    changed history-active => {root.layout-timeline();}
+    in-out property <string> draft;
+    in-out property <string> query;
+    in-out property <bool> unread-only: false;
+    in-out property <string> notice;
+    in-out property <int> view-revision;
+    in-out property <bool> show-conversation: false;
+    changed show-conversation => { if !root.show-conversation {root.audio-control(0,3,0);} }
+    in-out property <length> timeline-y <=> timeline.content-y;
+    in-out property <length> timeline-height <=> timeline.content-height;
+    out property <length> timeline-width: timeline.visible-width;
+    out property <length> timeline-top: timeline.absolute-position.y;
+    private property <length> status-height:104px;
+    private property <length> status-width:min(360px,root.width - 24px);
+    private property <length> status-left:max(8px,root.width - root.status-width - 12px);
+    private property <length> upload-top:min(68px,max(8px,root.height - root.status-height - 8px));
+    private property <length> download-top:min(root.attachment-phase>=4 && !root.attachment-review-open ? 180px : 68px,max(8px,root.height - root.status-height - 8px));
+    pure callback context-allowed(length,length)->bool;
+    context-allowed(x,y)=> {
+        return !root.selection-active && root.voice-phase==0 && root.history-active
+            && x>=timeline.absolute-position.x && x<timeline.absolute-position.x+timeline.visible-width
+            && y>=root.timeline-top && y<root.timeline-top+timeline.visible-height
+            && !(root.download-phase>0 && x>=root.status-left && x<root.status-left+root.status-width && y>=root.download-top && y<root.download-top+root.status-height)
+            && !(root.attachment-phase>=4 && !root.attachment-review-open && x>=root.status-left && x<root.status-left+root.status-width && y>=root.upload-top && y<root.upload-top+root.status-height);
+    }
+    in property <[TimelineRow]> timeline-rows;
+    in property <TimelineRow> timeline-probe;
+    out property <length> timeline-measured-height: measure-row.height;
+    out property <length> timeline-measured-prefix: measure-row.bubble-offset;
+    out property <length> timeline-measured-body-height: root.timeline-probe.message.system-notice ? measure-notice.height : measure-bubble.height;
+    callback layout-timeline();
+    callback follow-timeline-bottom();
+    changed timeline-width => { root.layout-timeline(); }
+    changed timeline-visible => { root.layout-timeline(); }
+    changed timeline-y => { root.layout-timeline(); }
+    out property <length> timeline-visible: timeline.visible-height;
+    private property <bool> narrow: root.width < Metrics.narrow;
+    private property <length> requested-sidebar: Metrics.sidebar;
+    private property <length> sidebar-width: clamp(root.requested-sidebar, 260px, min(520px, root.width - 360px));
+    private property <bool> show-sidebar: root.narrow ? (!root.show-conversation && !root.settings-open) : !root.sidebar-hidden;
+    private property <length> conversation-left: root.narrow ? 0px : root.show-sidebar ? root.sidebar-width : 60px;
+    callback select-chat(int);
+    callback search-chats(string);
+    callback filter-unread(bool);
+    callback send-message(int, string);
+    callback load-older(int,int) -> bool;
+    in property <int> download-phase;
+    in property <string> download-name;
+    in property <string> download-status;
+    in property <float> download-fraction;
+    callback download-message(int,int);
+    callback download-control(int);
+    callback activate-message(int,int);
+    callback request-message-images();
+    public function copy-value(value: string) {
+        root.transcript = value;
+        copy-source.select-all(); copy-source.copy();
+        root.notice = @tr("Copied");
+    }
+
+    public function scroll-to-bottom() {
+        root.follow-timeline-bottom();
+    }
+    public function close-photo() {
+        root.photo-viewer-id = 0;
+        root.request-photos();
+        app-focus.focus();
+    }
+
+    app-focus := FocusScope {
+        init => { Theme.sync-widgets(); self.focus(); }
+        key-pressed(event) => {
+            if root.microphone-dialog {
+                if event.text==Key.Escape || event.text==Key.Return {root.close-microphone-dialog();}
+                return accept;
+            }
+            if root.voice-phase>0 && event.text==Key.Escape {if root.voice-phase!=5{root.voice-control(1);}return accept;}
+            if root.voice-phase>0 && event.text==Key.Return {return accept;}
+            if root.attachment-modal && root.attachment-phase>0 {if event.text==Key.Escape {root.attachment-control(0,0,root.attachment-caption);return accept;}return reject;}
+            if root.attachment-menu {if event.text==Key.Escape {root.attachment-menu=false;return accept;}return reject;}
+            if root.message-dialog!=0 {if event.text==Key.Escape {root.close-message-actions();return accept;} return reject;}
+            if root.selection-active && event.text==Key.Escape {root.selection-control(0);root.focus-composer();return accept;}
+            if root.selection-active && event.text==Key.Return {return accept;}
+            if root.photo-viewer-id != 0 { if event.text == Key.Escape { root.close-photo(); return accept; } return reject; }
+            if event.modifiers.control && event.text == "," { root.toggle-settings(); return accept; }
+            if event.modifiers.control && (event.text == "b" || event.text == "B") { root.sidebar-hidden = !root.sidebar-hidden; return accept; }
+            if event.modifiers.control && (event.text == "n" || event.text == "N") { root.new-chat-open = true; return accept; }
+            if event.text == Key.Escape {
+                if root.account-dialog != 0 { root.account-dialog = 0; return accept; }
+                if root.new-chat-open { root.new-chat-open = false; return accept; }
+                if root.settings-open { root.settings-open = false; return accept; }
+            }
+            return reject;
+        }
+        FocusScope {
+            enabled: !root.new-chat-open && root.account-dialog == 0 && root.photo-viewer-id == 0 && root.message-dialog==0 && !root.attachment-modal && !root.microphone-dialog;
+            measure-row := TimelineItem {
+                visible: false;
+                measurement-only: true;
+                body-height: root.timeline-measured-body-height;
+                width: root.timeline-width;
+                message: root.timeline-probe.message;
+                first: root.timeline-probe.first;
+                last: root.timeline-probe.last;
+                day-label: root.timeline-probe.day-label;
+                group: root.chat-is-group;
+                tint: root.chat-tint;
+            }
+            // Fixed probes measure synchronously. Conditional visible delegates
+            // are created lazily and must never supply the height index.
+            measure-bubble := MessageBubble {
+                visible: false; width: root.timeline-width;
+                message: root.timeline-probe.message;
+                group: root.chat-is-group; tint: root.chat-tint;
+            }
+            measure-notice := SystemNotice {
+                visible: false; width: root.timeline-width;
+                text: root.timeline-probe.message.text;
+            }
+
+            Rectangle {
+                visible: root.demo-mode || root.live-chat-view;
+                if root.show-sidebar: sidebar := Rectangle {
+                    x: 0px;
+                    y: 0px;
+                    width: root.narrow ? root.width : root.sidebar-width;
+                    height: root.height;
+                    background: Theme.panel;
+                    VerticalLayout {
+                        spacing: 0px;
+                        sidebar-header := Rectangle {
+                            height: Metrics.header;
+                            Avatar {
+                                x: 14px;
+                                y: 13px;
+                                width: 34px;
+                                height: 34px;
+                                initials: "h";
+                                picture: root.account-avatar;
+                                tint: #91d6bc;
+                                accessible-role: button;
+                                accessible-label: @tr("Account settings");
+                                accessible-action-default => { root.settings-open = true; root.settings-query = "Account"; root.search-settings("Account"); }
+                                TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.settings-open = true; root.settings-query = "Account"; root.search-settings("Account"); }
+                                }
+                            }
+
+                            Text {
+                                x: 58px;
+                                width: max(0px, header-actions.x - self.x - 8px);
+                                height: parent.height;
+                                text: @tr("Chats");
+                                color: Theme.text;
+                                font-size: 20px;
+                                font-weight: 700;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+
+                            header-actions := HorizontalLayout {
+                                x: parent.width - self.width - 14px;
+                                y: 15px;
+                                width: root.narrow ? 68px : 106px;
+                                height: 30px;
+                                spacing: 8px;
+                                if !root.narrow: IconButton {
+                                    icon: @image-url("icons/panel-left.svg");
+                                    label: @tr("Collapse the chat list (Ctrl+B)");
+                                    activated => { root.sidebar-hidden = true; }
+                                }
+                                IconButton {
+                                    icon: @image-url("icons/square-pen.svg");
+                                    label: @tr("New chat");
+                                    activated => { root.new-chat-open = true; }
+                                }
+
+                                IconButton {
+                                    icon: @image-url("icons/settings.svg");
+                                    active: root.settings-open;
+                                    label: @tr("Settings (Ctrl+,)");
+                                    activated => { root.toggle-settings(); }
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            height: Metrics.search + 4px;
+                            Rectangle {
+                                x: 14px;
+                                y: 4px;
+                                width: parent.width - 28px;
+                                height: Metrics.search;
+                                background: search.has-focus ? Theme.hover : Theme.surface;
+                                border-radius: 17px;
+                                border-width: search.has-focus ? 1px : 0px;
+                                border-color: Theme.accent;
+                                Image {
+                                    x: 10px;
+                                    y: 9px;
+                                    width: 16px;
+                                    height: 16px;
+                                    source: @image-url("icons/search.svg");
+                                    colorize: Theme.secondary;
+                                }
+
+                                Text {
+                                    x: 34px;
+                                    height: parent.height;
+                                    text: @tr("Search");
+                                    color: Theme.dim;
+                                    vertical-alignment: center;
+                                    visible: search.text == "";
+                                }
+
+                                search := TextInput {
+                                    x: 34px;
+                                    y: 1px;
+                                    width: parent.width - 64px;
+                                    height: parent.height - 2px;
+                                    vertical-alignment: center;
+                                    text <=> root.query;
+                                    color: Theme.text;
+                                    single-line: true;
+                                    selection-background-color: Theme.accent;
+                                    selection-foreground-color: Theme.on-accent;
+                                    accessible-label: @tr("Search chats");
+                                    edited => { root.search-chats(self.text); }
+                                }
+
+                                if root.query != "": IconButton {
+                                    x: parent.width - 29px;
+                                    y: 5px;
+                                    width: 24px;
+                                    height: 24px;
+                                    icon-size: 15px;
+                                    icon: @image-url("icons/close.svg");
+                                    label: @tr("Clear search");
+                                    activated => { root.query = ""; root.search-chats(""); search.focus(); }
+                                }
+                            }
+                        }
+
+                        if root.query == "": Rectangle {
+                            height: Metrics.chip + 22px;
+                            filter-scroll := Flickable {
+                                x: 14px;
+                                y: 14px;
+                                width: parent.width - 28px;
+                                height: 28px;
+                                content-width: filters.preferred-width;
+                                content-height: self.height;
+                                filters := HorizontalLayout {
+                                    width: self.preferred-width;
+                                    height: 28px;
+                                    spacing: 4px;
+                                    Pill {
+                                        label: @tr("All");
+                                        active: !root.unread-only;
+                                        activated => { root.unread-only = false; root.filter-unread(false); }
+                                    }
+
+                                    Pill {
+                                        label: @tr("Unread");
+                                        active: root.unread-only;
+                                        activated => { root.unread-only = true; root.filter-unread(true); }
+                                    }
+
+                                    Pill {
+                                        label: @tr("Private");
+                                        enabled: false;
+                                    }
+
+                                    Pill {
+                                        label: @tr("Favorites");
+                                        enabled: false;
+                                    }
+
+                                    Pill {
+                                        label: @tr("Groups");
+                                        enabled: false;
+                                    }
+
+                                    Pill {
+                                        label: @tr("Channels");
+                                        enabled: false;
+                                    }
+                                }
+                            }
+
+                            if filter-scroll.content-width + filter-scroll.content-x > filter-scroll.width + 0.5px: Rectangle {
+                                x: parent.width - 30px;
+                                y: 14px;
+                                width: 16px;
+                                height: 28px;
+                                background: @linear-gradient(90deg, Theme.panel.with-alpha(0), Theme.panel);
+                            }
+                        }
+                        if root.query != "": Rectangle {
+                            height: 8px;
+                        }
+                        chat-list := ListView {
+                            private property <int> first: max(0, floor(-self.content-y / Metrics.row));
+                            private property <int> count: ceil(self.visible-height / Metrics.row) + 1;
+                            function avatar-range() { root.avatar-first = self.first; root.avatar-count = self.count; }
+                            init => { self.avatar-range(); }
+                            changed first => { self.avatar-range(); }
+                            changed count => { self.avatar-range(); }
+                            for chat in root.chats: chat-row := Rectangle {
+                                height: Metrics.row;
+                                if chat.id == root.selected-id || hit.has-hover: RaisedSurface {
+                                    x: 8px;
+                                    y: 2px;
+                                    width: parent.width - 16px;
+                                    height: parent.height - 4px;
+                                    fill: chat.id == root.selected-id ? Theme.selected : Theme.hover;
+                                    drop-shadow-color: Theme.row-shadow;
+                                }
+                        // Clip row contents, leaving the selection shadow outside this layer.
+                        row-content := Rectangle {
+                                    clip: true;
+                                    Avatar {
+                                        x: 14px;
+                                        y: 10px;
+                                        width: 48px;
+                                        height: 48px;
+                                        initials: chat.initials;
+                                        picture: chat.avatar;
+                                        tint: chat.tint;
+                                    }
+
+                                    stamp := Text {
+                                        x: parent.width - 14px - self.width;
+                                        y: 15px;
+                                        height: 17px;
+                                        max-lines: 1;
+                                        wrap: no-wrap;
+                                        overflow: elide;
+                                        text: chat.time;
+                                        font-size: 11.5px;
+                                        color: (chat.unread > 0 || chat.marked-unread) ? Theme.accent : Theme.dim;
+                                    }
+
+                                    chat-title := Text {
+                                        height: 20px;
+                                        max-lines: 1;
+                                        wrap: no-wrap;
+                                        x: 76px;
+                                        y: 14px;
+                                        width: max(0px, stamp.x - self.x - 8px);
+                                        text: chat.title;
+                                        color: Theme.text;
+                                        font-size: 14.5px;
+                                        font-weight: (chat.unread > 0 || chat.marked-unread) ? 600 : 500;
+                                        overflow: elide;
+                                    }
+
+                                    chat-preview := Text {
+                                        height: 18px;
+                                        max-lines: 1;
+                                        wrap: no-wrap;
+                                        x: 76px;
+                                        y: 38px;
+                                        width: max(0px, parent.width - self.x - 14px - ((chat.unread > 0 || chat.marked-unread) ? badge.width + 6px : 0px));
+                                        text: chat.preview;
+                                        color: (chat.unread > 0 || chat.marked-unread) ? Theme.secondary : Theme.dim;
+                                        font-size: 13px;
+                                        overflow: elide;
+                                    }
+
+                                    badge := Rectangle {
+                                        visible: (chat.unread > 0 || chat.marked-unread);
+                                        x: parent.width - 14px - self.width;
+                                        y: chat.unread == 0 ? 41px : 36px;
+                                        width: chat.unread == 0 ? 10px : max(20px, count.preferred-width + 12px);
+                                        height: chat.unread == 0 ? 10px : 20px;
+                                        border-radius: 10px;
+                                        background: Theme.accent;
+                                        count := Text {
+                                            text: chat.unread == 0 ? "" : chat.unread > 99 ? "99+" : chat.unread;
+                                            color: Theme.on-accent;
+                                            font-size: 11px;
+                                            font-weight: 600;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+
+                                accessible-role: button;
+                                accessible-label: chat.title + ": " + chat.preview;
+                                accessible-action-default => { root.select-chat(chat.id); root.show-conversation = true; }
+                                row-focus := FocusScope {
+                                    key-pressed(event) => {
+                                        if event.text == Key.Return || event.text == " " { root.select-chat(chat.id); root.show-conversation = true; return accept; }
+                                        return reject;
+                                    }
+                                }
+
+                                Rectangle {
+                                    x: 8px;
+                                    y: 2px;
+                                    width: parent.width - 16px;
+                                    height: parent.height - 4px;
+                                    border-radius: 10px;
+                                    border-width: row-focus.has-focus ? 1px : 0px;
+                                    border-color: Theme.accent;
+                                }
+
+                                hit := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { row-focus.focus(); root.select-chat(chat.id); root.show-conversation = true; }
+                                }
+                            }
+                        }
+
+                        if root.chats.length == 0: Text {
+                            text: @tr("No chats match your search");
+                            color: Theme.secondary;
+                            horizontal-alignment: center;
+                            height: 70px;
+                        }
+                    }
+                }
+                if !root.narrow && !root.show-sidebar: compact-sidebar := Rectangle {
+                    x: 0px;
+                    y: 0px;
+                    width: 60px;
+                    height: root.height;
+                    background: Theme.panel;
+                    IconButton {
+                        x: 15px;
+                        y: 15px;
+                        icon: @image-url("icons/panel-left.svg");
+                        label: @tr("Show the chat list (Ctrl+B)");
+                        activated => { root.sidebar-hidden = false; }
+                    }
+
+                    compact-list := ListView {
+                        private property <int> first: max(0, floor(-self.content-y / 52px));
+                        private property <int> count: ceil(self.visible-height / 52px) + 1;
+                        function avatar-range() { root.avatar-first = self.first; root.avatar-count = self.count; }
+                        init => { self.avatar-range(); }
+                        changed first => { self.avatar-range(); }
+                        changed count => { self.avatar-range(); }
+                        y: Metrics.header;
+                        width: parent.width;
+                        height: parent.height - self.y;
+                        for chat in root.chats: CompactChat {
+                            title: chat.title;
+                            initials: chat.initials;
+                            picture: chat.avatar;
+                            tint: chat.tint;
+                            unread: chat.unread;
+                            marked-unread: chat.marked-unread;
+                            selected: chat.id == root.selected-id;
+                            activated => { root.select-chat(chat.id); root.show-conversation = true; }
+                        }
+                    }
+                }
+                if !root.narrow: Rectangle {
+                    x: root.conversation-left - 1px;
+                    y: 0px;
+                    height: root.height;
+                    width: 1px;
+                    background: Theme.outline;
+                    TouchArea {
+                        enabled: root.show-sidebar;
+                        width: 7px;
+                        x: -3px;
+                        mouse-cursor: ew-resize;
+                        moved => { if self.pressed { root.requested-sidebar = clamp(root.sidebar-width + self.mouse-x - self.pressed-x, 260px, min(520px, root.width - 360px)); } }
+                    }
+                }
+                conversation := Rectangle {
+                    visible: !root.settings-open && (!root.narrow || root.show-conversation);
+                    x: root.conversation-left;
+                    y: 0px;
+                    width: root.width - self.x;
+                    height: root.height;
+                    background: Theme.window;
+                    connection-banner := ConnectionBanner {
+                        x: 0px;
+                        y: 0px;
+                        width: parent.width;
+                        visible: !root.demo-mode && root.connection-state != 5;
+                        height: self.visible ? self.preferred-height : 0px;
+                        state: root.connection-state;
+                        error: root.connection-error;
+                        blocked: root.connection-blocked;
+                        can-relink: root.connection-can-relink;
+                        connect => { root.connect-account(); }
+                        disconnect => { root.disconnect-account(); }
+                        relink => { root.account-dialog = 1; }
+                    }
+
+                    notice-bar := Rectangle {
+                        visible: root.notice != "";
+                        x: 0px;
+                        y: connection-banner.height;
+                        width: parent.width;
+                        height: self.visible ? max(34px, notice-text.preferred-height + 12px) : 0px;
+                        background: Theme.surface;
+                        notice-text := Text {
+                            x: 14px;
+                            width: parent.width - 56px;
+                            text: root.notice;
+                            color: Theme.secondary;
+                            font-size: 12px;
+                            wrap: word-wrap;
+                            vertical-alignment: center;
+                        }
+
+                        IconButton {
+                            x: parent.width - 40px;
+                            y: 2px;
+                            icon: @image-url("icons/close.svg");
+                            label: @tr("Dismiss notification");
+                            activated => { root.notice = ""; }
+                        }
+                    }
+
+                    conversation-content := Rectangle {
+                        x: 0px;
+                        y: connection-banner.height + notice-bar.height;
+                        width: parent.width;
+                        height: parent.height - self.y;
+                        wallpaper := Wallpaper {
+                            visible: root.selected-id > 0;
+                            x: 0px;
+                            y: Metrics.header;
+                            width: parent.width;
+                            height: parent.height - self.y;
+                            window-x: conversation.x;
+                            window-y: conversation-content.y + self.y;
+                        }
+
+                        VerticalLayout {
+                            visible: root.selected-id > 0;
+                            spacing: 0px;
+                            conversation-header := Rectangle {
+                                height: Metrics.header;
+                                background: Theme.panel;
+                                HorizontalLayout {
+                                    padding-left: 14px;
+                                    padding-right: 14px;
+                                    padding-top: 8px;
+                                    padding-bottom: 8px;
+                                    spacing: 12px;
+                                    if root.narrow: IconButton {
+                                        icon: @image-url("icons/back.svg");
+                                        label: @tr("Back to chats");
+                                        activated => { root.show-conversation = false; }
+                                    }
+                                    Avatar {
+                                        initials: root.chat-initials;
+                                        picture: root.chat-avatar;
+                                        tint: root.chat-tint;
+                                    }
+
+                                    header-info := Rectangle {
+                                        horizontal-stretch: 1;
+                                        clip: true;
+                                        header-name := Text {
+                                            x: 0px;
+                                            y: 0px;
+                                            width: min(self.preferred-width, max(0px, parent.width - header-presence.width - (header-presence.width > 0px ? 12px : 0px)));
+                                            height: parent.height;
+                                            text: root.chat-title;
+                                            color: Theme.text;
+                                            font-size: 17px;
+                                            font-weight: 600;
+                                            vertical-alignment: center;
+                                            overflow: elide;
+                                        }
+
+                                        header-presence := Text {
+                                            x: header-name.width + 12px;
+                                            y: 0px;
+                                            width: root.chat-presence == "" || parent.width < 140px ? 0px : min(self.preferred-width, max(0px, parent.width - min(header-name.preferred-width, parent.width * 0.60) - 12px));
+                                            height: parent.height;
+                                            text: root.chat-presence;
+                                            color: root.chat-online ? Theme.accent : Theme.secondary;
+                                            font-size: 12.5px;
+                                            vertical-alignment: center;
+                                            overflow: elide;
+                                        }
+                                    }
+
+                                    IconButton {
+                                        icon: @image-url("icons/search.svg");
+                                        label: @tr("Search in conversation — not implemented yet");
+                                        enabled: false;
+                                    }
+
+                                    IconButton {
+                                        icon: @image-url("icons/ellipsis.svg");
+                                        label: @tr("More");
+                                        activated => { conversation-menu.show(); }
+                                        conversation-menu := PopupWindow {
+                                            x: -250px;
+                                            y: 34px;
+                                            width: 280px;
+                                            height: 120px;
+                                            Rectangle {
+                                                background: Theme.panel;
+                                                border-radius: 8px;
+                                                border-width: 1px;
+                                                border-color: Theme.outline;
+                                                drop-shadow-offset-y: 6px;
+                                                drop-shadow-blur: 20px;
+                                                drop-shadow-color: Theme.modal-shadow;
+                                                VerticalLayout {
+                                                    padding: 6px;
+                                                    SoftButton {
+                                                        text: @tr("Fetch older messages from phone");
+                                                        enabled: root.phone-history-available && !root.phone-history-loading;
+                                                        activated => {conversation-menu.close();root.fetch-phone-history();}
+                                                    }
+                                                    spacing: 6px;
+                                                    SoftButton {
+                                                        text: @tr("Copy loaded messages");
+                                                        activated => {
+                                                            root.transcript = root.prepare-transcript();
+                                                            copy-source.select-all();
+                                                            copy-source.copy();
+                                                            root.notice = @tr("Loaded messages copied");
+                                                            conversation-menu.close();
+                                                        }
+                                                    }
+
+                                                    SoftButton {
+                                                        text: @tr("Settings");
+                                                        activated => { conversation-menu.close(); root.toggle-settings(); }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Rectangle {
+                                    y: parent.height - 1px;
+                                    height: 1px;
+                                    background: Theme.outline;
+                                }
+                            }
+
+                            timeline := ScrollView {
+                                accessible-role: list;
+                                accessible-orientation: vertical;
+                                content-width: self.visible-width;
+                                horizontal-scrollbar-policy: always-off;
+                                for row in root.timeline-rows: TimelineItem {
+                                    y: row.top * 1px;
+                                    width: timeline.visible-width;
+                                    message: row.message;
+                                    first: row.first;
+                                    last: row.last;
+                                    day-label: row.day-label;
+                                    body-height: row.body-height * 1px;
+                                    group: root.chat-is-group;
+                                    tint: root.chat-tint;
+                                    selection-mode:root.selection-active;
+                                    selected:root.selection-active && root.message-selected(row.message.id,root.selection-revision);
+                                    actions-enabled: !root.selection-active && root.voice-phase==0 && !root.microphone-dialog && !root.settings-open && !root.new-chat-open && root.account-dialog == 0 && root.photo-viewer-id == 0 && root.message-dialog==0;
+                                    menu-open:root.message-dialog==3 && root.action-message==row.message.id;
+                                    can-reply: (root.demo-mode || root.live-can-send) && root.voice-phase==0;
+                                    viewport-top: -timeline.content-y - row.top * 1px;
+                                    viewport-bottom: -timeline.content-y - row.top * 1px + timeline.visible-height;
+                                    message-action(id,action,x,y) => {root.message-action(id,action,x,y);}
+                                    audio-control(id,action,value) => {root.audio-control(id,action,value);}
+                                    activate(id,index) => { if index == -5 { root.activate-photo(id); } else { root.activate-message(id,index); } }
+                                }
+                            }
+
+                            composer := Composer {
+                                height:root.selection-active ? 0px : self.natural-height;
+                                visible:!root.selection-active;
+                                voice-send-enabled:!root.demo-mode;voice-supported:root.voice-supported;voice-phase:root.voice-phase;voice-time:root.voice-time;voice-waveform:root.voice-waveform;voice-status:root.voice-status;voice-playing:root.voice-playing;
+                                voice-control(action)=>{root.voice-control(action);}
+                                reply-id:root.reply-id;reply-sender:root.reply-sender;reply-text:root.reply-text;
+                                cancel-reply=>{if root.voice-phase>0 {root.voice-control(6);}root.cancel-reply();}
+                                attachment-enabled:root.attachment-phase==0;
+                                attach(x,y)=>{root.attachment-x=x;root.attachment-y=y;root.attachment-menu=true;}
+                                emoji(x,y)=>{root.open-composer-emoji(x,y);}
+                                insert-emoji-text(value,anchor,cursor)=>{root.insert-composer-emoji(value,anchor,cursor);}
+                                draft <=> root.draft;
+                                enter-sends: root.enter-sends;
+                                show-hint <=> root.show-shortcut-hint;
+                                hint-dismissed => { root.preference-changed("show_shortcut_hint",0); }
+                                enabled: !root.selection-active && !root.microphone-dialog && !root.settings-open && !root.new-chat-open && root.account-dialog == 0 && (root.demo-mode || (root.selected-id > 0 && root.live-revision == root.live-shown-revision));
+                                can-send: !root.action-pending && (root.demo-mode || (root.connection-state == 5 && root.live-can-send && !root.send-pending));
+                                send => { root.send-message(root.selected-id,root.draft); }
+                                edited(text) => { root.draft-edited(text); }
+                            }
+                            if root.selection-active:SelectionBar {count:root.selection-count;busy:root.action-pending;control(action)=>{root.selection-control(action);}}
+                        }
+
+                        if root.selected-id == 0: empty-conversation := Rectangle {
+                            if root.narrow && !root.show-sidebar: IconButton {
+                                x: 14px;
+                                y: 15px;
+                                icon: @image-url("icons/panel-left.svg");
+                                label: @tr("Show the chat list (Ctrl+B)");
+                                activated => { root.sidebar-hidden = false; root.show-conversation = false; }
+                            }
+                            Rectangle {
+                                x: (parent.width - 72px) / 2;
+                                y: parent.height / 2 - 126px;
+                                width: 72px;
+                                height: 72px;
+                                border-radius: 36px;
+                                background: Theme.surface;
+                                Text {
+                                    text: "h";
+                                    color: Theme.dim;
+                                    font-size: 44px;
+                                    font-weight: 700;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            Text {
+                                y: parent.height / 2 - 46px;
+                                width: parent.width;
+                                height: 32px;
+                                text: "Heya";
+                                font-size: 24px;
+                                font-weight: 700;
+                                color: Theme.text;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            Text {
+                                x: 14px;
+                                y: parent.height / 2 - 10px;
+                                width: parent.width - 28px;
+                                height: 20px;
+                                text: root.chats.length == 0 ? @tr("Your chats appear on the left as they load.") : @tr("Select a chat on the left.");
+                                color: Theme.secondary;
+                                font-size: 14px;
+                                horizontal-alignment: center;
+                                overflow: elide;
+                            }
+
+                            if root.show-shortcut-hint: Text {
+                                y: parent.height / 2 + 16px;
+                                width: parent.width;
+                                height: 20px;
+                                text: @tr("Ctrl+, for settings · Ctrl+N for a new chat");
+                                color: Theme.dim;
+                                font-size: 12.5px;
+                                horizontal-alignment: center;
+                                overflow: elide;
+                            }
+                        }
+                        if root.phone-history-loading: Rectangle {
+                            x: max(8px,(parent.width - self.width)/2);
+                            y: Metrics.header + 8px;
+                            width: min(350px,parent.width - 16px);
+                            height: 30px;
+                            background: Theme.panel;
+                            border-radius: 8px;
+                            Text {
+                                text: @tr("Fetching older messages from your phone…");
+                                color: Theme.secondary; font-size:12px;
+                                horizontal-alignment:center;vertical-alignment:center;overflow:elide;
+                            }
+                        }
+                        header-shadow := PanelShadow {
+                            visible: root.selected-id > 0;
+                            x: 0px;
+                            y: Metrics.header;
+                            width: parent.width;
+                            height: Metrics.panel-shadow-reach;
+                        }
+
+                        if !root.narrow && root.selected-id > 0: sidebar-shadow := PanelShadow {
+                            beside: true;
+                            x: 0px;
+                            y: Metrics.header;
+                            width: Metrics.panel-shadow-reach;
+                            height: parent.height - self.y;
+                        }
+                    }
+                }
+            }
+
+            copy-source := TextInput {
+                visible: false;
+                text: root.transcript;
+                read-only: true;
+            }
+
+            if !root.demo-mode && !root.live-chat-view: session := SessionView {
+                state: root.connection-state;
+                error: root.connection-error;
+                blocked: root.connection-blocked;
+                can-relink: root.connection-can-relink;
+                qr: root.pairing-qr;
+                seconds: root.qr-seconds;
+                connect => { root.connect-account(); }
+                disconnect => { root.disconnect-account(); }
+                open-settings => { root.toggle-settings(); }
+                relink => { root.account-dialog = 1; }
+            }
+            if root.settings-open: settings-page := SettingsPage {
+                x: (root.demo-mode || root.live-chat-view) ? root.conversation-left : 0px;
+                y: 0px;
+                width: root.width - self.x;
+                height: root.height;
+                sections: root.settings-sections;
+                status: root.settings-status;
+                query <=> root.settings-query;
+                search(query) => { root.search-settings(query); }
+                changed(key, value) => { root.preference-changed(key,value); }
+                back => { root.settings-open = false; }
+            }
+        }
+
+        if root.new-chat-open: NewChatDialog {
+            error: root.new-chat-error;
+            available: !root.demo-mode && root.archive-ready && root.connection-state == 5;
+            close => { root.new-chat-open = false; }
+            start(phone) => { root.new-chat(phone); }
+        }
+        if root.message-dialog==3: MessageMenu {
+            context:root.action-context-menu;
+            reactions:root.menu-reactions;
+            width:root.width;height:root.height;
+            entries:root.message-menu-entries;anchor-x:root.action-x;anchor-y:root.action-y;
+            can-react:root.action-source-actionable && !root.action-pending && (root.demo-mode || root.connection-state==5);
+            own-emoji:root.action-own-emoji;selection <=> root.message-menu-selection;
+            close=>{root.message-dialog=0;app-focus.focus();}
+            choose(action)=>{root.choose-message-menu(action);}
+            navigate(direction)=>{root.navigate-message-menu(direction);}
+            react(emoji)=>{root.react-message(emoji);}
+        }
+        if root.message-dialog==1 || root.message-dialog==4: EmojiPicker {
+            composer:root.message-dialog==4;busy:root.action-pending;
+            available:root.message-dialog==4 || root.demo-mode || root.connection-state==5;
+            error:root.action-error;summary:root.action-summary;own-emoji:root.message-dialog==4 ? "" : root.action-own-emoji;
+            anchor-x:root.action-x;anchor-y:root.action-y;rows:root.emoji-rows;categories:root.emoji-categories;
+            selected:root.emoji-selection;scroll-row:root.emoji-scroll-row;jump-revision:root.emoji-jump-revision;
+            query <=> root.emoji-query;
+            close=>{root.close-message-actions();}
+            columns-changed(columns)=>{root.emoji-columns=columns;root.request-emojis();}
+            searched=>{root.request-emojis();}
+            choose(emoji)=>{root.choose-emoji(emoji);}
+            category(index)=>{root.jump-emoji-category(index);}
+            navigate(step)=>{root.navigate-emoji(step);}
+        }
+        if root.message-dialog==2: MessageOperationDialog {
+            busy:root.action-pending;available:root.demo-mode||root.connection-state==5;
+            error:root.action-error;summary:root.action-summary;
+            destinations:root.action-destinations;
+            close=>{root.message-dialog=0;app-focus.focus();}
+            search(query)=>{root.search-message-actions(query);}
+            forward(id)=>{root.forward-message(id);}
+        }
+        if root.message-dialog>=5 && root.message-dialog<=8:MessageDetails {
+            mode:root.message-dialog;count:root.control-count;busy:root.action-pending;error:root.action-error;summary:root.action-summary;
+            text<=>root.action-edit-text;sent:root.info-sent;wire:root.info-wire;status:root.info-status;receipts:root.info-receipts;
+            copy-id=>{root.copy-value(root.info-wire);}
+            close=>{root.close-message-actions();root.focus-composer();}
+            confirm=>{root.confirm-message-control();}
+        }
+        if root.account-dialog != 0: AccountDialog {
+            unlink: root.account-dialog == 2;
+            close => { root.account-dialog = 0; }
+            confirm => {
+                if root.account-dialog == 2 { root.logout-account(); }
+                else { root.relink-account(); root.settings-open = false; }
+                root.account-dialog = 0;
+            }
+        }
+        if root.photo-viewer-id > 0: photo-viewer := PhotoViewer {
+            picture: root.photo-viewer-image; status: root.photo-viewer-status;
+            ready: root.photo-viewer-ready;
+            closed => { root.close-photo(); }
+            retry => { root.activate-photo(root.photo-viewer-id); }
+        }
+        if root.attachment-menu: AttachmentMenu {
+            anchor-x:root.attachment-x;anchor-y:root.attachment-y;
+            close=>{root.attachment-menu=false;composer.focus-editor();}
+            choose(kind)=>{root.attachment-menu=false;root.pick-attachments(kind);}
+        }
+        if root.attachment-phase>0 && root.attachment-review-open: AttachmentReview {
+            phase:root.attachment-phase;recipient:root.attachment-title;items:root.attachment-items;
+            selected:root.attachment-selected;caption<=>root.attachment-caption;
+            status:root.attachment-status;progress:root.attachment-progress;
+            available:!root.demo-mode && root.connection-state==5;
+            cancel=>{root.attachment-control(0,0,root.attachment-caption);}
+            send=>{root.attachment-control(1,0,root.attachment-caption);}
+            select(index)=>{root.attachment-control(2,index,root.attachment-caption);}
+            remove=>{root.attachment-control(3,0,root.attachment-caption);}
+        }
+        if root.attachment-phase>=4 && !root.attachment-review-open: upload-status := DownloadStatus {
+            x:root.status-left;y:root.upload-top;height:root.status-height;
+            width:root.status-width;
+            phase:root.attachment-phase==4 ? 2 : root.attachment-phase==5 ? 3 : 5;
+            name:@tr("Attachments · {}",root.attachment-title);status:root.attachment-status;
+            fraction:root.attachment-progress;cancellable:root.attachment-phase!=5;
+            icon:@image-url("icons/send.svg");cancel-label:@tr("Cancel upload");
+            retry-label:root.attachment-voice ? @tr("Retry voice message") : @tr("Review remaining attachments");dismiss-label:@tr("Discard remaining attachments");
+            cancel=>{root.attachment-control(0,0,root.attachment-caption);}
+            dismiss=>{root.attachment-control(0,0,root.attachment-caption);}
+            retry=>{if root.attachment-voice{root.attachment-control(1,0,"");}else{root.attachment-review-open=true;}}
+        }
+        if root.download-phase>0: download := DownloadStatus {
+            x:root.status-left;y:root.download-top;height:root.status-height;
+            width:root.status-width;
+            phase:root.download-phase;name:root.download-name;status:root.download-status;fraction:root.download-fraction;
+            cancel=>{root.download-control(0);}retry=>{root.download-control(1);}dismiss=>{root.download-control(2);}
+        }
+        if root.microphone-dialog: MicrophoneDialog {
+            close => { root.close-microphone-dialog(); }
+        }
+    }
+}

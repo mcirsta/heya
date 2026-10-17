@@ -1,0 +1,100 @@
+import { Theme } from "theme.slint";
+import { IconButton } from "components.slint";
+import { SoftButton } from "settings.slint";
+export component NewChatDialog inherits Rectangle {
+    in property <bool> available;
+    in property <string> error;
+    callback close();
+    callback start(string);
+    background: #00000080;
+    TouchArea {
+        clicked => { root.close(); }
+    }
+
+    FocusScope {
+        init => { self.focus(); }
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.close(); return accept; }
+            return reject;
+        }
+        dialog := Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: min(420px,parent.width - 32px);
+            height: content.preferred-height;
+            background: Theme.panel;
+            border-radius: 12px;
+            drop-shadow-offset-y: 12px;
+            drop-shadow-blur: 40px;
+            drop-shadow-color: Theme.modal-shadow;
+            TouchArea { }
+
+            content := VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+                HorizontalLayout {
+                    Text {
+                        text: @tr("New chat");
+                        color: Theme.text;
+                        font-size: 20px;
+                        font-weight: 700;
+                        horizontal-stretch: 1;
+                        vertical-alignment: center;
+                    }
+
+                    IconButton {
+                        icon: @image-url("icons/close.svg");
+                        label: @tr("Close new chat");
+                        activated => { root.close(); }
+                    }
+                }
+
+                Text {
+                    text: root.available ? @tr("Enter a phone number with its country code.") : @tr("Connect to WhatsApp to start a new chat.");
+                    color: Theme.secondary;
+                    wrap: word-wrap;
+                }
+
+                Rectangle {
+                    height: 36px;
+                    background: Theme.surface;
+                    border-radius: 8px;
+                    border-width: phone.has-focus ? 1px : 0px;
+                    border-color: Theme.accent;
+                    Text {
+                        x: 12px;
+                        height: parent.height;
+                        text: @tr("+ Country code and number");
+                        visible: phone.text == "";
+                        color: Theme.dim;
+                        vertical-alignment: center;
+                    }
+
+                    phone := TextInput {
+                        x: 12px;
+                        width: parent.width - 24px;
+                        height: parent.height;
+                        enabled: root.available;
+                        color: Theme.text;
+                        single-line: true;
+                        vertical-alignment: center;
+                        accessible-label: @tr("New chat phone number");
+                        accepted => { if root.available && self.text != "" { root.start(self.text); } }
+                    }
+                }
+
+                SoftButton {
+                    text: @tr("New chat");
+                    enabled: root.available && phone.text != "";
+                    activated => { root.start(phone.text); }
+                }
+
+                if root.error != "": Text {
+                    text: root.error;
+                    color: Theme.secondary;
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
+}

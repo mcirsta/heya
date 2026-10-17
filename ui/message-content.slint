@@ -1,0 +1,100 @@
+import { Theme, Metrics } from "theme.slint";
+
+export struct MessageActionRow { label: string, kind: int }
+
+// Native primitives only; these exist for materialized timeline rows, not history.
+export component ContentTarget inherits Rectangle {
+    in property <string> label;
+    in property <bool> enabled: true;
+    callback activated();
+    callback copy();
+    background: area.has-hover && root.enabled ? Theme.text.with-alpha(0.04) : transparent;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if root.enabled { root.activated(); } }
+    border-width: focus.has-focus ? 1px : 0px;
+    border-color: Theme.accent;
+    focus := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if event.modifiers.control && (event.text == "c" || event.text == "C") { root.copy(); return accept; }
+            if event.text == Key.Return || event.text == " " { root.activated(); return accept; }
+            return reject;
+        }
+    }
+    area := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { focus.focus(); root.activated(); }
+    }
+}
+
+export component PreviewCard inherits Rectangle {
+    in property <string> title;
+    in property <string> description;
+    in property <string> domain;
+    in property <string> url;
+    in property <bool> has-thumbnail;
+    in property <image> thumbnail;
+    callback activated();
+    callback copy();
+    height: Metrics.message-preview-height;
+    border-radius: 6px;
+    background: Theme.window.with-alpha(0.35);
+    private property <length> text-left: root.has-thumbnail ? 80px : 8px;
+    if root.has-thumbnail: Rectangle {
+        x: 8px; y: 8px; width: 64px; height: 64px;
+        border-radius: 4px; clip: true;
+        background: Theme.surface;
+        Image { width: 100%; height: 100%; source: root.thumbnail; image-fit: cover; }
+    }
+    title-label := Text {
+        x: root.text-left; y: 8px; width: max(1px,parent.width - self.x - 8px); height: 18px;
+        text: root.title; font-size: 13.5px; font-weight: 600; color: Theme.text;
+        overflow: elide; max-lines: 1;
+    }
+    description-label := Text {
+        x: root.text-left; y: 28px; width: max(1px,parent.width - self.x - 8px); height: 34px;
+        text: root.description; font-size: 12.5px; color: Theme.secondary;
+        wrap: word-wrap; overflow: elide; max-lines: 2;
+    }
+    Text {
+        x: root.text-left; y: 64px; width: max(1px,parent.width - self.x - 8px); height: 16px;
+        text: root.domain; font-size: 12px; color: Theme.dim; overflow: elide; max-lines: 1;
+    }
+    ContentTarget {
+        x: 0px; y: 0px; width: parent.width; height: parent.height;
+        label: root.title + " · " + root.url;
+        activated => { root.activated(); }
+        copy => { root.copy(); }
+    }
+}
+
+export component MessageAction inherits Rectangle {
+    in property <MessageActionRow> action;
+    in property <bool> outgoing;
+    callback activated();
+    callback copy();
+    private property <color> ink: root.action.kind == 0 ? Theme.secondary : root.outgoing ? Theme.text : Theme.link;
+    height: Metrics.message-action-height;
+    divider := Rectangle { x: 0px; y: 0px; height: 1px; width: parent.width; background: Theme.secondary.with-alpha(0.2); }
+    icon := Image {
+        x: (parent.width - min(label.preferred-width,parent.width - 58px) - 22px) / 2;
+        y: (parent.height - self.height) / 2; width: 14px; height: 14px;
+        source: root.action.kind == 0 ? @image-url("icons/smartphone.svg") : root.action.kind == 2 ? @image-url("icons/copy.svg") : @image-url("icons/external-link.svg");
+        colorize: root.ink;
+    }
+    label := Text {
+        x: icon.x + 22px; y: (parent.height - self.height) / 2;
+        width: max(1px,min(self.preferred-width,parent.width - 58px)); height: min(self.preferred-height,parent.height - 8px);
+        text: root.action.label + (root.action.kind == 0 ? " · " + @tr("Use phone") : ""); color: root.ink; font-size: 14px; font-weight: 500;
+        horizontal-alignment: center; wrap: word-wrap; max-lines: 2; overflow: elide;
+    }
+    ContentTarget {
+        x: 0px; y: 0px; width: parent.width; height: parent.height;
+        label: root.action.label; enabled: root.action.kind != 0;
+        activated => { root.activated(); }
+        copy => { root.copy(); }
+    }
+}

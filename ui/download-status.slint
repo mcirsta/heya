@@ -1,0 +1,25 @@
+import { Theme } from "theme.slint";
+import { IconButton } from "components.slint";
+export component DownloadStatus inherits Rectangle {
+    in property <int> phase;
+    in property <string> name;
+    in property <string> status;
+    in property <float> fraction;
+    in property <bool> cancellable:true;
+    in property <image> icon:@image-url("icons/photo-download.svg");
+    in property <string> cancel-label:@tr("Cancel download");
+    in property <string> retry-label:@tr("Retry download");
+    in property <string> dismiss-label:@tr("Dismiss download");
+    callback cancel();callback retry();callback dismiss();
+    height:104px;background:Theme.overlay;border-radius:10px;
+    border-width:1px;border-color:Theme.outline;
+    drop-shadow-offset-y:4px;drop-shadow-blur:14px;drop-shadow-color:Theme.modal-shadow;
+    TouchArea {}
+    Image {x:12px;y:14px;width:18px;height:18px;source:root.icon;colorize:Theme.accent;}
+    Text {x:40px;y:10px;width:parent.width - 82px;height:26px;text:root.name=="" ? @tr("Save attachment") : root.name;color:Theme.text;font-size:13px;font-weight:600;overflow:elide;vertical-alignment:center;}
+    Text {x:12px;y:40px;width:parent.width - 24px;height:36px;text:root.status;color:Theme.secondary;font-size:12px;wrap:word-wrap;overflow:elide;}
+    if root.phase>=1 && root.phase<=3: IconButton {x:parent.width - 36px;y:10px;width:24px;height:24px;icon:@image-url("icons/close.svg");label:root.cancel-label;enabled:root.cancellable;activated=>{root.cancel();}}
+    if root.phase>=4: IconButton {x:parent.width - 36px;y:10px;width:24px;height:24px;icon:@image-url("icons/close.svg");label:root.dismiss-label;activated=>{root.dismiss();}}
+    if root.phase==5 || root.phase==6: IconButton {x:parent.width - 68px;y:10px;width:24px;height:24px;icon:@image-url("icons/photo-retry.svg");label:root.retry-label;activated=>{root.retry();}}
+    if root.phase==2: track := Rectangle {x:12px;y:88px;width:parent.width - 24px;height:3px;background:Theme.outline;border-radius:2px;fill := Rectangle {x:0px;y:0px;height:parent.height;width:root.fraction<0 ? 24px : parent.width * clamp(root.fraction,0,1);background:Theme.accent;border-radius:2px;}}
+}

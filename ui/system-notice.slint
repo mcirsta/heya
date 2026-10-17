@@ -1,0 +1,24 @@
+import { Theme } from "theme.slint";
+
+// No message bubble, media, selectable editor, hover area or menu is created.
+// Width is bounded; long names wrap within the same measured virtual row.
+export component SystemNotice inherits Rectangle {
+    in property <string> text;
+    height: label.preferred-height + 20px;
+    chip := Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: 4px;
+        width: min(max(1px,parent.width - 36px), natural.preferred-width + 24px);
+        height: label.preferred-height + 12px;
+        background: Theme.date;
+        border-radius: 8px;
+        natural := Text { visible: false; text: root.text; font-size: 12px; }
+        label := Text {
+            x: 12px; y: 6px;
+            width: parent.width - 24px;
+            height: self.preferred-height;
+            text: root.text; color: Theme.secondary; font-size: 12px;
+            wrap: word-wrap; horizontal-alignment: center;
+        }
+    }
+}

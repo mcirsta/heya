@@ -1,0 +1,54 @@
+import { Theme } from "theme.slint";
+
+// Static primitives only. Reserved geometry is identical before/after decoding.
+export component DocumentCard inherits Rectangle {
+    in property <string> file-name;
+    in property <string> file-type;
+    in property <string> details;
+    in property <bool> has-thumbnail;
+    in property <image> thumbnail;
+    in property <length> preview-height;
+    height: root.preview-height + 84px;
+    border-radius: 6px;
+    clip: true;
+    background: Theme.text.with-alpha(0.04);
+    accessible-role: text;
+    accessible-label: root.file-name + ". " + root.details;
+    if root.has-thumbnail: preview := Rectangle {
+        x: 0px; y: 0px; width: parent.width; height: root.preview-height;
+        clip: true;
+        background: Theme.surface;
+        Image {
+            x: (parent.width - 28px) / 2; y: (parent.height - 34px) / 2;
+            width: 28px; height: 34px;
+            source: @image-url("icons/document.svg"); colorize: Theme.dim;
+        }
+        Image {
+            width: parent.width; height: parent.height;
+            source: root.thumbnail; image-fit: cover; vertical-alignment: top;
+        }
+    }
+    info := Rectangle {
+        y: root.preview-height; width: parent.width; height: 84px;
+        icon := Image {
+            x: 14px; y: 18px; width: 26px; height: 32px;
+            source: @image-url("icons/document.svg");
+            colorize: root.file-type == "PDF" ? #df0038 : Theme.accent;
+        }
+        Text {
+            x: 14px; y: 35px; width: 26px; height: 12px;
+            text: root.file-type == "PDF" ? "PDF" : "";
+            color: white; font-size: 8px; font-weight: 700; horizontal-alignment: center;
+        }
+        name := Text {
+            x: 52px; y: 12px; width: max(1px,parent.width - 64px); height: 38px;
+            text: root.file-name; color: Theme.text; font-size: 15px;
+            wrap: word-wrap; max-lines: 2; overflow: elide;
+        }
+        detail := Text {
+            x: 52px; y: 56px; width: max(1px,parent.width - 64px); height: 18px;
+            text: root.details; color: Theme.secondary; font-size: 12px;
+            max-lines: 1; overflow: elide;
+        }
+    }
+}

@@ -1,0 +1,374 @@
+//! Private session files and OS credential storage; all entry points are blocking.
+use crate::connection::Failure;
+use std::{
+    fs::{self, File, OpenOptions},
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+use zeroize::Zeroizing;
+
+pub trait SecretVault {
+    fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>, Failure>;
+    fn write(&self, key: &[u8]) -> Result<(), Failure>;
+}
+
+struct DesktopVault(keyring::Entry);
+
+impl SecretVault for DesktopVault {
+    fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>, Failure> {
+        match self.0.get_secret() {
+            Ok(key) => decode_key(Zeroizing::new(key)).map(Some),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(_) => Err(Failure::Keyring),
+        }
+    }
+
+    fn write(&self, key: &[u8]) -> Result<(), Failure> {
+        // keyring 3.6's Secret Service backend declares even set_secret() data
+        // as text/plain. KDE rejects non-UTF-8 bytes (and can leave an empty
+        // item behind). Store an explicit text encoding without reducing entropy.
+        // Use the byte API on both sides: set_password uses UTF-16 on Windows.
+        self.0
+            .set_secret(encode_key(key)?.as_bytes())
+            .map_err(|_| Failure::Keyring)
+    }
+}
+
+const KEY_PREFIX: &str = "heya-key-v1:";
+
+fn encode_key(key: &[u8]) -> Result<Zeroizing<String>, Failure> {
+    if key.len() != 32 {
+        return Err(Failure::InvalidKey);
+    }
+    use std::fmt::Write;
+    let mut text = Zeroizing::new(String::from(KEY_PREFIX));
+    for byte in key {
+        write!(text, "{byte:02x}").map_err(|_| Failure::InvalidKey)?;
+    }
+    Ok(text)
+}
+
+fn decode_key(stored: Zeroizing<Vec<u8>>) -> Result<Zeroizing<Vec<u8>>, Failure> {
+    if stored.starts_with(KEY_PREFIX.as_bytes()) {
+        let hex = &stored[KEY_PREFIX.len()..];
+        if hex.len() != 64 || !hex.iter().all(u8::is_ascii_hexdigit) {
+            return Err(Failure::InvalidKey);
+        }
+        let mut key = Zeroizing::new(Vec::with_capacity(32));
+        for pair in hex.as_chunks::<2>().0 {
+            let byte = |c: u8| {
+                if c.is_ascii_digit() {
+                    c - b'0'
+                } else {
+                    c.to_ascii_lowercase() - b'a' + 10
+                }
+            };
+            key.push(byte(pair[0]) * 16 + byte(pair[1]));
+        }
+        Ok(key)
+    } else {
+        // Keep existing raw 32-byte keys readable. Validation also preserves
+        // the distinction between an empty failed bootstrap and a malformed key.
+        Ok(stored)
+    }
+}
+
+pub struct SessionFiles {
+    pub path: PathBuf,
+    pub key_sql: Zeroizing<String>,
+    // Retained by the protocol pool's connection hook, including detached work.
+    _lock: File,
+}
+
+pub fn prepare() -> Result<Arc<SessionFiles>, Failure> {
+    let project =
+        directories::ProjectDirs::from("org", "heya", "Heya").ok_or(Failure::DataDirectory)?;
+    let vault = DesktopVault(
+        keyring::Entry::new("org.heya.Heya", "session-v1").map_err(|_| Failure::Keyring)?,
+    );
+    prepare_at(&project.data_local_dir().join("default"), &vault)
+}
+
+/// Startup probes only file presence. A first launch does not create keys or a
+/// database until the user chooses Connect.
+pub fn has_session() -> Result<bool, Failure> {
+    let project =
+        directories::ProjectDirs::from("org", "heya", "Heya").ok_or(Failure::DataDirectory)?;
+    let directory = project.data_local_dir().join("default");
+    ["session.db", "archive.db"]
+        .into_iter()
+        .try_fold(false, |found, name| {
+            directory
+                .join(name)
+                .try_exists()
+                .map(|exists| found || exists)
+                .map_err(|_| Failure::DataDirectory)
+        })
+}
+
+pub(crate) fn private_file(path: &Path) -> Result<File, Failure> {
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let file = options.open(path).map_err(|_| Failure::DataDirectory)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(|_| Failure::DataDirectory)?;
+    }
+    Ok(file)
+}
+
+pub(crate) fn prepare_at(
+    directory: &Path,
+    vault: &impl SecretVault,
+) -> Result<Arc<SessionFiles>, Failure> {
+    fs::create_dir_all(directory).map_err(|_| Failure::DataDirectory)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
+            .map_err(|_| Failure::DataDirectory)?;
+    }
+    let lock = private_file(&directory.join("session.lock"))?;
+    lock.try_lock().map_err(|error| match error {
+        std::fs::TryLockError::WouldBlock => Failure::AlreadyRunning,
+        std::fs::TryLockError::Error(_) => Failure::DataDirectory,
+    })?;
+    let path = directory.join("session.db");
+    let key_sql = database_key(&path, vault)?;
+    private_file(&path)?;
+    Ok(Arc::new(SessionFiles {
+        path,
+        key_sql,
+        _lock: lock,
+    }))
+}
+
+pub fn archive_key(files: &SessionFiles) -> Result<Zeroizing<String>, Failure> {
+    let vault = DesktopVault(
+        keyring::Entry::new("org.heya.Heya", "archive-v1").map_err(|_| Failure::Keyring)?,
+    );
+    database_key(&files.path.with_file_name("archive.db"), &vault)
+}
+
+fn database_key(path: &Path, vault: &impl SecretVault) -> Result<Zeroizing<String>, Failure> {
+    let mut exists = false;
+    for suffix in ["", "-wal", "-shm"] {
+        let mut name = path.as_os_str().to_os_string();
+        name.push(suffix);
+        exists |= Path::new(&name)
+            .try_exists()
+            .map_err(|_| Failure::DataDirectory)?;
+    }
+    let key = match vault.read()? {
+        Some(key) if key.len() == 32 => key,
+        Some(key) if !key.is_empty() || exists => return Err(Failure::InvalidKey),
+        None if exists => return Err(Failure::MissingKey),
+        // Only an empty entry with no database or journal can be the failed
+        // first write described above. Never replace a key over stored data.
+        Some(_) | None => {
+            let mut key = Zeroizing::new(vec![0; 32]);
+            getrandom::fill(&mut key).map_err(|_| Failure::Keyring)?;
+            vault.write(&key)?;
+            // A successful write without a readable durable secret is not enough.
+            let stored = vault.read()?.ok_or(Failure::Keyring)?;
+            if *stored != *key {
+                return Err(Failure::Keyring);
+            }
+            key
+        }
+    };
+    let mut key_sql = Zeroizing::new(String::from("PRAGMA key = \"x'"));
+    use std::fmt::Write;
+    for byte in key.iter() {
+        write!(key_sql, "{byte:02x}").map_err(|_| Failure::InvalidKey)?;
+    }
+    key_sql.push_str("'\";");
+    Ok(key_sql)
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    #[derive(Default)]
+    pub struct MemoryVault(pub RefCell<Option<Vec<u8>>>);
+    impl SecretVault for MemoryVault {
+        fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>, Failure> {
+            Ok(self.0.borrow().clone().map(Zeroizing::new))
+        }
+        fn write(&self, key: &[u8]) -> Result<(), Failure> {
+            *self.0.borrow_mut() = Some(key.to_vec());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn key_text_encoding_is_lossless_and_legacy_binary_keys_still_work() {
+        let bytes: Vec<u8> = (0..32)
+            .map(|n| if n % 2 == 0 { 0 } else { 128 + n })
+            .collect();
+        let encoded = encode_key(&bytes).unwrap();
+        assert_eq!(encoded.len(), KEY_PREFIX.len() + 64);
+        assert!(encoded.is_ascii());
+        let decoded = decode_key(Zeroizing::new(encoded.as_bytes().to_vec())).unwrap();
+        assert!(*decoded == bytes);
+        assert!(*decode_key(Zeroizing::new(bytes.clone())).unwrap() == bytes);
+        for malformed in [
+            format!("{KEY_PREFIX}{}", "x".repeat(64)),
+            format!("{KEY_PREFIX}1234"),
+        ] {
+            assert!(matches!(
+                decode_key(Zeroizing::new(malformed.into_bytes())),
+                Err(Failure::InvalidKey)
+            ));
+        }
+    }
+
+    #[test]
+    fn failed_empty_bootstrap_recovers_only_when_no_database_or_journal_exists() {
+        let temp = tempfile::tempdir().unwrap();
+        let vault = MemoryVault(RefCell::new(Some(Vec::new())));
+        let path = temp.path().join("session.db");
+        assert!(database_key(&path, &vault).is_ok());
+        assert_eq!(vault.0.borrow().as_ref().unwrap().len(), 32);
+        for suffix in ["", "-wal", "-shm"] {
+            *vault.0.borrow_mut() = Some(Vec::new());
+            let existing = temp.path().join(format!("session.db{suffix}"));
+            std::fs::write(&existing, b"synthetic stored data").unwrap();
+            assert!(matches!(
+                database_key(&path, &vault),
+                Err(Failure::InvalidKey)
+            ));
+            assert!(vault.0.borrow().as_ref().unwrap().is_empty());
+            assert_eq!(std::fs::read(&existing).unwrap(), b"synthetic stored data");
+            std::fs::remove_file(existing).unwrap();
+        }
+    }
+
+    #[test]
+    #[ignore = "requires an unlocked desktop keyring; uses a disposable test entry and database"]
+    fn desktop_keyring_encrypts_and_reopens_a_disposable_database() {
+        let name = format!(
+            "probe-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let service = "org.heya.Heya.integration-tests";
+        struct Cleanup(keyring::Entry);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = self.0.delete_credential();
+            }
+        }
+        let cleanup = Cleanup(keyring::Entry::new(service, &name).unwrap());
+        let vault = DesktopVault(keyring::Entry::new(service, &name).unwrap());
+        // Simulate the exact empty first-write residue returned by ksecretd.
+        vault
+            .0
+            .set_password("")
+            .expect("could not create disposable empty entry");
+        let temp = tempfile::tempdir().unwrap();
+        let files = prepare_at(temp.path(), &vault).unwrap();
+        let path = files.path.clone();
+        let stored = Zeroizing::new(
+            vault
+                .0
+                .get_secret()
+                .expect("could not read disposable entry"),
+        );
+        assert!(stored.starts_with(KEY_PREFIX.as_bytes()));
+        assert_eq!(stored.len(), KEY_PREFIX.len() + 64);
+        let db = rusqlite::Connection::open(&path).unwrap();
+        assert!(db.execute_batch(&files.key_sql).is_ok());
+        db.execute_batch("CREATE TABLE probe(value INTEGER); INSERT INTO probe VALUES(42);")
+            .unwrap();
+        drop(db);
+        drop(files);
+        // A fresh keyring handle/session and a fresh SQLCipher connection must
+        // recover the persisted bytes without relying on a fake vault/cache.
+        let reopened = DesktopVault(keyring::Entry::new(service, &name).unwrap());
+        let files = prepare_at(temp.path(), &reopened).unwrap();
+        let db = rusqlite::Connection::open(&path).unwrap();
+        assert!(db.execute_batch(&files.key_sql).is_ok());
+        assert_eq!(
+            db.query_row::<i64, _, _>("SELECT value FROM probe", [], |r| r.get(0))
+                .unwrap(),
+            42
+        );
+        drop(db);
+        drop(files);
+        cleanup
+            .0
+            .delete_credential()
+            .expect("could not remove disposable test entry");
+    }
+
+    #[test]
+    fn key_is_reused_and_missing_keys_never_replace_existing_sessions() {
+        let temp = tempfile::tempdir().unwrap();
+        let vault = MemoryVault::default();
+        let files = prepare_at(temp.path(), &vault).unwrap();
+        let key = vault.0.borrow().clone();
+        assert_eq!(key.as_ref().unwrap().len(), 32);
+        assert!(matches!(
+            prepare_at(temp.path(), &vault),
+            Err(Failure::AlreadyRunning)
+        ));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(temp.path()).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+            assert_eq!(
+                fs::metadata(&files.path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        drop(files);
+        drop(prepare_at(temp.path(), &vault).unwrap());
+        assert_eq!(*vault.0.borrow(), key);
+        *vault.0.borrow_mut() = None;
+        assert!(matches!(
+            prepare_at(temp.path(), &vault),
+            Err(Failure::MissingKey)
+        ));
+        assert!(vault.0.borrow().is_none());
+    }
+
+    #[test]
+    fn failed_keyring_and_malformed_keys_do_not_create_a_database() {
+        struct Locked;
+        impl SecretVault for Locked {
+            fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>, Failure> {
+                Err(Failure::Keyring)
+            }
+            fn write(&self, _: &[u8]) -> Result<(), Failure> {
+                panic!("must not replace a key")
+            }
+        }
+        let temp = tempfile::tempdir().unwrap();
+        assert!(matches!(
+            prepare_at(temp.path(), &Locked),
+            Err(Failure::Keyring)
+        ));
+        let vault = MemoryVault(RefCell::new(Some(vec![1; 4])));
+        assert!(matches!(
+            prepare_at(temp.path(), &vault),
+            Err(Failure::InvalidKey)
+        ));
+        assert!(!temp.path().join("session.db").exists());
+    }
+}

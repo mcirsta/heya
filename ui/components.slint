@@ -1,0 +1,175 @@
+import { Theme, Metrics } from "theme.slint";
+
+export component IconButton inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    in property <bool> filled: false;
+    in property <bool> active: false;
+    in property <bool> muted-background: false;
+    in property <bool> enabled: true;
+    in property <length> icon-size: 18px;
+    in property <color> ink: !root.enabled ? Theme.dim : root.filled && !root.muted-background ? Theme.on-accent : root.active ? Theme.accent : area.has-hover ? Theme.text : Theme.secondary;
+    callback activated();
+    width: icon-size + 12px;
+    height: self.width;
+    border-radius: self.width / 2;
+    background: root.muted-background ? Theme.surface : root.filled && root.enabled ? (area.has-hover ? Theme.accent-hover : Theme.accent) : transparent;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if root.enabled { root.activated(); } }
+    Image {
+        width: root.icon-size * (area.pressed ? 0.92 : 1);
+        height: self.width;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        source: root.icon;
+        colorize: root.ink;
+    }
+
+    focus := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if event.text == " " || event.text == "\n" || event.text == Key.Return { root.activated(); return accept; }
+            return reject;
+        }
+    }
+
+    border-width: focus.has-focus ? 1px : 0px;
+    border-color: Theme.accent;
+    area := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { focus.focus(); root.activated(); }
+    }
+}
+
+export component Pill inherits Rectangle {
+    in property <bool> enabled: true;
+    in property <string> label;
+    in property <bool> active;
+    callback activated();
+    height: Metrics.chip;
+    width: text.preferred-width + 18px;
+    border-radius: self.height / 2;
+    border-width: focus.has-focus || !root.active ? 1px : 0px;
+    border-color: focus.has-focus ? Theme.accent : Theme.selected;
+    background: root.active ? Theme.accent.with-alpha(0.18) : area.has-hover ? Theme.surface : transparent;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if root.enabled { root.activated(); } }
+    text := Text {
+        text: root.label;
+        color: !root.enabled ? Theme.dim : root.active ? Theme.accent : Theme.secondary;
+        font-size: 12.5px;
+        font-weight: 500;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    focus := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if event.text == " " || event.text == Key.Return { root.activated(); return accept; }
+            return reject;
+        }
+    }
+
+    area := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { focus.focus(); root.activated(); }
+    }
+}
+
+export component Avatar inherits Rectangle {
+    in property <image> picture;
+    in property <string> initials;
+    in property <color> tint;
+    width: 40px;
+    height: self.width;
+    border-radius: self.width / 2;
+    background: root.tint;
+    clip: root.picture.width > 0;
+    Text {
+        visible: root.picture.width == 0;
+        text: root.initials;
+        color: #153a3a;
+        font-size: parent.width * 0.34;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    Image {
+        visible: root.picture.width > 0;
+        source: root.picture;
+        width: parent.width;
+        height: parent.height;
+        image-fit: cover;
+    }
+}
+
+export component RaisedSurface inherits Rectangle {
+    in property <color> fill;
+    border-radius: 10px;
+    background: root.fill;
+    drop-shadow-offset-y: 2px;
+    drop-shadow-blur: 6px;
+    drop-shadow-color: Theme.shadow;
+    // Paint an identical silhouette one pixel above the face. Keeping this
+    // outside the face preserves its padding and lights the rounded corners.
+    Rectangle {
+        x: 0px;
+        y: -1px;
+        width: parent.width;
+        height: parent.height;
+        border-radius: parent.border-radius;
+        background: Theme.raised-edge(root.fill);
+    }
+
+    Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        border-radius: parent.border-radius;
+        background: root.fill;
+    }
+
+    @children
+}
+
+// These are painted over the conversation after its contents, like ZapFast's
+// paint_shadow_below / paint_shadow_beside. They do not reserve layout space
+// or intercept pointer events.
+export component PanelShadow inherits Rectangle {
+    in property <bool> beside: false;
+    background: beside
+        ? @linear-gradient(90deg, Theme.panel-shadow 0%, #00000000 100%)
+        : @linear-gradient(180deg, Theme.panel-shadow 0%, #00000000 100%);
+}
+
+export component Wallpaper inherits Rectangle {
+    // Position of this panel in the window. ZapFast anchors the repeating
+    // pattern to window (0, 0), then clips it to the conversation rectangle.
+    in property <length> window-x;
+    in property <length> window-y;
+    clip: true;
+    background: Theme.canvas;
+    // A fixed 374 × 666 raster tile avoids SVG rasterization on resize.
+    // Skia repeats one cached, tinted image over the clipped panel.
+    texture := Image {
+        x: -root.window-x;
+        y: -root.window-y;
+        width: root.width + root.window-x;
+        height: root.height + root.window-y;
+        visible: Theme.show-wallpaper;
+        source: Theme.wallpaper-image;
+        colorize: Theme.wallpaper-ink;
+        horizontal-tiling: repeat;
+        vertical-tiling: repeat;
+        horizontal-alignment: left;
+        vertical-alignment: top;
+    }
+}

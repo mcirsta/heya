@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=Heya
+GenericName=Messaging Client
+Comment=Your conversations, at home on your desktop
+Exec=heya
+Icon=org.heya.Heya
+Terminal=false
+Categories=Network;InstantMessaging;
+Keywords=chat;messaging;WhatsApp;
+StartupWMClass=org.heya.Heya

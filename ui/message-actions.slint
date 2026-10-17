@@ -1,0 +1,71 @@
+import { ListView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { IconButton } from "components.slint";
+import { SoftButton } from "settings.slint";
+import { ContentTarget } from "message-content.slint";
+
+
+export struct ForwardDestination {id:int,title:string}
+
+// One transient picker/dialog for the window, never one per message row.
+export component MessageOperationDialog inherits Rectangle {
+    in property <bool> busy;
+    in property <bool> available;
+    in property <string> error;
+    in property <string> summary;
+    in property <[ForwardDestination]> destinations;
+    private property <int> destination;
+    callback close();
+    callback search(string);
+    callback forward(int);
+    background: #0005;
+    TouchArea {clicked=>{root.close();}}
+    FocusScope {
+        width: min(420px,root.width - 24px);
+        height: min(500px,root.height - 24px);
+        x: (root.width - self.width)/2;
+        y: (root.height - self.height)/2;
+        init=>{search-field.focus();}
+        key-pressed(event)=>{if event.text==Key.Escape {root.close();return accept;} return reject;}
+        panel := Rectangle {
+            x:0px;y:0px;width:parent.width;height:parent.height;
+            background: Theme.overlay; border-radius: 12px;
+            drop-shadow-offset-y: 6px; drop-shadow-blur: 20px; drop-shadow-color: Theme.modal-shadow;
+            TouchArea {}
+            VerticalLayout {
+                padding: 12px; spacing: 8px;
+                HorizontalLayout {
+                    height: 28px;
+                    Text {text:@tr("Forward message");color:Theme.text;font-size:16px;font-weight:600;vertical-alignment:center;horizontal-stretch:1;}
+                    IconButton {icon:@image-url("icons/close.svg");label:@tr("Close message actions");activated=>{root.close();}}
+                }
+                Text {height:32px;text:root.summary;color:Theme.secondary;font-size:12px;wrap:word-wrap;overflow:elide;max-lines:2;}
+                Rectangle {
+                    height:34px;background:Theme.surface;border-radius:8px;
+                    Text {x:10px;y:0px;height:parent.height;text:@tr("Search chats");visible:search-field.text=="";color:Theme.dim;vertical-alignment:center;}
+                    search-field := TextInput {
+                        x:10px;y:0px;width:parent.width - 20px;height:parent.height;single-line:true;
+                        color:Theme.text;vertical-alignment:center;
+                        accessible-label:@tr("Search forwarding destinations");
+                        edited=>{root.destination=0;root.search(self.text);}
+                    }
+                }
+                ListView {
+                    for item in root.destinations: Rectangle {
+                        height:44px;border-radius:8px;background:root.destination==item.id ? Theme.selected : transparent;
+                        Text {x:10px;y:0px;width:parent.width - 20px;height:44px;text:item.title;color:Theme.text;font-size:14px;vertical-alignment:center;overflow:elide;}
+                        ContentTarget {label:item.title;enabled:!root.busy;activated=>{root.destination=item.id;}}
+                    }
+                }
+                if root.busy || root.error!="" || !root.available: Text {
+                    text:root.error!="" ? root.error : root.busy ? @tr("Please wait…") : @tr("Connect to send.");
+                    color:Theme.secondary;wrap:word-wrap;font-size:12px;
+                }
+                SoftButton {
+                    text:@tr("Forward");enabled:root.destination>0&&!root.busy&&root.available;
+                    activated=>{root.forward(root.destination);}
+                }
+            }
+        }
+    }
+}

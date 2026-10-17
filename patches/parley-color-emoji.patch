@@ -1,0 +1,29 @@
+--- a/src/shape/mod.rs
++++ b/src/shape/mod.rs
+@@ -281,7 +281,14 @@
+ 
+     // Finalize cluster metadata
+     let end = *code_unit_offset_in_string as u32;
+-    char_cluster.is_emoji = is_emoji_or_pictograph;
++    // Digits, # and * have the Emoji property as keycap bases. They only
++    // prefer the emoji family when the cluster actually contains a keycap.
++    let keycap_base = matches!(char_cluster.chars.first().map(|ch| ch.ch), Some('0'..='9' | '#' | '*'));
++    let has_keycap = char_cluster.chars.iter().any(|ch| ch.ch == '\u{20e3}');
++    // An explicit text-presentation selector keeps the ordinary text family.
++    char_cluster.is_emoji = is_emoji_or_pictograph
++        && (!keycap_base || has_keycap)
++        && !char_cluster.chars.iter().any(|ch| ch.ch == '\u{fe0e}');
+     char_cluster.map_len = map_len;
+     char_cluster.start = start;
+     char_cluster.end = end;
+@@ -588,7 +595,9 @@
+             if is_emoji {
+                 use core::iter::once;
+                 let emoji_family = QueryFamily::Generic(fontique::GenericFamily::Emoji);
+-                self.query.set_families(fonts.chain(once(emoji_family)));
++                // Emoji must reach the platform emoji font before a text family's
++                // monochrome symbol coverage. Keep the original stack as fallback.
++                self.query.set_families(once(emoji_family).chain(fonts));
+                 self.fonts_id = None;
+             } else if self.fonts_id != Some(fonts_id) {
+                 self.query.set_families(fonts);

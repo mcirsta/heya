@@ -1,0 +1,1145 @@
+{
+  "date": "2026-10-14",
+  "host": {
+    "cpu": "Intel Xeon E5-2697A v4 @ 2.60GHz",
+    "logical_cpus": 32,
+    "gpu": "AMD Radeon RX 550 / 550 Series",
+    "mesa": "26.2.4-arch3.1",
+    "kernel": "7.2.9-2-cachyos",
+    "desktop": "KDE Wayland",
+    "display_physical": [
+      3840,
+      2160
+    ],
+    "display_scale": 1.6,
+    "refresh_hz": 60
+  },
+  "versions": {
+    "slint": "1.18.1",
+    "zapfast": "c73ce57522d28eff4da1a5cc9e3b6de0f27b0de0"
+  },
+  "workload": {
+    "chats": 500,
+    "loaded_messages": [
+      100,
+      10000
+    ],
+    "window_logical": [
+      1200,
+      800
+    ],
+    "phase_seconds": 3,
+    "text": "Matching synthetic short, wrapped, multiline and Unicode bodies",
+    "scroll": "80 logical pixels per approximately 16ms, alternating direction every 60 ticks",
+    "history_expansion": "Preserves recent-row caches; 10000-message scrolling revisits a warm range"
+  },
+  "limits": [
+    "No compilation during timed runs; desktop load and frame cadence still varied substantially.",
+    "Application frame intervals are not compositor presentation or input-to-photon latency.",
+    "Heya render CPU and ZapFast UI-plus-render CPU have different boundaries; no direct CPU ratio.",
+    "Composer and maximize phases contain intentional idle gaps; frame intervals there are not frame budgets.",
+    "These tests do not cover native IME, mixed-DPI transitions, minimize animation or live-account load."
+  ],
+  "source_sha256": {
+    "src/presentation_timeline.rs": "f902bc489346b0c09626d147496435b9d4123740ccf1f73a904a977795a98cd5",
+    "src/presentation_benchmark.rs": "e95b12b5ee709de7ff947c20424dc56deeb9f8dd4d9a7b45df1cfc623ecc6a90",
+    "ui/app.slint": "2f2460b19e94a12289a8a6e3741fe1b0107b878fd0001901c5cbbb4927cccb20",
+    "ui/message.slint": "8fb2a4bbdc8cc0c02a03bed7086cf7298b7654f6a45215067c7bfafe64057721",
+    "ui/timeline-item.slint": "fbd6d139562222fa34f88f12d0bfd1e030c62ad2c14bd9cc4e1163de30501f22",
+    "tools/bench/zapfast_ui_speed.rs": "6e4cdce0a471b853efa497b7bb8218bfa4d6e4f8ef9c0d175618be1ba3ae8d5d",
+    "Cargo.toml": "7c6a457b402ee5ae66899c96b1cd4e561fd63f4b67201a9c8ea12b9e479bbe1c",
+    "Cargo.lock": "f2870b3faf9b3eb421f68666e4e539036f5c0868f44bcfaaeb3d641d680558a6"
+  },
+  "runs": [
+    {
+      "label": "femtovg-default-1",
+      "phases": {
+        "idle": {
+          "frames": 2.0,
+          "render_p50_ms": 496.05,
+          "render_p95_ms": 496.05,
+          "frame_interval_p95_ms": 517.03,
+          "timer_lateness_p95_ms": 0.41,
+          "timer_lateness_max_ms": 483.3,
+          "snapshot_count": 0.0,
+          "snapshot_apply_p95_ms": 0.0,
+          "layout": {
+            "calls": 4,
+            "p95_ms": 1093.46,
+            "measured_rows": 12
+          }
+        },
+        "unchanged-updates": {
+          "frames": 0.0,
+          "render_p50_ms": 0.0,
+          "render_p95_ms": 0.0,
+          "frame_interval_p95_ms": 0.0,
+          "timer_lateness_p95_ms": 0.65,
+          "timer_lateness_max_ms": 2.35,
+          "snapshot_count": 600.0,
+          "snapshot_apply_p95_ms": 0.02,
+          "layout": {
+            "calls": 600,
+            "p95_ms": 0.01,
+            "measured_rows": 0
+          }
+        },
+        "changing-updates": {
+          "frames": 151.0,
+          "render_p50_ms": 11.63,
+          "render_p95_ms": 15.16,
+          "frame_interval_p95_ms": 33.78,
+          "timer_lateness_p95_ms": 5.58,
+          "timer_lateness_max_ms": 15.82,
+          "snapshot_count": 350.0,
+          "snapshot_apply_p95_ms": 0.2,
+          "layout": {
+            "calls": 350,
+            "p95_ms": 0.01,
+            "measured_rows": 0
+          }
+        },
+        "resize": {
+          "frames": 64.0,
+          "render_p50_ms": 18.18,
+          "render_p95_ms": 44.71,
+          "frame_interval_p95_ms": 90.0,
+          "timer_lateness_p95_ms": 40.6,
+          "timer_lateness_max_ms": 105.91,
+          "snapshot_count": 1.0,
+          "snapshot_apply_p95_ms": 0.16,
+          "layout": {
+            "calls": 283,
+            "p95_ms": 20.7,
+            "measured_rows": 871
+          }
+        },
+        "maximize-restore": {
+          "frames": 26.0,
+          "render_p50_ms": 14.76,
+          "render_p95_ms": 104.7,
+          "frame_interval_p95_ms": 480.66,
+          "timer_lateness_p95_ms": 14.78,
+          "timer_lateness_max_ms": 158.09,
+          "snapshot_count": 0.0,
+          "snapshot_apply_p95_ms": 0.0,
+          "layout": {
+            "calls": 15,
+            "p95_ms": 34.46,
+            "measured_rows": 79
+          }
+        },
+        "scroll-100": {
+          "frames": 99.0,
+          "render_p50_ms": 11.17,
+          "render_p95_ms": 46.78,
+          "frame_interval_p95_ms": 93.22,
+          "timer_lateness_p95_ms": 42.42,
+          "timer_lateness_max_ms": 91.2,
+          "snapshot_count": 0.0,
+          "snapshot_apply_p95_ms": 0.0,
+          "layout": {
+            "calls": 122,
+            "p95_ms": 4.62,
+            "measured_rows": 59
+          }
+        },
+        "scroll-10000": {
+          "frames": 112.0,
+          "render_p50_ms": 12.58,
+          "render_p95_ms": 16.62,
+          "frame_interval_p95_ms": 50.69,
+          "timer_lateness_p95_ms": 16.17,
+          "timer_lateness_max_ms": 68.8,
+          "snapshot_count": 0.0,
+          "snapshot_apply_p95_ms": 0.0,
+          "layout": {
+            "calls": 143,
+            "p95_ms": 3.68,
+            "measured_rows": 66
+          }
+        },
+        "resize-10000": {
+          "frames": 53.0,
+          "render_p50_ms": 20.73,
+          "render_p95_ms": 44.12,
+          "frame_interval_p95_ms": 93.85,
+          "timer_lateness_p95_ms": 50.38,
+          "timer_lateness_max_ms": 66.79,
+          "snapshot_count": 0.0,
+          "snapshot_apply_p95_ms": 0.0,
+          "layout": {
+            "calls": 174,
+            "p95_ms": 28.33,
+            "measured_rows": 1029
+          }
+        },
+        "composer-10000": {
+          "frames": 92.0,
+          "render_p50_ms": 11.47,
+          "render_p95_ms": 21.08,
+          "frame_interval_p95_ms": 48.6,
+          "timer_lateness_p95_ms": 14.43,
+          "timer_lateness_max_ms": 24.1,
+          "snapshot_count": 0.0,
+          "snapshot_apply_p95_ms": 0.0,
+          "layout": {
+            "calls": 37,
+            "p95_ms": 0.03,
+            "measured_rows": 14
+          }
+        }
+      }
+    },
+    {
+      "label": "femtovg-default-2",
+      "phases": {
+        "idle": {
+          "frames": 2.0,
+          "render_p50_ms": 418.79,
+          "render_p95_ms": 418.79,
+          "frame_interval_p95_ms": 428.77,
+          "timer_lateness_p95_ms": 1.0,
+          "timer_lateness_max_ms": 406.49,
+          "snapshot_count": 0.0,
+          "snapshot_apply_p95_ms": 0.0,
+          "layout": {
+            "calls": 4,
+            "p95_ms": 1164.27,
+            "measured_rows": 12
+          }
+        },
+        "unchanged-updates": {
+          "frames": 0.0,
+          "render_p50_ms": 0.0,
+          "render_p95_ms": 0.0,
+          "frame_interval_p95_ms": 0.0,
+          "timer_lateness_p95_ms": 0.38,
+          "timer_lateness_max_ms": 0.87,
+          "snapshot_count": 599.0,
+          "snapshot_apply_p95_ms": 0.02,
+          "layout": {
+            "calls": 599,
+            "p95_ms": 0.01,
+            "measured_rows": 0
+          }
+        },
+        "changing-updates": {
+          "frames": 180.0,
+          "render_p50_ms": 5.98,
+          "render_p95_ms": 6.55,
+          "frame_interval_p95_ms": 17.35,
+          "timer_lateness_p95_ms": 1.66,
+          "timer_lateness_max_ms": 4.67,
+          "snapshot_count": 536.0,
+          "snapshot_apply_p95_ms": 0.22,
+          "layout": {
+            "calls": 536,
+            "p95_ms": 0.01,
+            "measured_rows": 0
+          }
+        },
+        "resize": {
+          "frames": 163.0,
+          "render_p50_ms": 5.01,
+          "render_p95_ms": 13.17,
+          "frame_interval_p95_ms": 31.66,
+          "timer_lateness_p95_ms": 6.41,
+          "timer_lateness_max_ms": 24.59,
+          "snapshot_count": 1.0,
+          "snapshot_apply_p95_ms": 0.2,
+          "layout": {
+            "calls": 512,
+            "p95_ms": 7.62,
+            "measured_rows": 1579
+          }
+        },
+        "maximize-restore": {
+          "frames": 59.0,
+          "render_p50_ms": 4.73,
+          "render_p95_ms": 7.65,
+          "frame_interval_p95_ms": 340.47,
+          "timer_lateness_p95_ms": 1.82,
+          "timer_lateness_max_ms": 42.43,
+          "snapshot_count": 0.0,
+          "snapshot_apply_p95_ms": 0.0,
+          "layout": {
+            "calls": 18,
+            "p95_ms": 13.38,
+            "measured_rows": 93
+          }
+        },
+        "scroll-100": {
+          "frames": 173.0,
+          "render_p50_ms": 4.97,
+          "render_p95_ms": 13.54,
+          "frame_interval_p95_ms": 18.67,
+          "timer_lateness_p95_ms": 3.38,
+          "timer_lateness_max_ms": 19.1,
+          "snapshot_count": 0.0,
+          "snapshot_apply_p95_ms": 0.0,
+          "layout": {
+            "calls": 211,
+            "p95_ms": 1.55,
+            "measured_rows": 78
+          }
+        },
+        "scroll-10000": {
+          "frames": 179.0,
+          "render_p50_ms": 3.16,
+          "render_p95_ms": 6.92,
+          "frame_interval_p95_ms": 17.59,
+          "timer_lateness_p95_ms": 2.74,
+          "timer_lateness_max_ms": 8.67,
+          "snapshot_count": 0.0,
+          "snapshot_apply_p95_ms": 0.0,
+          "layout": {
+            "calls": 184,
+            "p95_ms": 0.14,
+            "measured_rows": 2
+          }
+        },
+        "resize-10000": {
+          "frames": 171.0,
+          "render_p50_ms": 5.1,
+          "render_p95_ms": 11.75,
+          "frame_interval_p95_ms": 24.43,
+          "timer_lateness_p95_ms": 6.24,
+          "timer_lateness_max_ms": 10.54,
+          "snapshot_count": 0.0,
+          "snapshot_apply_p95_ms": 0.0,
+          "layout": {
+            "calls": 356,
+            "p95_ms": 8.73,
+            "measured_rows": 2063
+          }
+        },
+        "composer-10000": {
+          "frames": 94.0,
+          "render_p50_ms": 4.7,
+          "render_p95_ms": 6.88,
+          "frame_interval_p95_ms": 55.5,
+          "timer_lateness_p95_ms": 3.0,
+          "timer_lateness_max_ms": 4.13,
+          "snapshot_count": 0.0,
+          "snapshot_apply_p95_ms": 0.0,
+          "layout": {
+            "calls": 37,
+            "p95_ms": 0.1,
+            "measured_rows": 15
+          }
+        }
+      }
+    },
+    {
+      "label": "zapfast-1",
+      "phases": {
+        "warmup": {
+          "frames": 168.0,
+          "frame_interval_p95_ms": 17.63,
+          "frame_interval_max_ms": 129.56,
+          "ui_and_render_cpu_p95_ms": 6.06
+        },
+        "scroll-100": {
+          "frames": 168.0,
+          "frame_interval_p95_ms": 33.07,
+          "frame_interval_max_ms": 33.69,
+          "ui_and_render_cpu_p95_ms": 15.4
+        },
+        "resize-100": {
+          "frames": 127.0,
+          "frame_interval_p95_ms": 48.35,
+          "frame_interval_max_ms": 51.64,
+          "ui_and_render_cpu_p95_ms": 36.79
+        },
+        "scroll-10000": {
+          "frames": 98.0,
+          "frame_interval_p95_ms": 48.87,
+          "frame_interval_max_ms": 62.96,
+          "ui_and_render_cpu_p95_ms": 46.12
+        },
+        "resize-10000": {
+          "frames": 96.0,
+          "frame_interval_p95_ms": 51.41,
+          "frame_interval_max_ms": 68.23,
+          "ui_and_render_cpu_p95_ms": 59.26
+        },
+        "composer-10000": {
+          "frames": 173.0,
+          "frame_interval_p95_ms": 26.2,
+          "frame_interval_max_ms": 34.4,
+          "ui_and_render_cpu_p95_ms": 26.12
+        }
+      }
+    },
+    {
+      "label": "zapfast-2",
+      "phases": {
+        "warmup": {
+          "frames": 168.0,
+          "frame_interval_p95_ms": 18.02,
+          "frame_interval_max_ms": 129.5,
+          "ui_and_render_cpu_p95_ms": 6.11
+        },
+        "scroll-100": {
+          "frames": 183.0,
+          "frame_interval_p95_ms": 17.83,
+          "frame_interval_max_ms": 21.54,
+          "ui_and_render_cpu_p95_ms": 9.83
+        },
+        "resize-100": {
+          "frames": 187.0,
+          "frame_interval_p95_ms": 33.44,
+          "frame_interval_max_ms": 35.15,
+          "ui_and_render_cpu_p95_ms": 21.36
+        },
+        "scroll-10000": {
+          "frames": 186.0,
+          "frame_interval_p95_ms": 23.03,
+          "frame_interval_max_ms": 41.97,
+          "ui_and_render_cpu_p95_ms": 20.77
+        },
+        "resize-10000": {
+          "frames": 162.0,
+          "frame_interval_p95_ms": 33.41,
+          "frame_interval_max_ms": 34.47,
+          "ui_and_render_cpu_p95_ms": 22.9
+        },
+        "composer-10000": {
+          "frames": 193.0,
+          "frame_interval_p95_ms": 23.44,
+          "frame_interval_max_ms": 27.0,
+          "ui_and_render_cpu_p95_ms": 19.68
+        }
+      }
+    }
+  ],
+  "renderer_comparison": {
+    "binary_sha256": "dfb484acc37e526d528eae0cbc1533aa06382f6664f9c450e7b42c6774cbce4a",
+    "build_features": [
+      "slint/renderer-skia-opengl"
+    ],
+    "runs": [
+      {
+        "label": "femtovg-paired-1",
+        "gpu": [
+          [
+            "drm-driver:\tamdgpu",
+            "drm-pdev:\t0000:04:00.0",
+            "drm-engine-gfx:\t10097765 ns",
+            "drm-engine-compute:\t2458894 ns"
+          ],
+          [
+            "drm-driver:\tamdgpu",
+            "drm-pdev:\t0000:04:00.0",
+            "drm-engine-gfx:\t10097765 ns",
+            "drm-engine-compute:\t2458894 ns"
+          ],
+          [
+            "drm-driver:\tamdgpu",
+            "drm-pdev:\t0000:04:00.0",
+            "drm-engine-gfx:\t10097765 ns",
+            "drm-engine-compute:\t2458894 ns"
+          ]
+        ],
+        "phases": {
+          "idle": {
+            "frames": 2.0,
+            "render_p50_ms": 284.98,
+            "render_p95_ms": 284.98,
+            "frame_interval_p95_ms": 308.27,
+            "timer_lateness_p95_ms": 1.0,
+            "timer_lateness_max_ms": 270.47,
+            "snapshot_count": 0.0,
+            "snapshot_apply_p95_ms": 0.0,
+            "layout": {
+              "calls": 4,
+              "p95_ms": 406.6,
+              "measured_rows": 12
+            }
+          },
+          "unchanged-updates": {
+            "frames": 0.0,
+            "render_p50_ms": 0.0,
+            "render_p95_ms": 0.0,
+            "frame_interval_p95_ms": 0.0,
+            "timer_lateness_p95_ms": 0.76,
+            "timer_lateness_max_ms": 2.23,
+            "snapshot_count": 599.0,
+            "snapshot_apply_p95_ms": 0.03,
+            "layout": {
+              "calls": 599,
+              "p95_ms": 0.01,
+              "measured_rows": 0
+            }
+          },
+          "changing-updates": {
+            "frames": 164.0,
+            "render_p50_ms": 11.14,
+            "render_p95_ms": 13.32,
+            "frame_interval_p95_ms": 32.99,
+            "timer_lateness_p95_ms": 3.52,
+            "timer_lateness_max_ms": 14.4,
+            "snapshot_count": 346.0,
+            "snapshot_apply_p95_ms": 0.19,
+            "layout": {
+              "calls": 346,
+              "p95_ms": 0.01,
+              "measured_rows": 0
+            }
+          },
+          "resize": {
+            "frames": 68.0,
+            "render_p50_ms": 18.9,
+            "render_p95_ms": 34.14,
+            "frame_interval_p95_ms": 79.17,
+            "timer_lateness_p95_ms": 33.73,
+            "timer_lateness_max_ms": 57.61,
+            "snapshot_count": 1.0,
+            "snapshot_apply_p95_ms": 0.19,
+            "layout": {
+              "calls": 291,
+              "p95_ms": 19.99,
+              "measured_rows": 920
+            }
+          },
+          "maximize-restore": {
+            "frames": 57.0,
+            "render_p50_ms": 10.24,
+            "render_p95_ms": 24.28,
+            "frame_interval_p95_ms": 217.75,
+            "timer_lateness_p95_ms": 15.29,
+            "timer_lateness_max_ms": 104.37,
+            "snapshot_count": 0.0,
+            "snapshot_apply_p95_ms": 0.0,
+            "layout": {
+              "calls": 18,
+              "p95_ms": 33.89,
+              "measured_rows": 93
+            }
+          },
+          "scroll-100": {
+            "frames": 108.0,
+            "render_p50_ms": 10.96,
+            "render_p95_ms": 43.37,
+            "frame_interval_p95_ms": 53.85,
+            "timer_lateness_p95_ms": 40.03,
+            "timer_lateness_max_ms": 43.29,
+            "snapshot_count": 0.0,
+            "snapshot_apply_p95_ms": 0.0,
+            "layout": {
+              "calls": 125,
+              "p95_ms": 4.47,
+              "measured_rows": 58
+            }
+          },
+          "scroll-10000": {
+            "frames": 124.0,
+            "render_p50_ms": 11.34,
+            "render_p95_ms": 38.51,
+            "frame_interval_p95_ms": 47.64,
+            "timer_lateness_p95_ms": 23.74,
+            "timer_lateness_max_ms": 45.49,
+            "snapshot_count": 0.0,
+            "snapshot_apply_p95_ms": 0.0,
+            "layout": {
+              "calls": 155,
+              "p95_ms": 0.87,
+              "measured_rows": 12
+            }
+          },
+          "resize-10000": {
+            "frames": 58.0,
+            "render_p50_ms": 18.65,
+            "render_p95_ms": 43.85,
+            "frame_interval_p95_ms": 91.55,
+            "timer_lateness_p95_ms": 45.71,
+            "timer_lateness_max_ms": 60.43,
+            "snapshot_count": 0.0,
+            "snapshot_apply_p95_ms": 0.0,
+            "layout": {
+              "calls": 186,
+              "p95_ms": 25.64,
+              "measured_rows": 1064
+            }
+          },
+          "composer-10000": {
+            "frames": 94.0,
+            "render_p50_ms": 10.64,
+            "render_p95_ms": 15.11,
+            "frame_interval_p95_ms": 47.33,
+            "timer_lateness_p95_ms": 4.63,
+            "timer_lateness_max_ms": 11.35,
+            "snapshot_count": 0.0,
+            "snapshot_apply_p95_ms": 0.0,
+            "layout": {
+              "calls": 37,
+              "p95_ms": 0.08,
+              "measured_rows": 14
+            }
+          }
+        },
+        "slint_identification": "Slint: Build config: release; Backend: FemtoVG renderer with OpenGL backend"
+      },
+      {
+        "label": "skia-opengl-paired-1",
+        "gpu": [
+          [
+            "drm-driver:\tamdgpu",
+            "drm-pdev:\t0000:04:00.0",
+            "drm-engine-gfx:\t3254096 ns",
+            "drm-engine-compute:\t2426887 ns"
+          ],
+          [
+            "drm-driver:\tamdgpu",
+            "drm-pdev:\t0000:04:00.0",
+            "drm-engine-gfx:\t3254096 ns",
+            "drm-engine-compute:\t2426887 ns"
+          ],
+          [
+            "drm-driver:\tamdgpu",
+            "drm-pdev:\t0000:04:00.0",
+            "drm-engine-gfx:\t3254096 ns",
+            "drm-engine-compute:\t2426887 ns"
+          ]
+        ],
+        "phases": {
+          "idle": {
+            "frames": 2.0,
+            "render_p50_ms": 769.24,
+            "render_p95_ms": 769.24,
+            "frame_interval_p95_ms": 795.65,
+            "timer_lateness_p95_ms": 0.85,
+            "timer_lateness_max_ms": 762.94,
+            "snapshot_count": 0.0,
+            "snapshot_apply_p95_ms": 0.0,
+            "layout": {
+              "calls": 4,
+              "p95_ms": 657.47,
+              "measured_rows": 12
+            }
+          },
+          "unchanged-updates": {
+            "frames": 0.0,
+            "render_p50_ms": 0.0,
+            "render_p95_ms": 0.0,
+            "frame_interval_p95_ms": 0.0,
+            "timer_lateness_p95_ms": 0.92,
+            "timer_lateness_max_ms": 3.63,
+            "snapshot_count": 600.0,
+            "snapshot_apply_p95_ms": 0.02,
+            "layout": {
+              "calls": 600,
+              "p95_ms": 0.01,
+              "measured_rows": 0
+            }
+          },
+          "changing-updates": {
+            "frames": 175.0,
+            "render_p50_ms": 8.22,
+            "render_p95_ms": 11.83,
+            "frame_interval_p95_ms": 18.49,
+            "timer_lateness_p95_ms": 2.38,
+            "timer_lateness_max_ms": 4.84,
+            "snapshot_count": 424.0,
+            "snapshot_apply_p95_ms": 0.2,
+            "layout": {
+              "calls": 424,
+              "p95_ms": 0.01,
+              "measured_rows": 0
+            }
+          },
+          "resize": {
+            "frames": 179.0,
+            "render_p50_ms": 2.9,
+            "render_p95_ms": 6.98,
+            "frame_interval_p95_ms": 18.29,
+            "timer_lateness_p95_ms": 3.81,
+            "timer_lateness_max_ms": 19.78,
+            "snapshot_count": 0.0,
+            "snapshot_apply_p95_ms": 0.0,
+            "layout": {
+              "calls": 524,
+              "p95_ms": 7.83,
+              "measured_rows": 1622
+            }
+          },
+          "maximize-restore": {
+            "frames": 63.0,
+            "render_p50_ms": 2.79,
+            "render_p95_ms": 14.73,
+            "frame_interval_p95_ms": 325.48,
+            "timer_lateness_p95_ms": 0.95,
+            "timer_lateness_max_ms": 28.67,
+            "snapshot_count": 0.0,
+            "snapshot_apply_p95_ms": 0.0,
+            "layout": {
+              "calls": 21,
+              "p95_ms": 12.79,
+              "measured_rows": 109
+            }
+          },
+          "scroll-100": {
+            "frames": 180.0,
+            "render_p50_ms": 4.34,
+            "render_p95_ms": 11.62,
+            "frame_interval_p95_ms": 17.43,
+            "timer_lateness_p95_ms": 2.46,
+            "timer_lateness_max_ms": 8.4,
+            "snapshot_count": 0.0,
+            "snapshot_apply_p95_ms": 0.0,
+            "layout": {
+              "calls": 227,
+              "p95_ms": 1.26,
+              "measured_rows": 84
+            }
+          },
+          "scroll-10000": {
+            "frames": 178.0,
+            "render_p50_ms": 4.35,
+            "render_p95_ms": 4.81,
+            "frame_interval_p95_ms": 17.55,
+            "timer_lateness_p95_ms": 1.74,
+            "timer_lateness_max_ms": 30.83,
+            "snapshot_count": 0.0,
+            "snapshot_apply_p95_ms": 0.0,
+            "layout": {
+              "calls": 182,
+              "p95_ms": 2.4,
+              "measured_rows": 80
+            }
+          },
+          "resize-10000": {
+            "frames": 175.0,
+            "render_p50_ms": 2.75,
+            "render_p95_ms": 9.64,
+            "frame_interval_p95_ms": 19.58,
+            "timer_lateness_p95_ms": 5.0,
+            "timer_lateness_max_ms": 8.86,
+            "snapshot_count": 0.0,
+            "snapshot_apply_p95_ms": 0.0,
+            "layout": {
+              "calls": 350,
+              "p95_ms": 9.39,
+              "measured_rows": 2132
+            }
+          },
+          "composer-10000": {
+            "frames": 94.0,
+            "render_p50_ms": 4.0,
+            "render_p95_ms": 4.75,
+            "frame_interval_p95_ms": 57.28,
+            "timer_lateness_p95_ms": 2.85,
+            "timer_lateness_max_ms": 3.98,
+            "snapshot_count": 0.0,
+            "snapshot_apply_p95_ms": 0.0,
+            "layout": {
+              "calls": 37,
+              "p95_ms": 0.01,
+              "measured_rows": 14
+            }
+          }
+        },
+        "slint_identification": "Slint: Build config: release; Backend: Skia renderer (skia backend opengl; surface: 32 bpp)"
+      },
+      {
+        "label": "skia-opengl-paired-2",
+        "gpu": [
+          [
+            "drm-driver:\tamdgpu",
+            "drm-pdev:\t0000:04:00.0",
+            "drm-engine-gfx:\t3493546 ns",
+            "drm-engine-compute:\t2293712 ns"
+          ],
+          [
+            "drm-driver:\tamdgpu",
+            "drm-pdev:\t0000:04:00.0",
+            "drm-engine-gfx:\t3493546 ns",
+            "drm-engine-compute:\t2293712 ns"
+          ],
+          [
+            "drm-driver:\tamdgpu",
+            "drm-pdev:\t0000:04:00.0",
+            "drm-engine-gfx:\t3493546 ns",
+            "drm-engine-compute:\t2293712 ns"
+          ]
+        ],
+        "phases": {
+          "idle": {
+            "frames": 2.0,
+            "render_p50_ms": 128.87,
+            "render_p95_ms": 128.87,
+            "frame_interval_p95_ms": 145.95,
+            "timer_lateness_p95_ms": 0.05,
+            "timer_lateness_max_ms": 119.42,
+            "snapshot_count": 0.0,
+            "snapshot_apply_p95_ms": 0.0,
+            "layout": {
+              "calls": 4,
+              "p95_ms": 189.12,
+              "measured_rows": 12
+            }
+          },
+          "unchanged-updates": {
+            "frames": 0.0,
+            "render_p50_ms": 0.0,
+            "render_p95_ms": 0.0,
+            "frame_interval_p95_ms": 0.0,
+            "timer_lateness_p95_ms": 0.34,
+            "timer_lateness_max_ms": 0.43,
+            "snapshot_count": 599.0,
+            "snapshot_apply_p95_ms": 0.01,
+            "layout": {
+              "calls": 599,
+              "p95_ms": 0.01,
+              "measured_rows": 0
+            }
+          },
+          "changing-updates": {
+            "frames": 180.0,
+            "render_p50_ms": 5.34,
+            "render_p95_ms": 5.55,
+            "frame_interval_p95_ms": 17.55,
+            "timer_lateness_p95_ms": 1.24,
+            "timer_lateness_max_ms": 3.67,
+            "snapshot_count": 571.0,
+            "snapshot_apply_p95_ms": 0.24,
+            "layout": {
+              "calls": 571,
+              "p95_ms": 0.01,
+              "measured_rows": 0
+            }
+          },
+          "resize": {
+            "frames": 178.0,
+            "render_p50_ms": 3.02,
+            "render_p95_ms": 7.85,
+            "frame_interval_p95_ms": 18.2,
+            "timer_lateness_p95_ms": 3.45,
+            "timer_lateness_max_ms": 22.82,
+            "snapshot_count": 1.0,
+            "snapshot_apply_p95_ms": 0.19,
+            "layout": {
+              "calls": 528,
+              "p95_ms": 8.01,
+              "measured_rows": 1627
+            }
+          },
+          "maximize-restore": {
+            "frames": 59.0,
+            "render_p50_ms": 2.86,
+            "render_p95_ms": 6.0,
+            "frame_interval_p95_ms": 346.47,
+            "timer_lateness_p95_ms": 1.75,
+            "timer_lateness_max_ms": 44.64,
+            "snapshot_count": 0.0,
+            "snapshot_apply_p95_ms": 0.0,
+            "layout": {
+              "calls": 18,
+              "p95_ms": 23.81,
+              "measured_rows": 90
+            }
+          },
+          "scroll-100": {
+            "frames": 179.0,
+            "render_p50_ms": 4.35,
+            "render_p95_ms": 11.55,
+            "frame_interval_p95_ms": 17.94,
+            "timer_lateness_p95_ms": 2.1,
+            "timer_lateness_max_ms": 2.83,
+            "snapshot_count": 0.0,
+            "snapshot_apply_p95_ms": 0.0,
+            "layout": {
+              "calls": 224,
+              "p95_ms": 1.26,
+              "measured_rows": 81
+            }
+          },
+          "scroll-10000": {
+            "frames": 177.0,
+            "render_p50_ms": 4.4,
+            "render_p95_ms": 4.84,
+            "frame_interval_p95_ms": 17.67,
+            "timer_lateness_p95_ms": 1.99,
+            "timer_lateness_max_ms": 20.65,
+            "snapshot_count": 0.0,
+            "snapshot_apply_p95_ms": 0.0,
+            "layout": {
+              "calls": 184,
+              "p95_ms": 0.13,
+              "measured_rows": 2
+            }
+          },
+          "resize-10000": {
+            "frames": 178.0,
+            "render_p50_ms": 2.6,
+            "render_p95_ms": 8.02,
+            "frame_interval_p95_ms": 17.85,
+            "timer_lateness_p95_ms": 2.89,
+            "timer_lateness_max_ms": 8.56,
+            "snapshot_count": 0.0,
+            "snapshot_apply_p95_ms": 0.0,
+            "layout": {
+              "calls": 360,
+              "p95_ms": 9.26,
+              "measured_rows": 2128
+            }
+          },
+          "composer-10000": {
+            "frames": 94.0,
+            "render_p50_ms": 3.92,
+            "render_p95_ms": 4.63,
+            "frame_interval_p95_ms": 58.42,
+            "timer_lateness_p95_ms": 2.25,
+            "timer_lateness_max_ms": 3.35,
+            "snapshot_count": 0.0,
+            "snapshot_apply_p95_ms": 0.0,
+            "layout": {
+              "calls": 37,
+              "p95_ms": 0.07,
+              "measured_rows": 14
+            }
+          }
+        },
+        "slint_identification": "Slint: Build config: release; Backend: Skia renderer (skia backend opengl; surface: 32 bpp)"
+      },
+      {
+        "label": "femtovg-paired-2",
+        "gpu": [
+          [
+            "drm-driver:\tamdgpu",
+            "drm-pdev:\t0000:04:00.0",
+            "drm-engine-gfx:\t9815417 ns",
+            "drm-engine-compute:\t2870058 ns"
+          ],
+          [
+            "drm-driver:\tamdgpu",
+            "drm-pdev:\t0000:04:00.0",
+            "drm-engine-gfx:\t9815417 ns",
+            "drm-engine-compute:\t2870058 ns"
+          ],
+          [
+            "drm-driver:\tamdgpu",
+            "drm-pdev:\t0000:04:00.0",
+            "drm-engine-gfx:\t9815417 ns",
+            "drm-engine-compute:\t2870058 ns"
+          ]
+        ],
+        "phases": {
+          "idle": {
+            "frames": 2.0,
+            "render_p50_ms": 113.31,
+            "render_p95_ms": 113.31,
+            "frame_interval_p95_ms": 131.17,
+            "timer_lateness_p95_ms": 0.04,
+            "timer_lateness_max_ms": 98.22,
+            "snapshot_count": 0.0,
+            "snapshot_apply_p95_ms": 0.0,
+            "layout": {
+              "calls": 4,
+              "p95_ms": 193.14,
+              "measured_rows": 12
+            }
+          },
+          "unchanged-updates": {
+            "frames": 0.0,
+            "render_p50_ms": 0.0,
+            "render_p95_ms": 0.0,
+            "frame_interval_p95_ms": 0.0,
+            "timer_lateness_p95_ms": 0.35,
+            "timer_lateness_max_ms": 0.37,
+            "snapshot_count": 599.0,
+            "snapshot_apply_p95_ms": 0.01,
+            "layout": {
+              "calls": 599,
+              "p95_ms": 0.01,
+              "measured_rows": 0
+            }
+          },
+          "changing-updates": {
+            "frames": 180.0,
+            "render_p50_ms": 5.72,
+            "render_p95_ms": 6.4,
+            "frame_interval_p95_ms": 17.8,
+            "timer_lateness_p95_ms": 1.86,
+            "timer_lateness_max_ms": 3.91,
+            "snapshot_count": 551.0,
+            "snapshot_apply_p95_ms": 0.23,
+            "layout": {
+              "calls": 551,
+              "p95_ms": 0.01,
+              "measured_rows": 0
+            }
+          },
+          "resize": {
+            "frames": 173.0,
+            "render_p50_ms": 5.04,
+            "render_p95_ms": 10.46,
+            "frame_interval_p95_ms": 18.43,
+            "timer_lateness_p95_ms": 4.19,
+            "timer_lateness_max_ms": 26.04,
+            "snapshot_count": 1.0,
+            "snapshot_apply_p95_ms": 0.19,
+            "layout": {
+              "calls": 517,
+              "p95_ms": 7.57,
+              "measured_rows": 1593
+            }
+          },
+          "maximize-restore": {
+            "frames": 53.0,
+            "render_p50_ms": 4.87,
+            "render_p95_ms": 9.99,
+            "frame_interval_p95_ms": 360.41,
+            "timer_lateness_p95_ms": 3.26,
+            "timer_lateness_max_ms": 61.66,
+            "snapshot_count": 0.0,
+            "snapshot_apply_p95_ms": 0.0,
+            "layout": {
+              "calls": 18,
+              "p95_ms": 23.98,
+              "measured_rows": 90
+            }
+          },
+          "scroll-100": {
+            "frames": 175.0,
+            "render_p50_ms": 5.64,
+            "render_p95_ms": 14.06,
+            "frame_interval_p95_ms": 18.18,
+            "timer_lateness_p95_ms": 2.82,
+            "timer_lateness_max_ms": 18.95,
+            "snapshot_count": 0.0,
+            "snapshot_apply_p95_ms": 0.0,
+            "layout": {
+              "calls": 219,
+              "p95_ms": 1.44,
+              "measured_rows": 80
+            }
+          },
+          "scroll-10000": {
+            "frames": 179.0,
+            "render_p50_ms": 5.86,
+            "render_p95_ms": 7.53,
+            "frame_interval_p95_ms": 17.44,
+            "timer_lateness_p95_ms": 2.35,
+            "timer_lateness_max_ms": 5.28,
+            "snapshot_count": 0.0,
+            "snapshot_apply_p95_ms": 0.0,
+            "layout": {
+              "calls": 183,
+              "p95_ms": 0.14,
+              "measured_rows": 0
+            }
+          },
+          "resize-10000": {
+            "frames": 162.0,
+            "render_p50_ms": 5.37,
+            "render_p95_ms": 13.72,
+            "frame_interval_p95_ms": 32.85,
+            "timer_lateness_p95_ms": 8.21,
+            "timer_lateness_max_ms": 12.17,
+            "snapshot_count": 0.0,
+            "snapshot_apply_p95_ms": 0.0,
+            "layout": {
+              "calls": 346,
+              "p95_ms": 9.32,
+              "measured_rows": 2117
+            }
+          },
+          "composer-10000": {
+            "frames": 94.0,
+            "render_p50_ms": 4.83,
+            "render_p95_ms": 6.57,
+            "frame_interval_p95_ms": 54.7,
+            "timer_lateness_p95_ms": 2.99,
+            "timer_lateness_max_ms": 4.17,
+            "snapshot_count": 0.0,
+            "snapshot_apply_p95_ms": 0.0,
+            "layout": {
+              "calls": 37,
+              "p95_ms": 0.01,
+              "measured_rows": 14
+            }
+          }
+        },
+        "slint_identification": "Slint: Build config: release; Backend: FemtoVG renderer with OpenGL backend"
+      }
+    ],
+    "debug_performance": "refresh_lazy,console"
+  },
+  "memory_comparison": {
+    "note": "Synthetic workload, same dual-renderer release binary. RAM sampling ran during final compilation; timing data from these runs is excluded. RSS/PSS exclude GPU VRAM.",
+    "runs": [
+      {
+        "renderer": "femtovg",
+        "samples_kib": {
+          "idle-100": {
+            "Rss": 115204,
+            "Pss": 77581,
+            "Private_Clean": 10736,
+            "Private_Dirty": 54176
+          },
+          "after-scroll-10000": {
+            "Rss": 118372,
+            "Pss": 84206,
+            "Private_Clean": 10764,
+            "Private_Dirty": 57344
+          },
+          "after-resize-10000": {
+            "Rss": 118372,
+            "Pss": 84206,
+            "Private_Clean": 10764,
+            "Private_Dirty": 57344
+          }
+        },
+        "peak_rss_kib": 119624
+      },
+      {
+        "renderer": "skia-opengl",
+        "samples_kib": {
+          "idle-100": {
+            "Rss": 245988,
+            "Pss": 210781,
+            "Private_Clean": 53868,
+            "Private_Dirty": 141544
+          },
+          "after-scroll-10000": {
+            "Rss": 249072,
+            "Pss": 214023,
+            "Private_Clean": 54032,
+            "Private_Dirty": 144568
+          },
+          "after-resize-10000": {
+            "Rss": 249320,
+            "Pss": 214271,
+            "Private_Clean": 54032,
+            "Private_Dirty": 144816
+          }
+        },
+        "peak_rss_kib": null,
+        "note": "The three phase readings were emitted before the sampler encountered process exit; no final peak was saved."
+      }
+    ]
+  },
+  "decision": {
+    "default_renderer": "winit-skia-opengl",
+    "reason": "Lower rendering CPU and steadier large-timeline resizing in the controlled comparison; prioritize responsiveness.",
+    "memory_tradeoff": "Approximately 128 MiB higher RSS in the matched synthetic workload.",
+    "validation": {
+      "offline_tests_passed": 31,
+      "opt_in_keyring_tests_ignored": 1,
+      "clippy": "all targets, warnings denied, passed",
+      "release_build": "passed",
+      "default_renderer_smoke": "Offline demo identified release-mode Skia/OpenGL with SLINT_BACKEND unset.",
+      "default_binary_sha256": "df3ef40cf214556f8958bcfbcedf62f0c455e65db62a1418d79cd036a9af886a"
+    },
+    "open_checks": [
+      "60 Hz acceptance across workloads",
+      "Cold startup stalls",
+      "Native IME and cross-message selection",
+      "Mixed-DPI transitions",
+      "Minimize/compositor animation latency",
+      "Live-account load"
+    ]
+  }
+}

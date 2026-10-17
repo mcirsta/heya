@@ -1,0 +1,31 @@
+# Generated build and reference material
+/target/
+/.prep/
+/.references/
+/whatsapp_desktop/
+__pycache__/
+*.pyc
+
+# Local assistant configuration
+/.agents/
+/.aws/
+/.codex/
+
+# Local account state and credentials
+/data/
+/cache/
+/logs/
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.log
+.env
+.env.*
+!.env.example
+
+# Desktop metadata
+.DS_Store
+Thumbs.db

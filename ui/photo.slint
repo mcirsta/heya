@@ -1,0 +1,84 @@
+import { Theme } from "theme.slint";
+import { ContentTarget } from "message-content.slint";
+import { IconButton } from "components.slint";
+import { ScrollView } from "std-widgets.slint";
+
+// A clipped image with a compact affordance; the spinner only exists while a
+// materialized photo is loading. No viewer or nested scroll area in chat rows.
+export component PhotoTile inherits Rectangle {
+    in property <image> picture;
+    in property <int> state;
+    in property <string> status;
+    callback activated();
+    border-radius: 6px; clip: true; background: Theme.surface;
+    Image { width: parent.width; height: parent.height; source: root.picture; image-fit: contain; }
+    if root.state != 2: status-disc := Rectangle {
+        x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+        width: 44px; height: 44px; border-radius: 22px; background: #0008;
+        Image {
+            x: 11px; y: 11px; width: 22px; height: 22px;
+            source: root.state == 1 ? @image-url("icons/photo-loading.svg") : root.state == 0 ? @image-url("icons/photo-download.svg") : @image-url("icons/photo-retry.svg");
+            transform-rotation: root.state == 1 ? 360deg * mod(animation-tick(), 1s) / 1s : 0deg;
+        }
+    }
+    ContentTarget {
+        x: 0px; y: 0px; width: parent.width; height: parent.height;
+        label: root.state == 2 ? @tr("Open photo") : root.status;
+        activated => { root.activated(); }
+    }
+}
+
+// Created only for the one explicitly opened photo. The timeline remains a
+// plain Image. The worker supplies a separately bounded larger decode here.
+export component PhotoViewer inherits Rectangle {
+    in property <image> picture;
+    in property <string> status;
+    in property <bool> ready;
+    callback closed();
+    callback retry();
+    private property <bool> zoomed;
+    background: #10181eef;
+    TouchArea { clicked => {} }
+    focus := FocusScope {
+        init => { self.focus(); }
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.closed(); return accept; }
+            if event.text == " " { root.zoomed = !root.zoomed; return accept; }
+            return reject;
+        }
+        ScrollView {
+            x: 16px; y: 64px; width: parent.width - 32px; height: parent.height - 124px;
+            content-width: root.zoomed ? max(self.visible-width,root.picture.width * 1px) : self.visible-width;
+            content-height: root.zoomed ? max(self.visible-height,root.picture.height * 1px) : self.visible-height;
+            Image {
+                width: parent.content-width; height: parent.content-height;
+                source: root.picture; image-fit: contain;
+            }
+        }
+        Text {
+            x: 20px; y: 18px; width: parent.width - 132px; height: 28px;
+            text: @tr("Photo"); color: white; font-size: 18px; font-weight: 600;
+        }
+        IconButton {
+            x: parent.width - 104px; y: 12px;
+            icon: @image-url("icons/search.svg"); ink: white;
+            label: root.zoomed ? @tr("Fit photo") : @tr("Zoom photo");
+            activated => { root.zoomed = !root.zoomed; }
+        }
+        close := IconButton {
+            x: parent.width - 56px; y: 12px;
+            icon: @image-url("icons/close.svg"); ink: white; label: @tr("Close photo");
+            activated => { root.closed(); }
+        }
+        Text {
+            x: 20px; y: parent.height - 52px; width: parent.width - 40px; height: 40px;
+            text: root.ready ? @tr("Space to zoom or fit · Esc to close") : root.status;
+            color: white; font-size: 13px; wrap: word-wrap;
+            horizontal-alignment: center; vertical-alignment: center;
+        }
+        if !root.ready: ContentTarget {
+            x: 20px; y: parent.height - 52px; width: parent.width - 40px; height: 40px;
+            label: root.status; activated => { root.retry(); }
+        }
+    }
+}
