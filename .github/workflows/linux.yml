@@ -31,7 +31,7 @@ jobs:
             build-essential clang libclang-dev cmake ninja-build pkg-config \
             libfontconfig1-dev libfreetype6-dev libxkbcommon-dev libwayland-dev \
             libx11-dev libx11-xcb-dev libxcursor-dev libxi-dev libxrandr-dev \
-            libxinerama-dev libgl1-mesa-dev libssl-dev dbus \
+            libxinerama-dev libgl1-mesa-dev libssl-dev libdbus-1-dev dbus \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
             gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
             gstreamer1.0-plugins-bad gstreamer1.0-libav \
