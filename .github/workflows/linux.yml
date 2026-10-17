@@ -36,9 +36,21 @@ jobs:
             gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
             gstreamer1.0-plugins-bad gstreamer1.0-libav \
             fonts-inter fonts-noto-color-emoji poppler-utils bubblewrap util-linux
+      - name: Enable the PDF sandbox on the CI runner
+        run: |
+          # Allow only the installed bwrap executable to create user namespaces.
+          # Heya's mount, network and resource restrictions still apply inside it.
+          if [ "$(cat /sys/module/apparmor/parameters/enabled 2>/dev/null)" = Y ]; then
+            printf 'abi <abi/4.0>,\ninclude <tunables/global>\nprofile bwrap /usr/bin/bwrap flags=(unconfined) { userns, }\n' | sudo apparmor_parser -r
+          fi
+          bwrap --unshare-all --die-with-parent --new-session \
+            --ro-bind /usr /usr --ro-bind /lib /lib --ro-bind-try /lib64 /lib64 \
+            --proc /proc --dev /dev --size 67108864 --tmpfs /tmp \
+            /usr/bin/pdftoppm -h
       - name: Install Rust
         run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        id: cargo-cache
         with:
           path: |
             ~/.cargo/registry
@@ -47,6 +59,7 @@ jobs:
           key: linux-rust-1.99.1-${{ hashFiles('Cargo.lock', '.github/workflows/linux.yml') }}-${{ github.sha }}
           restore-keys: |
             linux-rust-1.99.1-${{ hashFiles('Cargo.lock', '.github/workflows/linux.yml') }}-
+            linux-rust-1.99.1-
       - name: Check formatting
         run: cargo fmt --check
       - name: Lint default Linux build
@@ -57,3 +70,12 @@ jobs:
         run: cargo clippy --locked --all-targets --no-default-features -- -D warnings
       - name: Test Linux without audio
         run: cargo test --locked --no-default-features
+      - name: Save build progress
+        if: always() && !cancelled() && steps.cargo-cache.outputs.cache-primary-key != '' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}

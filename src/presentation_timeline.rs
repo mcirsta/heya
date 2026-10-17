@@ -1346,6 +1346,16 @@ pub(super) mod tests {
             assert_eq!(state.source[index].id, anchor.get().0);
             assert!((within - anchor.get().1).abs() < 0.1);
         });
+        // Read inside the bubble, past any date chip. Changing fonts can
+        // change that chip's height; preserve the position in the message,
+        // rather than its old distance from the top of the decoration.
+        with(ui, |model| {
+            let state = model.state.borrow();
+            let index = state.anchor().0;
+            let top = state.heights.prefix(index) + state.cache[index].prefix.unwrap();
+            ui.set_timeline_y(-(top as f32 + 5.));
+        });
+        layout(ui);
         // Changing the font invalidates measured rows without losing the reader's anchor.
         for family in ["", "Inter"] {
             ui.global::<crate::Theme>().set_font_family(family.into());
@@ -1355,7 +1365,11 @@ pub(super) mod tests {
                 let (index, within) = state.anchor();
                 assert_eq!(state.font, family);
                 assert_eq!(state.source[index].id, anchor.get().0);
-                assert!((within - anchor.get().1).abs() < 0.1);
+                let inside_bubble = within - state.cache[index].prefix.unwrap();
+                assert!(
+                    (inside_bubble - 5.).abs() < 0.1,
+                    "font {family:?} moved the read position inside the message: {inside_bubble}"
+                );
             });
         }
         let mut remaining = older.messages.to_vec();
