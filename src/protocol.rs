@@ -664,8 +664,8 @@ pub async fn run(
         if prepared.is_none() {
             let result = tokio::task::spawn_blocking(|| {
                 let files = storage::prepare()?;
-                let key = storage::archive_key(&files)?;
-                let archive = Archive::open(files.clone(), &key).map_err(archive_failure)?;
+                let archive = Archive::open(files.clone(), &files.archive_key_sql)
+                    .map_err(archive_failure)?;
                 protocol_messages::repair_text(&archive).map_err(archive_failure)?;
                 Ok::<_, Failure>((files, archive))
             })

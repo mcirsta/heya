@@ -76,17 +76,22 @@ fn decode_key(stored: Zeroizing<Vec<u8>>) -> Result<Zeroizing<Vec<u8>>, Failure>
 pub struct SessionFiles {
     pub path: PathBuf,
     pub key_sql: Zeroizing<String>,
+    pub archive_key_sql: Zeroizing<String>,
     // Retained by the protocol pool's connection hook, including detached work.
     _lock: File,
 }
+
+// Pre-release storage reset: the former profile used two independent keyring
+// items. Keep it untouched; this profile uses one master key on every platform.
+const PROFILE_DIRECTORY: &str = "default-v2";
 
 pub fn prepare() -> Result<Arc<SessionFiles>, Failure> {
     let project =
         directories::ProjectDirs::from("org", "heya", "Heya").ok_or(Failure::DataDirectory)?;
     let vault = DesktopVault(
-        keyring::Entry::new("org.heya.Heya", "session-v1").map_err(|_| Failure::Keyring)?,
+        keyring::Entry::new("org.heya.Heya", "master-v1").map_err(|_| Failure::Keyring)?,
     );
-    prepare_at(&project.data_local_dir().join("default"), &vault)
+    prepare_at(&project.data_local_dir().join(PROFILE_DIRECTORY), &vault)
 }
 
 /// Startup probes only file presence. A first launch does not create keys or a
@@ -94,16 +99,7 @@ pub fn prepare() -> Result<Arc<SessionFiles>, Failure> {
 pub fn has_session() -> Result<bool, Failure> {
     let project =
         directories::ProjectDirs::from("org", "heya", "Heya").ok_or(Failure::DataDirectory)?;
-    let directory = project.data_local_dir().join("default");
-    ["session.db", "archive.db"]
-        .into_iter()
-        .try_fold(false, |found, name| {
-            directory
-                .join(name)
-                .try_exists()
-                .map(|exists| found || exists)
-                .map_err(|_| Failure::DataDirectory)
-        })
+    databases_exist(&project.data_local_dir().join(PROFILE_DIRECTORY))
 }
 
 pub(crate) fn private_file(path: &Path) -> Result<File, Failure> {
@@ -141,35 +137,40 @@ pub(crate) fn prepare_at(
         std::fs::TryLockError::Error(_) => Failure::DataDirectory,
     })?;
     let path = directory.join("session.db");
-    let key_sql = database_key(&path, vault)?;
+    let master = load_master_key(directory, vault)?;
+    let key_sql = derive_database_key(&master, b"session-v1")?;
+    let archive_key_sql = derive_database_key(&master, b"archive-v1")?;
     private_file(&path)?;
     Ok(Arc::new(SessionFiles {
         path,
         key_sql,
+        archive_key_sql,
         _lock: lock,
     }))
 }
 
-pub fn archive_key(files: &SessionFiles) -> Result<Zeroizing<String>, Failure> {
-    let vault = DesktopVault(
-        keyring::Entry::new("org.heya.Heya", "archive-v1").map_err(|_| Failure::Keyring)?,
-    );
-    database_key(&files.path.with_file_name("archive.db"), &vault)
+fn databases_exist(directory: &Path) -> Result<bool, Failure> {
+    let mut exists = false;
+    for database in ["session.db", "archive.db"] {
+        for suffix in ["", "-wal", "-shm"] {
+            exists |= directory
+                .join(format!("{database}{suffix}"))
+                .try_exists()
+                .map_err(|_| Failure::DataDirectory)?;
+        }
+    }
+    Ok(exists)
 }
 
-fn database_key(path: &Path, vault: &impl SecretVault) -> Result<Zeroizing<String>, Failure> {
-    let mut exists = false;
-    for suffix in ["", "-wal", "-shm"] {
-        let mut name = path.as_os_str().to_os_string();
-        name.push(suffix);
-        exists |= Path::new(&name)
-            .try_exists()
-            .map_err(|_| Failure::DataDirectory)?;
-    }
-    let key = match vault.read()? {
-        Some(key) if key.len() == 32 => key,
-        Some(key) if !key.is_empty() || exists => return Err(Failure::InvalidKey),
-        None if exists => return Err(Failure::MissingKey),
+fn load_master_key(
+    directory: &Path,
+    vault: &impl SecretVault,
+) -> Result<Zeroizing<Vec<u8>>, Failure> {
+    let exists = databases_exist(directory)?;
+    match vault.read()? {
+        Some(key) if key.len() == 32 => Ok(key),
+        Some(key) if !key.is_empty() || exists => Err(Failure::InvalidKey),
+        None if exists => Err(Failure::MissingKey),
         // Only an empty entry with no database or journal can be the failed
         // first write described above. Never replace a key over stored data.
         Some(_) | None => {
@@ -181,9 +182,16 @@ fn database_key(path: &Path, vault: &impl SecretVault) -> Result<Zeroizing<Strin
             if *stored != *key {
                 return Err(Failure::Keyring);
             }
-            key
+            Ok(key)
         }
-    };
+    }
+}
+
+fn derive_database_key(master: &[u8], context: &[u8]) -> Result<Zeroizing<String>, Failure> {
+    let mut key = Zeroizing::new([0u8; 32]);
+    hkdf::Hkdf::<sha2::Sha256>::new(Some(b"org.heya.Heya database keys v1"), master)
+        .expand(context, key.as_mut())
+        .map_err(|_| Failure::InvalidKey)?;
     let mut key_sql = Zeroizing::new(String::from("PRAGMA key = \"x'"));
     use std::fmt::Write;
     for byte in key.iter() {
@@ -236,20 +244,93 @@ pub(crate) mod tests {
     fn failed_empty_bootstrap_recovers_only_when_no_database_or_journal_exists() {
         let temp = tempfile::tempdir().unwrap();
         let vault = MemoryVault(RefCell::new(Some(Vec::new())));
-        let path = temp.path().join("session.db");
-        assert!(database_key(&path, &vault).is_ok());
+        assert!(load_master_key(temp.path(), &vault).is_ok());
         assert_eq!(vault.0.borrow().as_ref().unwrap().len(), 32);
-        for suffix in ["", "-wal", "-shm"] {
+        for name in [
+            "session.db",
+            "session.db-wal",
+            "session.db-shm",
+            "archive.db",
+            "archive.db-wal",
+            "archive.db-shm",
+        ] {
             *vault.0.borrow_mut() = Some(Vec::new());
-            let existing = temp.path().join(format!("session.db{suffix}"));
+            let existing = temp.path().join(name);
             std::fs::write(&existing, b"synthetic stored data").unwrap();
             assert!(matches!(
-                database_key(&path, &vault),
+                load_master_key(temp.path(), &vault),
                 Err(Failure::InvalidKey)
             ));
             assert!(vault.0.borrow().as_ref().unwrap().is_empty());
+            *vault.0.borrow_mut() = None;
+            assert!(matches!(
+                load_master_key(temp.path(), &vault),
+                Err(Failure::MissingKey)
+            ));
+            assert!(vault.0.borrow().is_none());
             assert_eq!(std::fs::read(&existing).unwrap(), b"synthetic stored data");
             std::fs::remove_file(existing).unwrap();
+        }
+    }
+
+    #[test]
+    fn one_vault_read_opens_both_databases_with_distinct_durable_keys() {
+        use std::cell::Cell;
+        struct CountingVault {
+            reads: Cell<usize>,
+        }
+        impl SecretVault for CountingVault {
+            fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>, Failure> {
+                self.reads.set(self.reads.get() + 1);
+                Ok(Some(Zeroizing::new(vec![42; 32])))
+            }
+            fn write(&self, _: &[u8]) -> Result<(), Failure> {
+                panic!("must reuse the stored master key")
+            }
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let vault = CountingVault {
+            reads: Cell::new(0),
+        };
+        let files = prepare_at(temp.path(), &vault).unwrap();
+        assert_ne!(*files.key_sql, *files.archive_key_sql);
+        let session_key = files.key_sql.clone();
+        let archive_key = files.archive_key_sql.clone();
+        for (name, key) in [("session.db", &session_key), ("archive.db", &archive_key)] {
+            let db = rusqlite::Connection::open(temp.path().join(name)).unwrap();
+            db.execute_batch(key).unwrap();
+            db.execute_batch("CREATE TABLE probe(value INTEGER); INSERT INTO probe VALUES(42);")
+                .unwrap();
+        }
+        assert_eq!(
+            vault.reads.get(),
+            1,
+            "opening the archive must not read the vault again"
+        );
+        drop(files);
+        let files = prepare_at(temp.path(), &vault).unwrap();
+        assert_eq!(vault.reads.get(), 2, "one vault read per startup");
+        assert_eq!(*files.key_sql, *session_key);
+        assert_eq!(*files.archive_key_sql, *archive_key);
+        for (name, right, wrong) in [
+            ("session.db", &files.key_sql, &files.archive_key_sql),
+            ("archive.db", &files.archive_key_sql, &files.key_sql),
+        ] {
+            let path = temp.path().join(name);
+            let db = rusqlite::Connection::open(&path).unwrap();
+            db.execute_batch(right).unwrap();
+            assert_eq!(
+                db.query_row::<i64, _, _>("SELECT value FROM probe", [], |row| row.get(0))
+                    .unwrap(),
+                42
+            );
+            drop(db);
+            let db = rusqlite::Connection::open(&path).unwrap();
+            db.execute_batch(wrong).unwrap();
+            assert!(
+                db.query_row::<i64, _, _>("SELECT value FROM probe", [], |row| row.get(0))
+                    .is_err()
+            );
         }
     }
 

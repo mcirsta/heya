@@ -22,6 +22,19 @@ Normal startup resumes a saved session or presents the connection screen.
 Use `scripts/build-macos.sh` to build a local `target/macos/Heya.app` bundle.
 This is an ad-hoc-signed development app, not a notarized distribution.
 
+## Saved encryption key
+
+Heya stores one random master key in one native Keychain item (`org.heya.Heya`,
+account `master-v1`). It reads that item once to open both databases; separate
+session and archive keys are derived with HKDF-SHA256. Linux uses the same
+single-item design through Secret Service. Choosing **Always Allow** authorizes
+that build to reopen its saved data. An ad-hoc-signed rebuild can require
+authorization again, but session and archive access no longer cause two prompts.
+
+This pre-release change starts a fresh `default-v2` data profile. Scan the QR
+code again; existing `default` data and the former `session-v1`/`archive-v1`
+keyring entries are left untouched and are not migrated or accessed.
+
 ## Native integrations
 
 | Service | macOS implementation |

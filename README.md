@@ -333,14 +333,15 @@ announcement edits requiring an original message secret. These failures retain
 the original content. Live edit/delete interoperability still needs deliberate
 manual validation; automated tests never modify the owner's account.
 
-On Linux the session is under `$XDG_DATA_HOME/heya/default/session.db`
-(normally `~/.local/share/heya/default/session.db`). Its random encryption key
-is in the desktop Secret Service keyring, under service `org.heya.Heya` and
-entry `session-v1`. The separate chat archive is `archive.db` beside it, with
-its own random key under `archive-v1`. Keys are stored as versioned hex text
-for desktop-keyring compatibility; existing raw 32-byte keys remain readable.
-An empty entry left by a failed initial write can be recovered only if its
-database and journal files do not exist. Both databases use SQLCipher, private
+On Linux the session is under `$XDG_DATA_HOME/heya/default-v2/session.db`
+(normally `~/.local/share/heya/default-v2/session.db`), with `archive.db` beside
+it. On every platform, one random 256-bit master key is stored under service
+`org.heya.Heya`, entry `master-v1`, using native macOS Keychain or Linux Secret
+Service. One keyring read supplies both databases' distinct keys, derived with
+HKDF-SHA256 and separate session/archive contexts. The master key is stored as
+versioned hex text for desktop-keyring compatibility. An empty entry left by a
+failed initial write can be recovered only if neither database nor its journal
+files exists. Both databases use SQLCipher, private
 file permissions and the same process lock. A locked or unavailable keyring
 produces a retryable error;
 Heya never falls back to plaintext or replaces a missing key for an existing
@@ -348,6 +349,10 @@ database. Only one process can open this account. Do not remove either database
 or its key independently. A revoked linked session is retained until an explicit
 **Link again** confirmation. An interrupted shutdown blocks reconnection until
 Heya is restarted, so two protocol clients cannot share the same credential store.
+
+This pre-release storage change requires QR pairing again. The former `default`
+profile and its `session-v1`/`archive-v1` keyring entries remain untouched; there
+is no migration and the new app does not read them.
 
 Closing the window quits Heya: queued drafts/settings are saved, audio work is
 cancelled, active file exports are cancelled, and the SDK flushes before the session lock is released. Published
