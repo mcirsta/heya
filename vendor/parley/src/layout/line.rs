@@ -235,6 +235,8 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
     pub fn positioned_glyphs(&'a self) -> impl Iterator<Item = Glyph> + 'a + Clone {
         let mut offset = self.offset;
         let baseline = self.baseline;
+        #[cfg(target_os = "macos")]
+        let baseline = baseline + self.run.data.emoji_baseline_offset;
         self.glyphs().map(move |mut g| {
             g.x += offset;
             g.y += baseline;

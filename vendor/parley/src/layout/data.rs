@@ -121,6 +121,9 @@ pub(crate) struct RunData {
     pub(crate) font_index: usize,
     /// Font size.
     pub(crate) font_size: f32,
+    /// Apple bitmap emoji's offset below the Roman baseline.
+    #[cfg(target_os = "macos")]
+    pub(crate) emoji_baseline_offset: f32,
     /// Font attributes, needed for accessibility.
     pub(crate) font_attrs: fontique::Attributes,
     /// Synthesis for rendering (contains variation settings)
@@ -415,6 +418,26 @@ impl<B: Brush> LayoutData<B> {
         };
         let units_per_em = metrics.units_per_em as f32;
 
+        #[cfg(target_os = "macos")]
+        let emoji_baseline_offset = {
+            use alloc::string::ToString;
+            use skrifa::MetadataProvider;
+            let font = &self.fonts[font_index];
+            let font_ref = skrifa::FontRef::from_index(font.data.as_ref(), font.index).unwrap();
+            let apple_emoji = font_ref
+                .localized_strings(skrifa::string::StringId::FAMILY_NAME)
+                .any(|name| {
+                    matches!(name.to_string().as_str(), "Apple Color Emoji" | ".Apple Color Emoji UI")
+                });
+            // Match Apple's Roman-baseline placement without moving text,
+            // changing advances, or touching other platforms' emoji fonts.
+            if apple_emoji {
+                font_size / 8.0
+            } else {
+                0.0
+            }
+        };
+
         let metrics = {
             let (underline_offset, underline_size) = if let Some(underline) = metrics.underline {
                 (underline.offset, underline.thickness)
@@ -460,6 +483,8 @@ impl<B: Brush> LayoutData<B> {
         let mut run = RunData {
             font_index,
             font_size,
+            #[cfg(target_os = "macos")]
+            emoji_baseline_offset,
             font_attrs,
             synthesis,
             coords_range: coords_start..coords_end,

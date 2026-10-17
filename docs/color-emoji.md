@@ -29,11 +29,20 @@ numbers, punctuation and other scripts retain their existing font stack.
 No font paths, Fontconfig changes, bundled font, or renderer changes are needed.
 
 - Base crate SHA256: `22d2ff88bd3f7d68d1d9b09c7e6209f9a8e8c05088295140a2bcf2e9b17038c5`
-- Patch SHA256: `9e542df01c01a220b508185f98d90cbf042b48c423c705bef86af5202daa30de`
+- Patch SHA256: `8e245616e13591fa1096d295fd63e0e8a37348a7ddc084abea49ebde1f5753cf`
 - Upstream: <https://github.com/linebender/parley>
 - Retain the upstream Apache-2.0/MIT notices in `vendor/parley`.
 - Candidate upstream fix: emoji-family priority plus explicit text presentation;
   no upstream submission has been made.
+
+The same patch also contains a macOS-only visual workaround: positioned Apple
+Color Emoji glyphs move down by 0.125 em, leaving text, advances and line metrics
+unchanged. This applies to both mixed text and emoji-only messages. All added
+fields and positioning code are gated by `target_os = "macos"`; Linux's emoji
+selection and positioning remain unchanged. The small adjustment compensates
+for the elevated baseline observed with Skia's byte-loaded Apple emoji font.
+See the [upstream report and standalone reproduction](upstream/macos-emoji-baseline.md)
+for evidence and the limits of this workaround.
 
 ## Validation
 
@@ -43,8 +52,10 @@ measurement and containment. Native pixel checks and optimized timings are kept
 in `.prep/validation/color-emoji-20261017/`; these exercise synthetic data on a
 private Xvfb display, not the owner's account or compositor.
 
-Linux's installed Noto Color Emoji is the tested font. Windows and macOS use
-their generic platform emoji families; those platforms remain unverified.
+Linux uses the installed Noto Color Emoji. macOS uses Apple Color Emoji, with
+synthetic checks for mixed text, standalone emoji, sequences, ordinary text and
+horizontal spacing, plus an offscreen Skia font-loading comparison. Windows
+uses its generic platform emoji family and remains unverified.
 
 To reproduce the synthetic display and emoji-heavy timing workload after an
 optimized build:

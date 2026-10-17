@@ -1,0 +1,10 @@
+[package]
+name = "macos-emoji-repro"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+skia-safe = { version = "=0.153.3", features = ["gl", "metal"] }

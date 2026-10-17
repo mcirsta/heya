@@ -27,3 +27,38 @@
                  self.fonts_id = None;
              } else if self.fonts_id != Some(fonts_id) {
                  self.query.set_families(fonts);
+--- a/src/layout/data.rs
++++ b/src/layout/data.rs
+@@ -123,0 +124,3 @@
++    /// Apple bitmap emoji's offset below the Roman baseline.
++    #[cfg(target_os = "macos")]
++    pub(crate) emoji_baseline_offset: f32,
+@@ -417,0 +421,20 @@
++        #[cfg(target_os = "macos")]
++        let emoji_baseline_offset = {
++            use alloc::string::ToString;
++            use skrifa::MetadataProvider;
++            let font = &self.fonts[font_index];
++            let font_ref = skrifa::FontRef::from_index(font.data.as_ref(), font.index).unwrap();
++            let apple_emoji = font_ref
++                .localized_strings(skrifa::string::StringId::FAMILY_NAME)
++                .any(|name| {
++                    matches!(name.to_string().as_str(), "Apple Color Emoji" | ".Apple Color Emoji UI")
++                });
++            // Match Apple's Roman-baseline placement without moving text,
++            // changing advances, or touching other platforms' emoji fonts.
++            if apple_emoji {
++                font_size / 8.0
++            } else {
++                0.0
++            }
++        };
++
+@@ -462,0 +486,2 @@
++            #[cfg(target_os = "macos")]
++            emoji_baseline_offset,
+--- a/src/layout/line.rs
++++ b/src/layout/line.rs
+@@ -237,0 +238,2 @@
++        #[cfg(target_os = "macos")]
++        let baseline = baseline + self.run.data.emoji_baseline_offset;

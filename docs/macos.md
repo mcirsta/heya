@@ -58,7 +58,7 @@ separate process, not an App Sandbox or XPC service.
 ## Validation
 
 Validated on an Intel Mac running macOS 15.8.1 with Rust 1.99.1 and Apple's
-Command Line Tools 16.4 (Clang 17): 173 unit/UI tests and one encrypted protocol
+Command Line Tools 16.4 (Clang 17): 174 unit/UI tests and one encrypted protocol
 storage integration test passed. Three opt-in/helper tests remained ignored,
 including the actual desktop Keychain check. Formatting, all-target Clippy with
 warnings denied, and the build check without default features passed. The
@@ -69,6 +69,8 @@ compiled release PDF helper renders all three fixtures and rejects corrupt PDF
 input. The UI suite covers Command shortcuts using Slint's normalized key
 events, and a macOS-only minimum message height keeps the menu target contained
 with compact Apple fonts. Linux retains its existing message sizing.
+Apple emoji also have a small macOS-only baseline workaround, with real-font
+regression coverage and a [draft upstream report](upstream/macos-emoji-baseline.md).
 
 ```sh
 cargo fmt --check

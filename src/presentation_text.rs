@@ -147,6 +147,66 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn apple_emoji_baseline_preserves_ordinary_text_and_horizontal_spacing() {
+        use i_slint_core::textlayout::sharedparley::{fontique, parley};
+        let mut fonts = parley::FontContext::new();
+        let mut query = fonts.collection.query(&mut fonts.source_cache);
+        query.set_families([fontique::QueryFamily::Named("Apple Color Emoji")]);
+        let mut emoji_data = None;
+        query.matches_with(|font| {
+            emoji_data = Some(font.blob.clone());
+            fontique::QueryStatus::Stop
+        });
+        let emoji_data = emoji_data.expect("macOS must provide Apple Color Emoji");
+        drop(query);
+        let mut context = parley::LayoutContext::<()>::new();
+        let mut emoji_runs = 0;
+        for size in [14.5, 34.8, 69.6] {
+            for text in [
+                "Latin 012 # *",
+                "😟",
+                "Hello 😟 world ❤️",
+                "👩🏽‍💻🇷🇴1️⃣",
+                "😟😟😟😟",
+            ] {
+                let mut builder = context.ranged_builder(&mut fonts, text, 1., false);
+                builder.push_default(parley::StyleProperty::FontSize(size));
+                builder.push_default(parley::StyleProperty::FontFamily(
+                    parley::FontFamily::Single(parley::style::FontFamilyName::Generic(
+                        fontique::GenericFamily::SystemUi,
+                    )),
+                ));
+                let mut layout = builder.build(text);
+                layout.break_all_lines(None);
+                for item in layout.lines().flat_map(|line| line.items()) {
+                    let parley::PositionedLayoutItem::GlyphRun(glyphs) = item else {
+                        continue;
+                    };
+                    let emoji = glyphs.run().font().data.id() == emoji_data.id();
+                    let mut x = glyphs.offset();
+                    for (raw, positioned) in glyphs.glyphs().zip(glyphs.positioned_glyphs()) {
+                        assert_ne!(raw.id, 0, "missing glyph in {text:?}");
+                        assert!((positioned.x - raw.x - x).abs() < 0.001);
+                        x += raw.advance;
+                        let below_baseline = positioned.y - raw.y - glyphs.baseline();
+                        if emoji {
+                            assert!(
+                                below_baseline > 0.
+                                    && below_baseline < glyphs.run().metrics().descent
+                            );
+                        } else {
+                            assert_eq!(below_baseline, 0., "ordinary text must not move");
+                        }
+                    }
+                    emoji_runs += usize::from(emoji);
+                }
+            }
+        }
+        assert!(emoji_runs > 0);
+    }
+
     #[test]
     fn complete_emoji_sequences_get_the_reference_size() {
         for text in ["😟", "😂 🙏", "👩🏽‍💻🇷🇴#️⃣", "  👨‍👩‍👧‍👦\n❤️ ", "👍🏽"]
