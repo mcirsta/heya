@@ -207,6 +207,60 @@ mod tests {
         assert!(emoji_runs > 0);
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn apple_emoji_keeps_the_text_baseline_grid_across_wrapped_lines() {
+        use i_slint_core::textlayout::sharedparley::{fontique, parley};
+        let mut fonts = parley::FontContext::new();
+        let mut context = parley::LayoutContext::<()>::new();
+        let mut shape = |text: &str, size, scale, ratio, width| {
+            let mut builder = context.ranged_builder(&mut fonts, text, scale, false);
+            builder.push_default(parley::StyleProperty::FontSize(size));
+            builder.push_default(parley::StyleProperty::FontFamily(
+                parley::FontFamily::Single(parley::style::FontFamilyName::Generic(
+                    fontique::GenericFamily::SystemUi,
+                )),
+            ));
+            if let Some(ratio) = ratio {
+                // Match Slint: all fallback runs use the requested text font's
+                // natural line-height ratio, including emoji-only lines.
+                builder.push_default(parley::StyleProperty::LineHeight(
+                    parley::style::LineHeight::FontSizeRelative(ratio),
+                ));
+            }
+            let mut layout = builder.build(text);
+            layout.break_all_lines(width);
+            layout
+        };
+        for size in [14.5, 34.8] {
+            for scale in [1., 2.] {
+                let reference = shape("First line", size, scale, None, None);
+                let first_line = reference.lines().next().unwrap();
+                let metrics = first_line.metrics();
+                let ratio = metrics.line_height / (size * scale);
+                let wrap_width = metrics.advance + size * scale * 0.4;
+                for (text, width) in [
+                    ("First line\n😅", None),
+                    ("First line\n😅 followed by text", None),
+                    ("First line 😅\nSecond line", None),
+                    ("First line\n😅\nFollowing line", None),
+                    ("😅\n😅", None),
+                    ("First line 😅 followed by text", Some(wrap_width)),
+                ] {
+                    let layout = shape(text, size, scale, Some(ratio), width);
+                    assert!(layout.len() > 1, "fixture must span multiple lines");
+                    for (index, line) in layout.lines().enumerate() {
+                        let expected = metrics.baseline + index as f32 * metrics.line_height;
+                        assert!(
+                            (line.metrics().baseline - expected).abs() < 0.06,
+                            "emoji changed baseline at line {index}, size {size}, scale {scale}, text {text:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn complete_emoji_sequences_get_the_reference_size() {
         for text in ["😟", "😂 🙏", "👩🏽‍💻🇷🇴#️⃣", "  👨‍👩‍👧‍👦\n❤️ ", "👍🏽"]

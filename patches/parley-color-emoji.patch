@@ -16,14 +16,19 @@
      char_cluster.map_len = map_len;
      char_cluster.start = start;
      char_cluster.end = end;
-@@ -588,7 +595,9 @@
+@@ -588,7 +595,14 @@
              if is_emoji {
                  use core::iter::once;
                  let emoji_family = QueryFamily::Generic(fontique::GenericFamily::Emoji);
 -                self.query.set_families(fonts.chain(once(emoji_family)));
 +                // Emoji must reach the platform emoji font before a text family's
 +                // monochrome symbol coverage. Keep the original stack as fallback.
-+                self.query.set_families(once(emoji_family).chain(fonts));
++                let emoji_families = once(emoji_family).chain(fonts);
++                // Apple's UI face matches the system text font's line metrics.
++                #[cfg(target_os = "macos")]
++                let emoji_families =
++                    once(QueryFamily::Named(".Apple Color Emoji UI")).chain(emoji_families);
++                self.query.set_families(emoji_families);
                  self.fonts_id = None;
              } else if self.fonts_id != Some(fonts_id) {
                  self.query.set_families(fonts);

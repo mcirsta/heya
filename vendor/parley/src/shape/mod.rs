@@ -597,7 +597,12 @@ impl<'a, 'b, B: Brush> FontSelector<'a, 'b, B> {
                 let emoji_family = QueryFamily::Generic(fontique::GenericFamily::Emoji);
                 // Emoji must reach the platform emoji font before a text family's
                 // monochrome symbol coverage. Keep the original stack as fallback.
-                self.query.set_families(once(emoji_family).chain(fonts));
+                let emoji_families = once(emoji_family).chain(fonts);
+                // Apple's UI face matches the system text font's line metrics.
+                #[cfg(target_os = "macos")]
+                let emoji_families =
+                    once(QueryFamily::Named(".Apple Color Emoji UI")).chain(emoji_families);
+                self.query.set_families(emoji_families);
                 self.fonts_id = None;
             } else if self.fonts_id != Some(fonts_id) {
                 self.query.set_families(fonts);

@@ -29,11 +29,18 @@ numbers, punctuation and other scripts retain their existing font stack.
 No font paths, Fontconfig changes, bundled font, or renderer changes are needed.
 
 - Base crate SHA256: `22d2ff88bd3f7d68d1d9b09c7e6209f9a8e8c05088295140a2bcf2e9b17038c5`
-- Patch SHA256: `8e245616e13591fa1096d295fd63e0e8a37348a7ddc084abea49ebde1f5753cf`
+- Patch SHA256: `e9c1c2c123ae657252b2882664e7264624e667e03c611430f398f9dc5fe5143e`
 - Upstream: <https://github.com/linebender/parley>
 - Retain the upstream Apache-2.0/MIT notices in `vendor/parley`.
 - Candidate upstream fix: emoji-family priority plus explicit text presentation;
   no upstream submission has been made.
+
+On macOS the patch prefers Apple's UI emoji face, which matches the system text
+font's ascent and descent, before the generic emoji family. The ordinary Apple
+emoji face has different line metrics: with Slint's fixed line height, inserting
+an emoji moved the line's baseline up by about 0.5 points at 14.5-point text.
+The UI face keeps plain text, mixed text and emoji-only wrapped lines on the same
+baseline grid. The generic family remains a fallback if the UI face is absent.
 
 The same patch also contains a macOS-only visual workaround: positioned Apple
 Color Emoji glyphs move down by 0.125 em, leaving text, advances and line metrics
@@ -52,9 +59,10 @@ measurement and containment. Native pixel checks and optimized timings are kept
 in `.prep/validation/color-emoji-20261017/`; these exercise synthetic data on a
 private Xvfb display, not the owner's account or compositor.
 
-Linux uses the installed Noto Color Emoji. macOS uses Apple Color Emoji, with
+Linux uses the installed Noto Color Emoji. macOS uses Apple's UI emoji face, with
 synthetic checks for mixed text, standalone emoji, sequences, ordinary text and
-horizontal spacing, plus an offscreen Skia font-loading comparison. Windows
+horizontal spacing, plus wrapped-line baseline checks at 1×/2× display scales
+and an offscreen Skia font-loading comparison. Windows
 uses its generic platform emoji family and remains unverified.
 
 To reproduce the synthetic display and emoji-heavy timing workload after an
