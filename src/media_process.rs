@@ -1,5 +1,5 @@
-//! Finite voice capture/preview processes. GStreamer and its shared pools never
-//! enter the UI process for these operations. Media travels only over pipes.
+//! Finite voice capture/preview processes using the platform audio backend.
+//! Capture resources stay outside the UI process. Media travels only over pipes.
 use crate::voice_recorder::{Clip, Desired, Error, Input, MAX_BYTES, MAX_SECONDS, Progress};
 use std::{
     io::{Read, Write},
@@ -33,7 +33,7 @@ pub struct Worker {
 }
 impl Worker {
     pub fn start(mode: Mode, progress: watch::Sender<Progress>) -> Result<Self, Error> {
-        if !cfg!(all(feature = "media-gstreamer", target_os = "linux")) {
+        if !crate::audio::SUPPORTED {
             return Err(Error::Disabled);
         }
         let (control, commands) = watch::channel(Desired::Record);
@@ -253,6 +253,7 @@ fn decode_error(code: u8) -> Error {
         4 => Error::Cancelled,
         5 => Error::Playback,
         7 => Error::NoInput,
+        8 => Error::Permission,
         _ => Error::Device,
     }
 }
@@ -266,6 +267,7 @@ fn error_code(e: Error) -> u8 {
         Error::Playback => 5,
         Error::Device => 6,
         Error::NoInput => 7,
+        Error::Permission => 8,
     }
 }
 fn publish(out: &mut impl Write, p: Progress) {
@@ -474,7 +476,10 @@ mod tests {
             child_main(&mode);
         }
     }
-    #[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
+    #[cfg(any(
+        target_os = "macos",
+        all(feature = "media-gstreamer", target_os = "linux")
+    ))]
     #[tokio::test]
     async fn missing_microphone_returns_error_after_helper_exit_without_recording() {
         for _ in 0..2 {
@@ -515,7 +520,10 @@ mod tests {
             Err(Error::Device)
         ));
     }
-    #[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
+    #[cfg(any(
+        target_os = "macos",
+        all(feature = "media-gstreamer", target_os = "linux")
+    ))]
     #[tokio::test]
     async fn cancel_and_parent_eof_stop_and_reap_synthetic_helpers() {
         let (tx, mut status) = watch::channel(Progress::default());

@@ -1,4 +1,4 @@
-//! One GStreamer pipeline on a thread created for playback, never by a chat row.
+//! One platform player on a thread created for playback, never by a chat row.
 //! Compressed data is fed from bounded memory; no plaintext temporary files.
 use crate::audio::{Error, Status};
 #[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
@@ -406,7 +406,19 @@ fn run(
 }
 
 /// An explicit unavailable result for UI/domain-only builds, never fake playback.
-#[cfg(not(all(feature = "media-gstreamer", target_os = "linux")))]
+#[cfg(target_os = "macos")]
+fn run(
+    desired: watch::Receiver<Desired>,
+    updates: watch::Sender<Status>,
+    output: Output,
+) -> Status {
+    crate::macos_audio::play(desired, updates, output)
+}
+
+#[cfg(not(any(
+    target_os = "macos",
+    all(feature = "media-gstreamer", target_os = "linux")
+)))]
 fn run(
     desired: watch::Receiver<Desired>,
     updates: watch::Sender<Status>,

@@ -23,6 +23,7 @@ cat > "$bundle/Contents/Info.plist" <<'PLIST'
   <key>CFBundleVersion</key><string>1</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
+  <key>NSMicrophoneUsageDescription</key><string>Record a voice message when you press the microphone button.</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
 </dict></plist>
 PLIST

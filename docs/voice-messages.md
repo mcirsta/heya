@@ -22,7 +22,7 @@ uncertain-delivery handling apply. A failed voice upload retries directly from
 the transfer card. Review data is session-only; window close discards it, with
 no automatic send or recovery of an unsubmitted recording.
 
-Capture uses GStreamer in a short-lived helper process from the same Heya binary:
+On Linux, capture uses GStreamer in a short-lived helper process from the same Heya binary:
 `enumerated microphone source → audioconvert → audioresample → S16LE/48 kHz/mono → opusenc →
 oggmux → appsink`. Opus uses its voice preset at 32 kbit/s. Compressed Ogg bytes
 stay in bounded memory; PCM is transient in the pipeline. Limits are 30 minutes
@@ -37,6 +37,14 @@ Cancellation has a bounded shutdown followed by kill/reap if necessary. Closing
 the parent pipe also terminates the helper, including after a parent crash.
 Startup does not open a microphone.
 
+On macOS, the same helper lifecycle uses native Core Audio capture and
+AudioToolbox Opus encoding (48 kHz mono, 32 kbit/s), with the Rust `ogg` crate
+packaging encoded packets. AVAudioPlayer handles received audio and preview.
+All compressed audio and the intermediate CAF container stay in bounded memory.
+Launch the macOS app bundle to record; it supplies the required microphone
+permission description. Permission is requested only after pressing Record.
+Denied permission produces an actionable error; discovery never records sound.
+
 Explicit Send stages authenticated ciphertext into an unnamed file with the
 SDK's Audio media type, using the existing streaming uploader. Its public
 AudioMessage fields supply `ptt=true`, `audio/ogg; codecs=opus`, seconds, waveform,
@@ -45,14 +53,16 @@ in the encrypted audio cache in the same transaction as the outgoing message,
 so a queued note is playable offline. No schema migration or new SDK patch is
 required. The usual cache invalidation guards still cover edits/deletion/expiry.
 
-The `media-gstreamer` feature gates capture and preview. Without it the microphone
-is disabled. Missing Opus/Ogg/source plugins and inaccessible microphones produce
+On Linux, the `media-gstreamer` feature gates capture and preview. Without it
+the microphone is disabled. macOS native audio is independent of that feature. Missing Opus/Ogg/source plugins and inaccessible microphones produce
 short errors, and no failed capture is sent. System packages are installed by
 the owner; the needed factories are supplied by Arch's GStreamer base/good
 plugins, with the normal PipeWire/PulseAudio or ALSA microphone setup.
 
-Automated recording is synthetic: demo mode and tests use `audiotestsrc`, and
-preview uses a silent sink. No automated test reads the real microphone or sends
+Automated recording is synthetic: demo mode and tests use `audiotestsrc` on
+Linux and generated PCM with native Opus encoding on macOS. Preview is silent.
+Native codec tests also verify resampling/downmixing and exact trimmed duration
+by decoding the generated Ogg/Opus through AudioToolbox without an output device. No automated test reads the real microphone or sends
 an account message. The validation results, offscreen captures and responsiveness
 measurements are recorded in [the UI audit](ui-source-audit.md). These do not
 establish real microphone permissions, hardware routing or recipient playback;

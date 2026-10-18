@@ -341,6 +341,12 @@ pub async fn run(
     }
 }
 
-#[cfg(all(test, feature = "media-gstreamer", target_os = "linux"))]
+#[cfg(all(
+    test,
+    any(
+        target_os = "macos",
+        all(feature = "media-gstreamer", target_os = "linux")
+    )
+))]
 #[path = "voice_tests.rs"]
 mod tests;

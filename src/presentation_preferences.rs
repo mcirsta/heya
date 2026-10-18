@@ -206,7 +206,7 @@ pub fn attach(
         if let Some(ui) = weak.upgrade()
             && !ui.get_audio_devices_loaded()
             && !ui.get_settings_io_busy()
-            && cfg!(all(feature = "media-gstreamer", target_os = "linux"))
+            && crate::audio::SUPPORTED
             && operations
                 .try_send(crate::presentation_settings_io::Command::Devices {
                     demo: ui.get_demo_mode(),
@@ -496,7 +496,7 @@ fn refresh(ui: &AppWindow, p: &Preferences) {
         ),
         (
             "Audio",
-            if cfg!(all(feature = "media-gstreamer", target_os = "linux")) {
+            if crate::audio::SUPPORTED {
                 vec![
                     audio_choice(ui, "audio_input", "Microphone", p, true),
                     SettingRow {

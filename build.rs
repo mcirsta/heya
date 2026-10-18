@@ -1,6 +1,7 @@
 fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
         println!("cargo:rerun-if-changed=src/platform/macos.m");
+        println!("cargo:rerun-if-changed=src/platform/macos_audio.m");
         cc_macos();
     }
     slint_build::compile_with_config(
@@ -16,6 +17,7 @@ fn main() {
 fn cc_macos() {
     cc::Build::new()
         .file("src/platform/macos.m")
+        .file("src/platform/macos_audio.m")
         .flag("-fobjc-arc")
         .flag("-fblocks")
         .flag("-mmacosx-version-min=11.0")
@@ -27,6 +29,9 @@ fn cc_macos() {
         "ImageIO",
         "Foundation",
         "UniformTypeIdentifiers",
+        "AVFoundation",
+        "AudioToolbox",
+        "CoreAudio",
     ] {
         println!("cargo:rustc-link-lib=framework={framework}");
     }

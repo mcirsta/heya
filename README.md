@@ -28,9 +28,10 @@ remaining differences. Earlier prototype screenshots are not the current UI.
 ## Run Heya
 
 On macOS, see [the native macOS build guide](docs/macos.md). The macOS build
-uses Metal, AppKit file dialogs, Keychain and Quartz PDF previews. Playback and
-recording are disabled while native audio support is pending; GStreamer is only
-used on Linux.
+uses Metal, AppKit file dialogs, Keychain and Quartz PDF previews. Native audio
+uses AVAudioPlayer for playback and Core Audio/AudioToolbox for microphone capture
+and Opus encoding. Launch the `.app` bundle to grant microphone permission;
+GStreamer is only used on Linux.
 
 macOS adaptations are scoped to that platform. Linux keeps its existing media,
 desktop services, renderers and layout; CI builds and tests Linux with and

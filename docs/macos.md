@@ -20,7 +20,9 @@ target/release/heya
 Normal startup resumes a saved session or presents the connection screen.
 `target/release/heya --demo` uses synthetic data without opening an account.
 Use `scripts/build-macos.sh` to build a local `target/macos/Heya.app` bundle.
-This is an ad-hoc-signed development app, not a notarized distribution.
+This is an ad-hoc-signed development app, not a notarized distribution. Use this
+bundle for microphone recording: its Info.plist contains the macOS microphone
+permission description. The unbundled Cargo executable cannot request that permission.
 
 ## Saved encryption key
 
@@ -48,7 +50,9 @@ keyring entries are left untouched and are not migrated or accessed.
 | PDF thumbnail generation | CoreGraphics/Quartz and ImageIO in a disposable helper process |
 | URL opening | Native system browser dispatch through webbrowser |
 | App data and Downloads paths | Standard macOS locations through directories |
-| Audio/video playback and recording | Disabled; future work must use AVFoundation/Core Audio |
+| Audio playback | AVAudioPlayer, including Ogg/Opus from memory |
+| Voice recording | Core Audio input queues and AudioToolbox Opus encoding |
+| Video playback | Pending |
 
 GStreamer dependencies and their implementations are gated to Linux, including
 when the default feature is enabled on macOS. No Mac GStreamer installation is
@@ -68,14 +72,37 @@ never plaintext document-cache files. The helper has an output bound and an
 eight-second deadline; it runs before any account initialization. It is a
 separate process, not an App Sandbox or XPC service.
 
+## Native audio
+
+Playback uses AVAudioPlayer with in-memory compressed data, pause/resume, seeking
+and speed control. Microphone capture uses AudioQueue; AudioToolbox downmixes,
+resamples and encodes 48 kHz mono Opus at 32 kbit/s. The Rust `ogg` dependency
+packages the native encoded packets; it is not an audio codec. Compressed and
+intermediate CAF data stay in bounded memory, with no plaintext audio files.
+Recording and review playback use the existing finite helper process. Discovery
+does not open the microphone, and permission is requested only when recording.
+Settings → Audio uses Core Audio device identities and per-operation volume.
+Explicit unavailable devices fail instead of switching to another device.
+
+To test, launch the bundle, open a chat with an empty composer, press the
+microphone and allow access. Record a few seconds, pause/resume, then Stop and
+preview. Discard is sufficient to test without sending. Also try a received voice
+message, seeking and playback speeds. If permission was denied, enable Heya in
+System Settings → Privacy & Security → Microphone.
+
 ## Validation
 
 Validated on an Intel Mac running macOS 15.8.1 with Rust 1.99.1 and Apple's
-Command Line Tools 16.4 (Clang 17): 176 unit/UI tests and one encrypted protocol
+Command Line Tools 16.4 (Clang 17): the original 176 unit/UI tests and one encrypted protocol
 storage integration test passed. Three opt-in/helper tests remained ignored,
 including the actual desktop Keychain check. Formatting, all-target Clippy with
 warnings denied, and the build check without default features passed. The
 vendored Parley crate still emits its existing ICU deprecation warning.
+
+Native audio validation additionally covers in-memory Opus encode/decode, mono/stereo
+44.1/48 kHz conversion, exact decoder trimming, playback controls, recording
+pause/resume, review, encrypted caching and helper teardown with synthetic audio.
+These checks never open a real microphone or audible output.
 
 The Objective-C bridge also passes Clang with `-Wall -Wextra -Werror`. The
 compiled release PDF helper renders all three fixtures and rejects corrupt PDF
@@ -103,5 +130,6 @@ The existing synthetic PDF fixtures cover portrait, landscape, rotated crop
 boxes, invalid input, thumbnail detail, and encrypted-cache presentation. Native
 file dialogs, Keychain access, IME, paste, display scaling and suspend/resume
 still require deliberate desktop checks. Do not infer real-account compatibility
-from a successful compile or synthetic tests. Native playback/recording,
-notifications, signing/notarization and installer distribution remain future work.
+from a successful compile or synthetic tests. Real microphone permission, hardware capture/output, and recipient playback still
+need deliberate checks. Notifications, signing/notarization and installer
+distribution remain future work.

@@ -74,7 +74,10 @@ fn metadata_is_bounded_and_view_once_stays_unopened() {
     assert!(crate::protocol_content::extract(&msg).1.audio.is_none());
 }
 
-#[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
+#[cfg(any(
+    target_os = "macos",
+    all(feature = "media-gstreamer", target_os = "linux")
+))]
 #[tokio::test]
 async fn encrypted_cache_guards_mutations_limits_and_offline_loading() {
     let (_temp, db) = fixture();
@@ -129,9 +132,17 @@ fn opus() -> Vec<u8> {
     bytes
 }
 
-#[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
+#[cfg(target_os = "macos")]
+fn opus() -> Vec<u8> {
+    crate::macos_audio::test_opus(48000, 1, 4)
+}
+
+#[cfg(any(
+    target_os = "macos",
+    all(feature = "media-gstreamer", target_os = "linux")
+))]
 #[tokio::test(flavor = "multi_thread")]
-async fn gstreamer_opus_pause_seek_speed_eos_replace_and_bad_media() {
+async fn opus_pause_seek_speed_eos_replace_and_bad_media() {
     let bytes = tokio::task::spawn_blocking(opus).await.unwrap();
     let (updates, mut status) = watch::channel(Status::default());
     let mut desired = Desired {
@@ -207,7 +218,10 @@ impl Source for Delayed {
         std::future::pending().await
     }
 }
-#[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
+#[cfg(any(
+    target_os = "macos",
+    all(feature = "media-gstreamer", target_os = "linux")
+))]
 #[tokio::test(flavor = "multi_thread")]
 async fn cancelled_download_never_starts_playback_or_survives_shutdown() {
     let (_temp, db) = fixture();

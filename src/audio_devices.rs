@@ -94,7 +94,14 @@ pub fn snapshot() -> Result<Vec<Device>, Error> {
     }
     Ok(result)
 }
-#[cfg(not(all(feature = "media-gstreamer", target_os = "linux")))]
+#[cfg(target_os = "macos")]
+pub fn snapshot() -> Result<Vec<Device>, Error> {
+    crate::macos_audio::devices()
+}
+#[cfg(not(any(
+    target_os = "macos",
+    all(feature = "media-gstreamer", target_os = "linux")
+)))]
 pub fn snapshot() -> Result<Vec<Device>, Error> {
     Err(Error::Disabled)
 }

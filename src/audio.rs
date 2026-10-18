@@ -7,6 +7,10 @@ use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, watch};
 
 pub const MAX_BYTES: usize = 20 * 1024 * 1024;
+pub const SUPPORTED: bool = cfg!(any(
+    target_os = "macos",
+    all(feature = "media-gstreamer", target_os = "linux")
+));
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
     NotBuilt,
@@ -42,7 +46,16 @@ impl Error {
             Self::TooLarge => "Audio exceeds the 20 MiB limit",
             Self::TooLong => "Audio exceeds the six-hour playback limit",
             Self::Archive => "Could not read or save audio",
-            Self::Codec => "Required GStreamer audio plugin is missing",
+            Self::Codec => {
+                #[cfg(target_os = "macos")]
+                {
+                    "macOS could not decode this audio format"
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    "Required GStreamer audio plugin is missing"
+                }
+            }
             Self::Playback => "Could not play audio · check the format and audio output",
             Self::Seek => "Seeking or speed change is unavailable for this audio",
         }
@@ -89,7 +102,7 @@ async fn load(
     id: i32,
     demo: bool,
 ) -> Result<(Option<Request>, Arc<[u8]>), Error> {
-    if !cfg!(all(feature = "media-gstreamer", target_os = "linux")) {
+    if !crate::audio::SUPPORTED {
         return Err(Error::NotBuilt);
     }
     if demo {
@@ -337,6 +350,12 @@ async fn run_with_player(
     }
 }
 
-#[cfg(all(test, feature = "media-gstreamer", target_os = "linux"))]
+#[cfg(all(
+    test,
+    any(
+        target_os = "macos",
+        all(feature = "media-gstreamer", target_os = "linux")
+    )
+))]
 #[path = "audio_tests.rs"]
 mod tests;

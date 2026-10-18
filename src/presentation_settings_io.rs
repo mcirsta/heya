@@ -110,7 +110,11 @@ fn publish(ui: &AppWindow, result: Completed) {
             ui.set_audio_devices_loaded(true);
         }
         Completed::Devices(Err(_)) => ui.set_settings_status(
-            "Could not list audio devices. Check GStreamer and try Refresh devices.".into(),
+            if cfg!(target_os = "macos") {
+                "Could not list audio devices. Check your connected devices and try Refresh devices."
+            } else {
+                "Could not list audio devices. Check GStreamer and try Refresh devices."
+            }.into(),
         ),
         Completed::Folder(Ok(Some(path))) => {
             ui.invoke_download_folder_ready(path.to_string_lossy().as_ref().into())

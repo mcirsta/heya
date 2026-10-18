@@ -17,6 +17,8 @@ mod live_presentation;
 mod local_worker;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "macos")]
+mod macos_audio;
 mod media_process;
 mod message_actions;
 mod message_content;

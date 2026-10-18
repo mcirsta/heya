@@ -19,18 +19,38 @@ pub enum Error {
     Cancelled,
     Playback,
     NoInput,
+    Permission,
 }
 impl Error {
     pub fn label(self) -> &'static str {
         match self {
             Self::Disabled => "Voice recording is disabled in this build.",
-            Self::Codec => "Voice recording needs the GStreamer Opus and Ogg plugins.",
+            Self::Codec => {
+                #[cfg(target_os = "macos")]
+                {
+                    "macOS could not encode the voice message."
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    "Voice recording needs the GStreamer Opus and Ogg plugins."
+                }
+            }
             Self::Device => "Could not record audio. Check your microphone and its permissions.",
             Self::Empty => "No audio was recorded. Try recording again.",
             Self::Limit => "The voice message reached the recording limit.",
             Self::Cancelled => "Recording discarded.",
             Self::Playback => "Could not play the recording. Check your audio output.",
             Self::NoInput => "No microphone was found. Connect a microphone and try again.",
+            Self::Permission => {
+                #[cfg(target_os = "macos")]
+                {
+                    "Microphone access is unavailable. Open Heya.app and allow Heya in System Settings → Privacy & Security → Microphone."
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    "Microphone access was denied. Check your system's microphone permissions."
+                }
+            }
         }
     }
 }
@@ -333,7 +353,18 @@ pub(crate) fn capture(
     }
 }
 
-#[cfg(not(all(feature = "media-gstreamer", target_os = "linux")))]
+#[cfg(target_os = "macos")]
+pub(crate) fn probe_input() -> Result<(), Error> {
+    crate::macos_audio::devices()?
+        .iter()
+        .any(|device| device.input)
+        .then_some(())
+        .ok_or(Error::NoInput)
+}
+#[cfg(not(any(
+    target_os = "macos",
+    all(feature = "media-gstreamer", target_os = "linux")
+)))]
 pub(crate) fn probe_input() -> Result<(), Error> {
     Err(Error::Disabled)
 }
@@ -372,7 +403,19 @@ mod input_tests {
         ));
     }
 }
-#[cfg(not(all(feature = "media-gstreamer", target_os = "linux")))]
+#[cfg(target_os = "macos")]
+pub(crate) fn capture(
+    input: Input,
+    settings: crate::audio_devices::Settings,
+    publish: impl FnMut(Progress),
+    commands: std::sync::mpsc::Receiver<Desired>,
+) -> Result<Clip, Error> {
+    crate::macos_audio::capture(input, settings, publish, commands)
+}
+#[cfg(not(any(
+    target_os = "macos",
+    all(feature = "media-gstreamer", target_os = "linux")
+)))]
 pub(crate) fn capture(
     _: Input,
     _: crate::audio_devices::Settings,
@@ -381,8 +424,11 @@ pub(crate) fn capture(
 ) -> Result<Clip, Error> {
     Err(Error::Disabled)
 }
-#[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
-fn compact(levels: &[u8]) -> Vec<u8> {
+#[cfg(any(
+    target_os = "macos",
+    all(feature = "media-gstreamer", target_os = "linux")
+))]
+pub(crate) fn compact(levels: &[u8]) -> Vec<u8> {
     if levels.is_empty() {
         return vec![0; 64];
     }
