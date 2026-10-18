@@ -148,6 +148,7 @@ export component AppWindow inherits Window {
     callback navigate-message-menu(int);
     in property <[EmojiGridRow]> emoji-rows;
     in property <[EmojiCategory]> emoji-categories;
+    in property <bool> emoji-font-missing;
     in-out property <int> emoji-columns:10;
     in-out property <string> emoji-query;
     in-out property <int> emoji-selection;
@@ -1118,6 +1119,7 @@ export component AppWindow inherits Window {
             available:root.message-dialog==4 || root.demo-mode || root.connection-state==5;
             error:root.action-error;summary:root.action-summary;own-emoji:root.message-dialog==4 ? "" : root.action-own-emoji;
             anchor-x:root.action-x;anchor-y:root.action-y;rows:root.emoji-rows;categories:root.emoji-categories;
+            font-missing:root.emoji-font-missing;
             selected:root.emoji-selection;scroll-row:root.emoji-scroll-row;jump-revision:root.emoji-jump-revision;
             query <=> root.emoji-query;
             close=>{root.close-message-actions();}

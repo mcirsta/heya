@@ -338,6 +338,60 @@ async fn reactions_arriving_before_originals_merge_actor_aliases_and_ignore_stal
 }
 
 #[tokio::test]
+async fn incoming_uncatalogued_reactions_survive_archive_reopen_replacement_and_removal() {
+    let (_temp, db) = fixture();
+    db.ingest(Batch {
+        messages: vec![text_record("original")],
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    let chat = db.create_chat(PN.into()).await.unwrap();
+    let mut db = db;
+    // Synthetic future scalar and ZWJ sequence, deliberately outside the local
+    // catalogue. Font support must not decide what is stored or shown.
+    for (at, emoji) in [(10, "\u{1faff}"), (20, "😀\u{200d}🛸"), (30, "")] {
+        assert!(emoji.is_empty() || emojis::get(emoji).is_none());
+        let mut key = wa::MessageKey::default();
+        key.id = Some("original".into());
+        let message = whatsapp_rust::wacore::proto_helpers::build_reaction_message(key, emoji, at);
+        let mut event = text_record(&format!("unknown-reaction-{at}"));
+        event.visible = false;
+        event.text.clear();
+        event.raw = codec::message_to_vec(&message);
+        event.content = crate::protocol_content::extract(&message).1;
+        assert_eq!(event.content.reaction.as_ref().unwrap().emoji, emoji);
+        db.ingest(Batch {
+            messages: vec![event],
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let files = db.0._files.clone();
+        drop(db);
+        db = Archive::open(files, KEY).unwrap();
+        let view = load(&db, chat).await;
+        assert_eq!(view.messages.len(), 1, "a reaction is not a message bubble");
+        assert_eq!(view.messages[0].content.reaction_summary, emoji);
+    }
+}
+
+#[test]
+fn incoming_reactions_still_reject_oversized_or_control_character_payloads() {
+    for emoji in ["😀".repeat(65), "👍\n".into(), "\0".into()] {
+        let mut key = wa::MessageKey::default();
+        key.id = Some("original".into());
+        let message = whatsapp_rust::wacore::proto_helpers::build_reaction_message(key, emoji, 1);
+        assert!(
+            crate::protocol_content::extract(&message)
+                .1
+                .reaction
+                .is_none()
+        );
+    }
+}
+
+#[tokio::test]
 async fn edited_quotes_use_current_text_and_deleted_targets_reject_without_losing_drafts() {
     let (_temp, db) = fixture();
     db.bind_account(OWNER.into(), "Owner".into()).await.unwrap();

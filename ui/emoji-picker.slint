@@ -13,6 +13,7 @@ export component EmojiPicker inherits Rectangle {
     in property <bool> composer;
     in property <bool> busy;
     in property <bool> available;
+    in property <bool> font-missing;
     in property <string> error;
     in property <string> summary;
     in property <string> own-emoji;
@@ -106,6 +107,11 @@ export component EmojiPicker inherits Rectangle {
                     }
                     Rectangle {horizontal-stretch:1;}
                 }
+            }
+            if root.font-missing: font-notice := Text {
+                x:grid.x + 4px;y:grid.y + 12px;width:grid.width - 8px;
+                text:@tr("Noto Color Emoji is missing or unusable. Install it with your package manager, then restart Heya.");
+                wrap:word-wrap;font-size:14px;color:Theme.secondary;
             }
         }
     }

@@ -18,6 +18,17 @@ missing glyphs or fallback to another font, and excludes sequences wider than
 1.5 ordinary emoji cells. Coverage is cached on the startup background worker,
 including skin-tone variants. Search, categories and recent/frequent choices
 share this filter; no font is bundled or downloaded.
+If the font is missing or unusable, the picker explains how to install it and
+asks for an application restart, instead of silently showing no choices. On
+Arch Linux the package is `noto-fonts-emoji`. This status uses the same startup
+cache; opening the picker does not rescan fonts.
+
+Incoming reactions preserve their original Unicode even when the local
+catalogue or font does not recognize it. Short unknown sequences follow the
+existing encrypted reaction storage and native text rendering paths, including
+replacement and removal. They may display a missing-glyph box on older fonts;
+no replacement artwork is fetched. Payloads remain bounded to 256 UTF-8 bytes
+and exclude control characters. Picker filtering only controls offered choices.
 
 The pinned ZapFast `src/markup.rs::layout` enlarges messages containing one to
 three emoji to 2.4 times the body size. Heya applies the same display rule using
@@ -72,6 +83,27 @@ The shared Slint test checks original text, narrow/wide resizing, both themes,
 measurement and containment. Native pixel checks and optimized timings are kept
 in `.prep/validation/color-emoji-20261017/`; these exercise synthetic data on a
 private Xvfb display, not the owner's account or compositor.
+
+On 19 October 2026, the optimized default-feature suite passed 202 tests
+(three deliberate skips), including unknown reaction Unicode across encrypted
+reopen, replacement and removal, malformed payload limits and wide/narrow
+missing-font notice containment. Clippy passed with and without GStreamer.
+A native offscreen check with only Inter available confirmed the missing-font
+guidance. No fonts or desktop settings were changed.
+
+Sequential optimized comparisons against the previous installed Linux binary
+used Xvfb and Skia/OpenGL with 10,000 synthetic emoji-heavy messages. These are
+single-run render CPU/layout measurements, not evidence of a speedup or desktop
+compositor/GPU presentation performance:
+
+| Workload | Render CPU p95, previous → fixed | Timeline layout p95, previous → fixed |
+| --- | --- | --- |
+| Chat scrolling | 14.66 → 14.13 ms | 0.22 → 0.21 ms |
+| Scrolling with picker/category activity | 24.20 → 21.56 ms | 0.24 → 0.23 ms |
+
+To retain Slint's element metadata for optimized headless UI assertions, use
+`cargo test --release --locked --config 'profile.release.build-override.debug-assertions=true'`.
+Normal `cargo test --locked` already includes this metadata.
 
 Linux uses the installed Noto Color Emoji. macOS uses Apple's UI emoji face, with
 synthetic checks for mixed text, standalone emoji, sequences, ordinary text and

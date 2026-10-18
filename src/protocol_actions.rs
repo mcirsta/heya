@@ -149,11 +149,13 @@ pub fn decorate(message: &wa::Message, content: &mut message_content::Content) {
     if let Some(reaction) = base.reaction_message.as_option()
         && let Some(target) = reaction.key.id.as_ref()
     {
-        let emoji = reaction.text.clone().unwrap_or_default();
-        if target.len() <= 256 && (emoji.is_empty() || emojis::get(&emoji).is_some()) {
+        let emoji = reaction.text.as_deref().unwrap_or_default();
+        // The local picker catalogue must not decide which received Unicode
+        // survives. Keep future emoji/sequences intact, with bounded display data.
+        if target.len() <= 256 && emoji.len() <= 256 && !emoji.chars().any(char::is_control) {
             content.reaction = Some(ReactionEvent {
                 target: target.clone(),
-                emoji,
+                emoji: emoji.into(),
                 at: reaction.sender_timestamp_ms.unwrap_or(0),
             });
         }

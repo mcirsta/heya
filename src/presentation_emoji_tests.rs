@@ -206,6 +206,7 @@ pub fn check_ui() {
             .flat_map(|r| r.cells.iter().collect::<Vec<_>>())
             .any(|e| e.emoji == "👍")
     );
+    crate::presentation_emoji::check_missing_font(&ui);
     ui.invoke_close_message_actions();
     assert_eq!(
         geometry,

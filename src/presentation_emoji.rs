@@ -51,6 +51,22 @@ impl Picker {
         self.frequent.truncate(40);
     }
     fn build(&mut self, ui: &AppWindow) {
+        #[cfg(target_os = "linux")]
+        let font_available = crate::linux_emoji::font_available();
+        #[cfg(not(target_os = "linux"))]
+        let font_available = true;
+        self.build_with_font(ui, font_available);
+    }
+    fn build_with_font(&mut self, ui: &AppWindow, font_available: bool) {
+        ui.set_emoji_font_missing(!font_available);
+        self.choices.clear();
+        self.starts.clear();
+        if !font_available {
+            ui.set_emoji_rows(ModelRc::default());
+            ui.set_emoji_categories(ModelRc::default());
+            ui.set_emoji_selection(-1);
+            return;
+        }
         let query = ui
             .get_emoji_query()
             .chars()
@@ -60,8 +76,6 @@ impl Picker {
             .to_lowercase();
         let columns = ui.get_emoji_columns().clamp(1, 10) as usize;
         let mut rows = Vec::new();
-        self.choices.clear();
-        self.starts.clear();
         let mut section = |heading: &str, category: i32, values: Vec<&'static emojis::Emoji>| {
             self.starts.push((category, rows.len() as i32));
             if !heading.is_empty() {
@@ -350,4 +364,37 @@ pub fn bind(ui: &AppWindow) {
             }
         }
     });
+}
+
+#[cfg(test)]
+pub(crate) fn check_missing_font(ui: &AppWindow) {
+    use i_slint_backend_testing::ElementHandle;
+    use slint::Model;
+    let mut picker = Picker::default();
+    for (width, height, query) in [(1200., 900., ""), (520., 480., "smile")] {
+        ui.window().set_size(slint::LogicalSize::new(width, height));
+        ui.set_emoji_query(query.into());
+        picker.build_with_font(ui, false);
+        assert!(ui.get_emoji_font_missing());
+        assert_eq!(ui.get_emoji_rows().row_count(), 0);
+        assert_eq!(ui.get_emoji_categories().row_count(), 0);
+        assert!(picker.choices.is_empty() && picker.starts.is_empty());
+        let panel = ElementHandle::find_by_element_id(ui, "EmojiPicker::panel")
+            .next()
+            .unwrap();
+        let notice = ElementHandle::find_by_element_id(ui, "EmojiPicker::font-notice")
+            .next()
+            .unwrap();
+        let p = panel.absolute_position();
+        let n = notice.absolute_position();
+        assert!(notice.size().height > 30.);
+        assert!(n.x >= p.x && n.y >= p.y);
+        assert!(n.x + notice.size().width <= p.x + panel.size().width);
+        assert!(n.y + notice.size().height <= p.y + panel.size().height);
+    }
+    ui.window().set_size(slint::LogicalSize::new(1200., 900.));
+    ui.set_emoji_query("".into());
+    picker.build(ui);
+    assert!(!ui.get_emoji_font_missing());
+    assert!(ui.get_emoji_rows().row_count() > 0);
 }
