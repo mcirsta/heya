@@ -664,6 +664,114 @@ mod tests {
         }
     }
     #[test]
+    #[ignore = "requires macOS output hardware; uses generated audio at zero app volume"]
+    fn native_output_preparation_pause_seek_speed_and_completion() {
+        let bytes = test_opus(48000, 1, 4);
+        let mut duration = 0.;
+        let mut error = 0;
+        let player = Native::new(
+            unsafe {
+                heya_audio_player_new(
+                    bytes.as_ptr(),
+                    bytes.len(),
+                    c"".as_ptr(),
+                    0.,
+                    0,
+                    &mut duration,
+                    &mut error,
+                )
+            },
+            heya_audio_player_free,
+        )
+        .expect("native output preparation must not crash on Ogg/Opus");
+        assert_eq!(error, 0);
+        assert!((duration - 4.).abs() < 0.01);
+        assert_ne!(
+            unsafe { heya_audio_player_control(player.pointer(), 1, -1., 1.) },
+            0
+        );
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut position = 0.;
+        while position < 0.05 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+            assert_eq!(
+                unsafe { heya_audio_player_position(player.pointer(), &mut position) },
+                0
+            );
+        }
+        assert!(position >= 0.05);
+        assert_ne!(
+            unsafe { heya_audio_player_control(player.pointer(), 0, -1., 1.) },
+            0
+        );
+        assert_eq!(
+            unsafe { heya_audio_player_position(player.pointer(), &mut position) },
+            0
+        );
+        let paused = position;
+        std::thread::sleep(Duration::from_millis(150));
+        assert_eq!(
+            unsafe { heya_audio_player_position(player.pointer(), &mut position) },
+            0
+        );
+        assert!((position - paused).abs() < 0.03);
+        assert_ne!(
+            unsafe { heya_audio_player_control(player.pointer(), 1, 2., 1.5) },
+            0
+        );
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(
+            unsafe { heya_audio_player_position(player.pointer(), &mut position) },
+            0
+        );
+        assert!(position >= 2.);
+        assert_ne!(
+            unsafe { heya_audio_player_control(player.pointer(), 1, -1., 2.) },
+            0
+        );
+        let deadline = Instant::now() + Duration::from_secs(4);
+        loop {
+            let status = unsafe { heya_audio_player_position(player.pointer(), &mut position) };
+            assert!(status >= 0);
+            if status == 1 {
+                break;
+            }
+            assert!(Instant::now() < deadline, "native output must finish");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        drop(player);
+        // Close with native buffers still queued, both playing and paused.
+        for pause in [false, true] {
+            let player = Native::new(
+                unsafe {
+                    heya_audio_player_new(
+                        bytes.as_ptr(),
+                        bytes.len(),
+                        c"".as_ptr(),
+                        0.,
+                        0,
+                        &mut duration,
+                        &mut error,
+                    )
+                },
+                heya_audio_player_free,
+            )
+            .unwrap();
+            assert_ne!(
+                unsafe { heya_audio_player_control(player.pointer(), 1, -1., 1.) },
+                0
+            );
+            std::thread::sleep(Duration::from_millis(180));
+            if pause {
+                assert_ne!(
+                    unsafe { heya_audio_player_control(player.pointer(), 0, -1., 1.) },
+                    0
+                );
+            }
+            drop(player);
+        }
+    }
+    #[test]
     fn rejects_invalid_native_packet_frames_and_keeps_device_ids_stable() {
         assert!(ogg_opus(&[]).is_err());
         let mut header = Vec::new();

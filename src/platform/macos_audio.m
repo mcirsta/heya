@@ -95,87 +95,6 @@ int heya_audio_devices(uint8_t **output, size_t *length) { @autoreleasepool {
     return json.length <= 512 * 1024 && copyResult(json, output, length);
 } }
 
-@interface HeyaNativePlayer : NSObject <AVAudioPlayerDelegate>
-@property AVAudioPlayer *player;
-@property(atomic) BOOL ended;
-@property(atomic) BOOL failed;
-@property BOOL requestedPlaying;
-@property double lastPosition;
-@property NSTimeInterval lastPoll;
-@end
-@implementation HeyaNativePlayer
-- (void)audioPlayerDidFinishPlaying:(AVAudioPlayer *)player successfully:(BOOL)flag {
-    (void)player;
-    self.ended = YES;
-    self.failed = !flag;
-}
-- (void)audioPlayerDecodeErrorDidOccur:(AVAudioPlayer *)player error:(NSError *)error {
-    (void)player; (void)error;
-    self.failed = YES;
-}
-- (void)dealloc { [_player stop]; }
-@end
-
-void *heya_audio_player_new(const uint8_t *bytes, size_t length, const char *uid,
-                           float volume, int silent, double *duration, int *error) { @autoreleasepool {
-    *error = 1;
-    if (!bytes || length == 0 || length > HeyaAudioLimit) return NULL;
-    @try {
-        HeyaNativePlayer *state = [HeyaNativePlayer new];
-        state.player = [[AVAudioPlayer alloc] initWithData:[NSData dataWithBytes:bytes length:length] error:NULL];
-        if (!state.player) return NULL;
-        *duration = state.player.duration;
-        if (!isfinite(*duration) || *duration <= 0 || *duration > 6 * 3600) { *error = 9; return NULL; }
-        state.player.delegate = state;
-        state.player.enableRate = YES;
-        state.player.volume = fmaxf(0, fminf(1, volume));
-        if (!silent) {
-            NSString *device = uid ? [NSString stringWithUTF8String:uid] : @"";
-            if (findDevice(device, NO) == kAudioObjectUnknown) { *error = 5; return NULL; }
-            if (device.length) state.player.currentDevice = device;
-            if (![state.player prepareToPlay]) { *error = 5; return NULL; }
-        }
-        *error = 0;
-        return (__bridge_retained void *)state;
-    } @catch (NSException *exception) { (void)exception; return NULL; }
-} }
-
-int heya_audio_player_control(void *handle, int playing, double position, float speed) { @autoreleasepool {
-    HeyaNativePlayer *state = (__bridge HeyaNativePlayer *)handle;
-    if (!state || !isfinite(speed) || speed < .5 || speed > 2) return 0;
-    if (isfinite(position) && position >= 0) {
-        state.player.currentTime = fmin(position, state.player.duration);
-        state.lastPosition = state.player.currentTime;
-        state.ended = position >= state.player.duration;
-    }
-    state.player.rate = speed;
-    state.lastPoll = NSProcessInfo.processInfo.systemUptime;
-    state.requestedPlaying = playing;
-    if (!playing || state.ended) { [state.player pause]; return 1; }
-    return state.player.isPlaying || [state.player play];
-} }
-
-int heya_audio_player_position(void *handle, double *position) { @autoreleasepool {
-    HeyaNativePlayer *state = (__bridge HeyaNativePlayer *)handle;
-    CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0, true);
-    *position = state.player.currentTime;
-    NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
-    // Helpers have no AppKit event loop. Do not rely solely on delegate delivery
-    // for EOS; distinguish normal completion from an interrupted output route.
-    if (state.requestedPlaying && !state.player.isPlaying && !state.ended) {
-        double expected = state.lastPosition + MAX(0, now - state.lastPoll) * state.player.rate;
-        if (MAX(*position, expected) >= state.player.duration - .05) state.ended = YES;
-        else state.failed = YES;
-    }
-    state.lastPosition = *position;
-    state.lastPoll = now;
-    return state.failed ? -1 : (state.ended ? 1 : 0);
-} }
-void heya_audio_player_free(void *handle) { @autoreleasepool {
-    HeyaNativePlayer *state = CFBridgingRelease(handle);
-    [state.player stop];
-} }
-
 @interface HeyaMemoryAudio : NSObject
 @property NSMutableData *bytes;
 @end
@@ -217,6 +136,160 @@ static OSStatus memoryResize(void *context, SInt64 size) {
     if (_file) AudioFileClose(_file);
 }
 @end
+
+@interface HeyaNativePlayer : NSObject
+@property HeyaNativeEncoder *reader;
+@property AudioQueueRef queue;
+@property NSMutableArray<NSValue *> *buffers;
+@property NSLock *lock;
+@property UInt32 channels;
+@property double sourceRate;
+@property double duration;
+@property double baseSeconds;
+@property NSTimeInterval startedAt;
+@property BOOL seenRunning;
+@property(atomic) BOOL eof;
+@property(atomic) BOOL failed;
+@property(atomic) BOOL reconfiguring;
+@property(atomic) BOOL requestedPlaying;
+@end
+@implementation HeyaNativePlayer
+- (void)dealloc {
+    _reconfiguring = YES;
+    if (_queue) AudioQueueDispose(_queue, true);
+}
+@end
+
+static BOOL fillPlaybackBuffer(HeyaNativePlayer *state, AudioQueueBufferRef buffer) {
+    [state.lock lock];
+    UInt32 frames = buffer->mAudioDataBytesCapacity / (sizeof(float) * state.channels);
+    AudioBufferList list = {0}; list.mNumberBuffers = 1;
+    list.mBuffers[0].mNumberChannels = state.channels;
+    list.mBuffers[0].mDataByteSize = buffer->mAudioDataBytesCapacity;
+    list.mBuffers[0].mData = buffer->mAudioData;
+    OSStatus result = ExtAudioFileRead(state.reader.encoder, &frames, &list);
+    if (result != noErr) state.failed = YES;
+    if (frames == 0) state.eof = YES;
+    buffer->mAudioDataByteSize = frames * sizeof(float) * state.channels;
+    [state.lock unlock];
+    if (state.failed || !frames) return NO;
+    if (AudioQueueEnqueueBuffer(state.queue, buffer, 0, NULL) != noErr) {
+        state.failed = YES; return NO;
+    }
+    return YES;
+}
+static void playbackOutput(void *context, AudioQueueRef queue, AudioQueueBufferRef buffer) {
+    @autoreleasepool {
+        HeyaNativePlayer *state = (__bridge HeyaNativePlayer *)context;
+        if (state.reconfiguring) return;
+        if (!fillPlaybackBuffer(state, buffer)) AudioQueueStop(queue, false);
+    }
+}
+
+void *heya_audio_player_new(const uint8_t *bytes, size_t length, const char *uid,
+                           float volume, int silent, double *duration, int *error) { @autoreleasepool {
+    *error = 1;
+    if (!bytes || length == 0 || length > HeyaAudioLimit) return NULL;
+    HeyaNativePlayer *state = [HeyaNativePlayer new];
+    state.lock = [NSLock new]; state.reader = [HeyaNativeEncoder new];
+    state.reader.memory = [HeyaMemoryAudio new];
+    state.reader.memory.bytes = [NSMutableData dataWithBytes:bytes length:length];
+    AudioFileID file = NULL;
+    if (AudioFileOpenWithCallbacks((__bridge void *)state.reader.memory, memoryRead, NULL,
+        memorySize, NULL, 0, &file) != noErr) return NULL;
+    state.reader.file = file;
+    AudioStreamBasicDescription source = {0}; UInt32 size = sizeof(source);
+    if (AudioFileGetProperty(file, kAudioFilePropertyDataFormat, &size, &source) != noErr ||
+        !isfinite(source.mSampleRate) || source.mSampleRate <= 0 || !source.mChannelsPerFrame) return NULL;
+    ExtAudioFileRef decoder = NULL;
+    if (ExtAudioFileWrapAudioFileID(file, false, &decoder) != noErr) return NULL;
+    state.reader.encoder = decoder; state.sourceRate = source.mSampleRate;
+    SInt64 frames = 0; size = sizeof(frames);
+    if (ExtAudioFileGetProperty(decoder, kExtAudioFileProperty_FileLengthFrames, &size, &frames) != noErr) return NULL;
+    *duration = frames / source.mSampleRate;
+    if (!isfinite(*duration) || *duration <= 0 || *duration > 6 * 3600) { *error = 9; return NULL; }
+    state.duration = *duration; state.channels = source.mChannelsPerFrame == 1 ? 1 : 2;
+    AudioStreamBasicDescription pcm = {0};
+    pcm.mSampleRate = 48000; pcm.mFormatID = kAudioFormatLinearPCM;
+    pcm.mFormatFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked;
+    pcm.mChannelsPerFrame = state.channels; pcm.mBitsPerChannel = 32;
+    pcm.mFramesPerPacket = 1; pcm.mBytesPerFrame = 4 * state.channels; pcm.mBytesPerPacket = pcm.mBytesPerFrame;
+    if (ExtAudioFileSetProperty(decoder, kExtAudioFileProperty_ClientDataFormat, sizeof(pcm), &pcm) != noErr) return NULL;
+    if (!silent) {
+        *error = 5;
+        NSString *selection = uid ? [NSString stringWithUTF8String:uid] : @"";
+        AudioDeviceID device = findDevice(selection, NO);
+        if (device == kAudioObjectUnknown) return NULL;
+        AudioQueueRef queue = NULL;
+        if (AudioQueueNewOutput(&pcm, playbackOutput, (__bridge void *)state, NULL, NULL, 0, &queue) != noErr) return NULL;
+        state.queue = queue;
+        CFStringRef deviceUID = CFBridgingRetain(deviceString(device, kAudioDevicePropertyDeviceUID));
+        if (!deviceUID) return NULL;
+        OSStatus selected = AudioQueueSetProperty(queue, kAudioQueueProperty_CurrentDevice, &deviceUID, sizeof(deviceUID));
+        CFRelease(deviceUID);
+        UInt32 enabled = 1, bypass = 0;
+        if (selected != noErr || AudioQueueSetProperty(queue, kAudioQueueProperty_EnableTimePitch,
+            &enabled, sizeof(enabled)) != noErr ||
+            AudioQueueSetProperty(queue, kAudioQueueProperty_TimePitchBypass, &bypass, sizeof(bypass)) != noErr ||
+            AudioQueueSetParameter(queue, kAudioQueueParam_Volume, fmaxf(0, fminf(1, volume))) != noErr) return NULL;
+        state.buffers = [NSMutableArray array];
+        for (int i = 0; i < 3; i++) {
+            AudioQueueBufferRef buffer = NULL;
+            if (AudioQueueAllocateBuffer(queue, 2048 * pcm.mBytesPerFrame, &buffer) != noErr) return NULL;
+            [state.buffers addObject:[NSValue valueWithPointer:buffer]];
+            if (!state.eof && !fillPlaybackBuffer(state, buffer) && state.failed) return NULL;
+        }
+    }
+    *error = 0;
+    return (__bridge_retained void *)state;
+} }
+
+int heya_audio_player_control(void *handle, int playing, double position, float speed) { @autoreleasepool {
+    HeyaNativePlayer *state = (__bridge HeyaNativePlayer *)handle;
+    if (!state || !state.queue || !isfinite(speed) || speed < .5 || speed > 2) return 0;
+    if (isfinite(position) && position >= 0) {
+        state.reconfiguring = YES;
+        if (AudioQueueStop(state.queue, true) != noErr || AudioQueueReset(state.queue) != noErr) return 0;
+        [state.lock lock];
+        state.baseSeconds = fmin(position, state.duration);
+        OSStatus result = ExtAudioFileSeek(state.reader.encoder, (SInt64)(state.baseSeconds * state.sourceRate));
+        state.eof = state.baseSeconds >= state.duration; state.failed = result != noErr;
+        [state.lock unlock];
+        if (state.failed) return 0;
+        for (NSValue *value in state.buffers) {
+            if (!state.eof && !fillPlaybackBuffer(state, value.pointerValue) && state.failed) return 0;
+        }
+        state.reconfiguring = NO;
+    }
+    if (AudioQueueSetParameter(state.queue, kAudioQueueParam_PlayRate, speed) != noErr) return 0;
+    if (playing && (!state.requestedPlaying || position >= 0)) {
+        state.startedAt = NSProcessInfo.processInfo.systemUptime; state.seenRunning = NO;
+    }
+    state.requestedPlaying = playing;
+    if (state.eof && state.baseSeconds >= state.duration) return 1;
+    return (playing ? AudioQueueStart(state.queue, NULL) : AudioQueuePause(state.queue)) == noErr;
+} }
+
+int heya_audio_player_position(void *handle, double *position) { @autoreleasepool {
+    HeyaNativePlayer *state = (__bridge HeyaNativePlayer *)handle;
+    AudioTimeStamp time = {0}; Boolean discontinuity = false;
+    *position = state.baseSeconds;
+    if (AudioQueueGetCurrentTime(state.queue, NULL, &time, &discontinuity) == noErr &&
+        (time.mFlags & kAudioTimeStampSampleTimeValid)) *position += fmax(0, time.mSampleTime) / 48000.;
+    *position = fmin(*position, state.duration);
+    UInt32 running = 0, size = sizeof(running);
+    if (AudioQueueGetProperty(state.queue, kAudioQueueProperty_IsRunning, &running, &size) != noErr || state.failed) return -1;
+    if (running) state.seenRunning = YES;
+    if (state.requestedPlaying && !running &&
+        (state.seenRunning || NSProcessInfo.processInfo.systemUptime - state.startedAt > .5)) return state.eof ? 1 : -1;
+    return 0;
+} }
+void heya_audio_player_free(void *handle) { @autoreleasepool {
+    HeyaNativePlayer *state = CFBridgingRelease(handle); state.reconfiguring = YES;
+    // Dispose while this worker still owns the state. A callback may retain it;
+    // relying on dealloc could otherwise dispose the queue on its own callback.
+    if (state.queue) { AudioQueueDispose(state.queue, true); state.queue = NULL; }
+} }
 
 void *heya_audio_encoder_new(double rate, uint32_t channels) { @autoreleasepool {
     if (!isfinite(rate) || rate < 8000 || rate > 192000 || channels == 0 || channels > 32) return NULL;
@@ -393,6 +466,7 @@ int heya_audio_capture_read(void *handle, float *samples, uint32_t capacity, uin
 } }
 void heya_audio_capture_free(void *handle) { @autoreleasepool {
     HeyaNativeCapture *state = CFBridgingRelease(handle); state.stopping = YES;
+    if (state.queue) { AudioQueueDispose(state.queue, true); state.queue = NULL; }
 } }
 
 // Offline codec validation; used only by Rust's synthetic tests. It never opens

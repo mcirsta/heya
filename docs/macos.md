@@ -50,7 +50,7 @@ keyring entries are left untouched and are not migrated or accessed.
 | PDF thumbnail generation | CoreGraphics/Quartz and ImageIO in a disposable helper process |
 | URL opening | Native system browser dispatch through webbrowser |
 | App data and Downloads paths | Standard macOS locations through directories |
-| Audio playback | AVAudioPlayer, including Ogg/Opus from memory |
+| Audio playback | Core Audio output queues, including Ogg/Opus from memory |
 | Voice recording | Core Audio input queues and AudioToolbox Opus encoding |
 | Video playback | Pending |
 
@@ -74,8 +74,9 @@ separate process, not an App Sandbox or XPC service.
 
 ## Native audio
 
-Playback uses AVAudioPlayer with in-memory compressed data, pause/resume, seeking
-and speed control. Microphone capture uses AudioQueue; AudioToolbox downmixes,
+Playback uses Core Audio output queues and AudioToolbox decoding from in-memory
+compressed data, with pause/resume, seeking and speed control. Only three small
+PCM buffers are decoded at a time. Microphone capture uses AudioQueue; AudioToolbox downmixes,
 resamples and encodes 48 kHz mono Opus at 32 kbit/s. The Rust `ogg` dependency
 packages the native encoded packets; it is not an audio codec. Compressed and
 intermediate CAF data stay in bounded memory, with no plaintext audio files.
@@ -90,19 +91,29 @@ preview. Discard is sufficient to test without sending. Also try a received voic
 message, seeking and playback speeds. If permission was denied, enable Heya in
 System Settings → Privacy & Security → Microphone.
 
+The native output regression is opt-in and uses synthetic Opus at zero app volume.
+It exercises output preparation, pause, seek, speed and completion. This covers
+the step that silent software playback tests omit. AVAudioPlayer is avoided: on
+this Mac, preparing a generated Ogg/Opus file reproducibly raises SIGFPE inside
+`AVAudioPlayerCpp::setPlaybackFramePos`.
+
 ## Validation
 
 Validated on an Intel Mac running macOS 15.8.1 with Rust 1.99.1 and Apple's
-Command Line Tools 16.4 (Clang 17): the original 176 unit/UI tests and one encrypted protocol
-storage integration test passed. Three opt-in/helper tests remained ignored,
-including the actual desktop Keychain check. Formatting, all-target Clippy with
-warnings denied, and the build check without default features passed. The
-vendored Parley crate still emits its existing ICU deprecation warning.
+Command Line Tools 16.4 (Clang 17): 194 unit/UI tests and one encrypted protocol
+storage integration test passed. Four opt-in/helper tests remained ignored in
+the default suite, including the desktop Keychain check. The native output test
+was run explicitly at zero app volume and passed preparation, pause, seeking,
+speed changes, completion, and closing both playing and paused queues.
+Formatting, all-target Clippy with warnings denied, and the build check without
+default features passed. The vendored Parley crate still emits its existing ICU
+deprecation warning.
 
-Native audio validation additionally covers in-memory Opus encode/decode, mono/stereo
-44.1/48 kHz conversion, exact decoder trimming, playback controls, recording
-pause/resume, review, encrypted caching and helper teardown with synthetic audio.
-These checks never open a real microphone or audible output.
+Native audio validation also covers in-memory Opus encode/decode, mono/stereo
+44.1/48 kHz conversion, exact decoder trimming, recording pause/resume, review,
+encrypted caching and helper teardown with synthetic audio. These checks never
+open a real microphone or produce audible output. The Apple crash reproducer
+and concise report are in [the standalone package](upstream/macos-opus-prepare-repro/REPORT.md).
 
 The Objective-C bridge also passes Clang with `-Wall -Wextra -Werror`. The
 compiled release PDF helper renders all three fixtures and rejects corrupt PDF

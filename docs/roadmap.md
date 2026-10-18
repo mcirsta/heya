@@ -260,7 +260,7 @@ is required for this preview. Publication metadata can be settled at release tim
 
 The initial macOS build and native service adapters are now described in
 [macOS development](macos.md). A successful build and synthetic tests do not
-close the desktop and live-account acceptance gates below. Native macOS audio uses AVAudioPlayer and Core Audio/AudioToolbox, with synthetic
+close the desktop and live-account acceptance gates below. Native macOS audio uses Core Audio output queues and Core Audio/AudioToolbox, with synthetic
 codec and lifecycle coverage; hardware and recipient checks remain open. Native
 video playback remains pending.
 

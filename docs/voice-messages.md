@@ -39,7 +39,7 @@ Startup does not open a microphone.
 
 On macOS, the same helper lifecycle uses native Core Audio capture and
 AudioToolbox Opus encoding (48 kHz mono, 32 kbit/s), with the Rust `ogg` crate
-packaging encoded packets. AVAudioPlayer handles received audio and preview.
+packaging encoded packets. Core Audio output queues handle received audio and preview.
 All compressed audio and the intermediate CAF container stay in bounded memory.
 Launch the macOS app bundle to record; it supplies the required microphone
 permission description. Permission is requested only after pressing Record.
