@@ -124,6 +124,11 @@ jobs:
           esac
           cd dist
           shasum -a 256 -c "Heya-$VERSION-macos-arm64.zip.sha256"
+          current_main=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          if [ "$current_main" != "$SOURCE_SHA" ]; then
+            echo "Main advanced during this build; wait for the newer commit's checks."
+            exit 0
+          fi
           if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "v$VERSION already exists; release assets are never replaced."
             exit 0

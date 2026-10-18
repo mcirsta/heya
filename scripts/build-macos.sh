@@ -36,6 +36,7 @@ heya_version=$(cargo metadata --locked --no-deps --format-version 1 | python3 -c
 heya_build=${HEYA_BUILD_NUMBER:-$(git rev-list --count HEAD)}
 mkdir -p "$heya_bundle/Contents/MacOS" "$heya_bundle/Contents/Resources"
 cp "$heya_binary" "$heya_bundle/Contents/MacOS/heya"
+cp -R third_party/licenses "$heya_bundle/Contents/Resources/"
 python3 - "$heya_bundle" "$heya_version" "$heya_build" "$MACOSX_DEPLOYMENT_TARGET" <<'PY'
 import pathlib,plistlib,re,sys
 bundle,version,build,minimum=sys.argv[1:]
