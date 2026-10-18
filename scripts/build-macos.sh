@@ -1,32 +1,75 @@
 #!/bin/sh
-# Build a local development bundle using Apple's native tools.
+# Build a standalone, ad hoc signed macOS bundle and optional testing ZIP.
 set -eu
 cd "$(dirname "$0")/.."
 if [ "$(uname -s)" != Darwin ]; then
     echo "Build this bundle on macOS with Apple's Command Line Tools installed." >&2
     exit 1
 fi
-cargo build --release --locked
-bundle=target/macos/Heya.app
-mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
-cp target/release/heya "$bundle/Contents/MacOS/heya"
-cat > "$bundle/Contents/Info.plist" <<'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>CFBundleIdentifier</key><string>org.heya.Heya</string>
-  <key>CFBundleName</key><string>Heya</string>
-  <key>CFBundleDisplayName</key><string>Heya</string>
-  <key>CFBundleExecutable</key><string>heya</string>
-  <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.1.0</string>
-  <key>CFBundleVersion</key><string>1</string>
-  <key>NSHighResolutionCapable</key><true/>
-  <key>NSPrincipalClass</key><string>NSApplication</string>
-  <key>NSMicrophoneUsageDescription</key><string>Record a voice message when you press the microphone button.</string>
-  <key>LSMinimumSystemVersion</key><string>11.0</string>
-</dict></plist>
-PLIST
-plutil -lint "$bundle/Contents/Info.plist"
-codesign --force --sign - "$bundle"
-echo "Built $bundle"
+heya_target=""
+heya_package=false
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --target) heya_target=${2:?Missing target}; shift 2 ;;
+        --package) heya_package=true; shift ;;
+        *) echo "Usage: $0 [--target aarch64-apple-darwin|x86_64-apple-darwin] [--package]" >&2; exit 2 ;;
+    esac
+done
+export MACOSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET:-15.0}
+if [ -n "$heya_target" ]; then
+    case "$heya_target" in
+        aarch64-apple-darwin) heya_arch=arm64 ;;
+        x86_64-apple-darwin) heya_arch=x86_64 ;;
+        *) echo "Unsupported macOS target: $heya_target" >&2; exit 2 ;;
+    esac
+    cargo build --release --locked --target "$heya_target"
+    heya_binary="target/$heya_target/release/heya"
+    heya_bundle="target/macos-$heya_arch/Heya.app"
+else
+    cargo build --release --locked
+    heya_binary=target/release/heya
+    heya_bundle=target/macos/Heya.app
+    heya_arch=$(lipo -archs "$heya_binary")
+fi
+[ "$(lipo -archs "$heya_binary")" = "$heya_arch" ]
+heya_version=$(cargo metadata --locked --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "heya"))')
+heya_build=${HEYA_BUILD_NUMBER:-$(git rev-list --count HEAD)}
+mkdir -p "$heya_bundle/Contents/MacOS" "$heya_bundle/Contents/Resources"
+cp "$heya_binary" "$heya_bundle/Contents/MacOS/heya"
+python3 - "$heya_bundle" "$heya_version" "$heya_build" "$MACOSX_DEPLOYMENT_TARGET" <<'PY'
+import pathlib,plistlib,re,sys
+bundle,version,build,minimum=sys.argv[1:]
+assert re.fullmatch(r'\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?',version)
+assert re.fullmatch(r'\d+',build)
+assert re.fullmatch(r'\d+\.\d+(?:\.\d+)?',minimum)
+info={
+ 'CFBundleIdentifier':'org.heya.Heya','CFBundleName':'Heya','CFBundleDisplayName':'Heya',
+ 'CFBundleExecutable':'heya','CFBundlePackageType':'APPL',
+ 'CFBundleShortVersionString':version.split('-')[0],'CFBundleVersion':build,
+ 'CFBundleGetInfoString':'Heya '+version,
+ 'NSHighResolutionCapable':True,'NSPrincipalClass':'NSApplication',
+ 'NSMicrophoneUsageDescription':'Record a voice message when you press the microphone button.',
+ 'LSMinimumSystemVersion':minimum,
+}
+with (pathlib.Path(bundle)/'Contents/Info.plist').open('wb') as f:plistlib.dump(info,f)
+PY
+plutil -lint "$heya_bundle/Contents/Info.plist"
+codesign --force --sign - "$heya_bundle"
+codesign --verify --deep --strict "$heya_bundle"
+python3 - "$heya_bundle/Contents/MacOS/heya" "$MACOSX_DEPLOYMENT_TARGET" <<'PY'
+import re,subprocess,sys
+binary,minimum=sys.argv[1:]
+build=subprocess.check_output(['vtool','-show-build',binary],text=True)
+assert re.search(r'\bminos\s+'+re.escape(minimum)+r'\s',build),build
+for line in subprocess.check_output(['otool','-L',binary],text=True).splitlines()[1:]:
+ library=line.strip().split()[0]
+ assert library.startswith(('/System/Library/','/usr/lib/')), 'Non-system runtime dependency: '+library
+PY
+echo "Built $heya_bundle ($heya_arch, macOS $MACOSX_DEPLOYMENT_TARGET+)"
+if [ "$heya_package" = true ]; then
+    heya_name="Heya-$heya_version-macos-$heya_arch.zip"
+    mkdir -p target/dist
+    ditto -c -k --sequesterRsrc --keepParent "$heya_bundle" "target/dist/$heya_name"
+    (cd target/dist && shasum -a 256 "$heya_name" > "$heya_name.sha256")
+    echo "Packaged target/dist/$heya_name"
+fi

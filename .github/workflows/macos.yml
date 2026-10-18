@@ -1,0 +1,136 @@
+name: macOS Apple Silicon
+
+on:
+  pull_request:
+  workflow_dispatch:
+  workflow_run:
+    workflows: [Linux]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-arm64-${{ github.event.workflow_run.head_branch || github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUSTUP_TOOLCHAIN: 1.99.1
+  CARGO_TERM_COLOR: always
+  MACOSX_DEPLOYMENT_TARGET: '15.0'
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  CARGO_PROFILE_TEST_DEBUG: '0'
+
+jobs:
+  build-and-test:
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: macos-15
+    timeout-minutes: 90
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+      source_sha: ${{ steps.metadata.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+      - name: Check Apple Silicon host
+        run: |
+          test "$(uname -m)" = arm64
+          sw_vers
+      - name: Install Rust
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        id: cargo-cache
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: macos15-arm64-rust-1.99.1-${{ hashFiles('Cargo.lock', '.github/workflows/macos.yml') }}-${{ github.event.workflow_run.head_sha || github.sha }}
+          restore-keys: |
+            macos15-arm64-rust-1.99.1-${{ hashFiles('Cargo.lock', '.github/workflows/macos.yml') }}-
+            macos15-arm64-rust-1.99.1-
+      - name: Record release metadata
+        id: metadata
+        run: |
+          echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "version=$(cargo metadata --locked --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "heya"))')" >> "$GITHUB_OUTPUT"
+      - name: Check formatting
+        run: cargo fmt --check
+      - name: Lint native Apple Silicon build
+        run: cargo clippy --locked --all-targets --target aarch64-apple-darwin -- -D warnings
+      - name: Run synthetic tests on Apple Silicon
+        run: cargo test --locked --target aarch64-apple-darwin
+      - name: Check without the Linux media feature
+        run: cargo check --locked --no-default-features --target aarch64-apple-darwin
+      - name: Build testing package
+        env:
+          HEYA_BUILD_NUMBER: ${{ github.run_number }}
+        run: scripts/build-macos.sh --target aarch64-apple-darwin --package
+      - name: Check packaged helpers without an account or microphone
+        run: |
+          target/macos-arm64/Heya.app/Contents/MacOS/heya --help
+          python3 scripts/check-macos-bundle.py target/macos-arm64/Heya.app
+      - name: Include testing notes
+        env:
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: cp "docs/releases/v$VERSION.md" target/dist/RELEASE_NOTES.md
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: macos-arm64-testing
+          path: target/dist/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Save build progress
+        if: always() && !cancelled() && steps.cargo-cache.outputs.cache-primary-key != '' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+
+  publish-testing-release:
+    needs: build-and-test
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: macos-arm64-testing
+          path: dist
+      - name: Publish a new alpha version after Linux and Apple Silicon checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build-and-test.outputs.version }}
+          SOURCE_SHA: ${{ needs.build-and-test.outputs.source_sha }}
+        run: |
+          case "$VERSION" in
+            *-alpha.*) ;;
+            *) echo "Only alpha testing versions are published by this workflow."; exit 0 ;;
+          esac
+          cd dist
+          shasum -a 256 -c "Heya-$VERSION-macos-arm64.zip.sha256"
+          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "v$VERSION already exists; release assets are never replaced."
+            exit 0
+          fi
+          gh release create "v$VERSION" \
+            "Heya-$VERSION-macos-arm64.zip" \
+            "Heya-$VERSION-macos-arm64.zip.sha256" \
+            --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" \
+            --title "Heya $VERSION — Apple Silicon testing" \
+            --notes-file RELEASE_NOTES.md --prerelease

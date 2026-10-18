@@ -7,7 +7,7 @@ uses Metal. This does not turn the custom Slint controls into AppKit widgets.
 
 ## Build
 
-Use macOS 11 or newer. Install Apple's Command Line Tools (`xcode-select --install`) and Rust 1.99 or
+Testing bundles target macOS 15 or newer. Install Apple's Command Line Tools (`xcode-select --install`) and Rust 1.99 or
 newer from [rustup](https://rustup.rs). Full Xcode, Homebrew, GStreamer, GTK,
 Poppler and X11 are not required for the macOS runtime.
 
@@ -23,6 +23,44 @@ Use `scripts/build-macos.sh` to build a local `target/macos/Heya.app` bundle.
 This is an ad-hoc-signed development app, not a notarized distribution. Use this
 bundle for microphone recording: its Info.plist contains the macOS microphone
 permission description. The unbundled Cargo executable cannot request that permission.
+
+## Apple Silicon testing release
+
+[Download v0.1.0-alpha.1](https://github.com/mcirsta/heya/releases/tag/v0.1.0-alpha.1)
+for M1 and later Macs running macOS 15 or newer. The generic arm64 build uses no
+M4-specific CPU flags and needs neither Rosetta nor a Rust installation on the
+tester's Mac. See the [testing notes](releases/v0.1.0-alpha.1.md) for first launch,
+pairing and checks. This beta is ad hoc signed and not notarized; a Developer ID
+certificate is not configured.
+
+On an Apple Silicon development machine, build and package with:
+
+```sh
+scripts/build-macos.sh --target aarch64-apple-darwin --package
+```
+
+The result is `target/macos-arm64/Heya.app`, plus a ZIP and SHA-256 file under
+`target/dist/`. The build script sets the deployment target to 15.0 throughout
+the build, verifies the executable architecture and system-library dependencies,
+and signs and checks the bundle. The default invocation still builds the host
+architecture at `target/macos/Heya.app`. Older deployment targets are development
+experiments, not supported by this release.
+
+The macOS workflow runs native arm64 formatting, lint, synthetic tests, a check
+without the Linux media feature, and packaged-helper checks on GitHub's macOS 15
+M1 runner. It never opens an account or microphone. To check a local bundle with
+real output hardware but zero app volume, explicitly run:
+
+```sh
+python3 scripts/check-macos-bundle.py target/macos-arm64/Heya.app --native-output
+```
+
+Pull requests and manual workflow runs produce testing artifacts without
+publishing. For pushes to main, the Apple Silicon workflow starts after the
+Linux workflow succeeds. A successful build publishes a new `-alpha.*` package
+version as a GitHub prerelease, with its matching notes from `docs/releases/`.
+Existing releases and their assets are never replaced. Bump Cargo.toml and
+Cargo.lock together and add matching versioned notes for the next test release.
 
 ## Saved encryption key
 

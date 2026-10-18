@@ -27,6 +27,10 @@ remaining differences. Earlier prototype screenshots are not the current UI.
 
 ## Run Heya
 
+For Apple Silicon Macs running macOS 15 or newer, download the
+[testing release](https://github.com/mcirsta/heya/releases/tag/v0.1.0-alpha.1).
+See [testing and first-launch instructions](docs/releases/v0.1.0-alpha.1.md).
+
 On macOS, see [the native macOS build guide](docs/macos.md). The macOS build
 uses Metal, AppKit file dialogs, Keychain and Quartz PDF previews. Native audio
 uses Core Audio output queues for playback and Core Audio/AudioToolbox for microphone capture

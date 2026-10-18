@@ -15,14 +15,16 @@ fn main() {
 
 #[cfg(target_os = "macos")]
 fn cc_macos() {
+    println!("cargo:rerun-if-env-changed=MACOSX_DEPLOYMENT_TARGET");
+    let minimum = std::env::var("MACOSX_DEPLOYMENT_TARGET").unwrap_or_else(|_| "11.0".into());
     cc::Build::new()
         .file("src/platform/macos.m")
         .file("src/platform/macos_audio.m")
         .flag("-fobjc-arc")
         .flag("-fblocks")
-        .flag("-mmacosx-version-min=11.0")
+        .flag(format!("-mmacosx-version-min={minimum}"))
         .compile("heya_macos");
-    println!("cargo:rustc-link-arg=-mmacosx-version-min=11.0");
+    println!("cargo:rustc-link-arg=-mmacosx-version-min={minimum}");
     for framework in [
         "AppKit",
         "CoreGraphics",
