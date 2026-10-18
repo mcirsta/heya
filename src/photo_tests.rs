@@ -292,16 +292,16 @@ struct Fake {
     started: mpsc::UnboundedSender<()>,
     gate: Semaphore,
     result: Mutex<Result<Vec<u8>, State>>,
-    cancelled: Arc<AtomicUsize>,
+    cancelled: watch::Sender<usize>,
 }
 struct InFlight {
-    cancelled: Arc<AtomicUsize>,
+    cancelled: watch::Sender<usize>,
     done: bool,
 }
 impl Drop for InFlight {
     fn drop(&mut self) {
         if !self.done {
-            self.cancelled.fetch_add(1, Ordering::SeqCst);
+            self.cancelled.send_modify(|count| *count += 1);
         }
     }
 }
@@ -330,11 +330,12 @@ async fn photo_downloads_obey_visibility_preference_offline_retry_and_cancellati
     let (_temp, db) = fixture();
     let ids = insert(&db, vec![photo_record("a"), photo_record("b")]).await;
     let (tx, mut calls) = mpsc::unbounded_channel();
+    let (cancelled, mut cancellations) = watch::channel(0);
     let source = Arc::new(Fake {
         started: tx,
         gate: Semaphore::new(0),
         result: Mutex::new(Err(State::Failed)),
-        cancelled: Default::default(),
+        cancelled,
     });
     let (demand, demand_rx) = watch::channel(Demand {
         visible: ids.clone(),
@@ -366,7 +367,13 @@ async fn photo_downloads_obey_visibility_preference_offline_retry_and_cancellati
     state(&db, ids[1], State::Loading).await;
     demand.send_modify(|d| d.visible = vec![ids[0]]);
     state(&db, ids[1], State::Idle).await;
-    assert_eq!(source.cancelled.load(Ordering::SeqCst), 1);
+    tokio::time::timeout(
+        Duration::from_secs(15),
+        cancellations.wait_for(|count| *count == 1),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert!(
         tokio::time::timeout(Duration::from_millis(100), calls.recv())
             .await
@@ -400,7 +407,7 @@ async fn photo_downloads_obey_visibility_preference_offline_retry_and_cancellati
         .unwrap()
         .unwrap()
         .unwrap();
-    assert_eq!(source.cancelled.load(Ordering::SeqCst), 2);
+    assert_eq!(*source.cancelled.borrow(), 2);
     assert_eq!(
         db.photo_candidates(vec![ids[1]]).await.unwrap(),
         vec![(ids[1], State::Idle)]
