@@ -65,12 +65,6 @@
     }
   },
   "reference_files": {
-    "docs/reference/zapfast-dark.png": {
-      "sha256": "a9ef2841301c4da4870af4ce47bbe3a6a861d8b71fdaa0294ac6a69ac9916fd8"
-    },
-    "docs/reference/zapfast-light.png": {
-      "sha256": "8171b9e8c59fda886b11835f978bd4f515a8c3f6846b4a5c24fe100042d50896"
-    },
     "third_party/licenses/ZapFast-MIT.txt": {
       "sha256": "bb88b08f452b933a9e7cd83abc7f009a8e298e41dfc9bca9d6e50f0435b2fa43"
     },

@@ -8,11 +8,12 @@ checks pass. ZapFast feature parity is not a goal.
 
 ## Visual baseline
 
-The supplied images are upstream reference screenshots, not Heya screenshots:
+Upstream reference screenshots are linked at the pinned source revision instead
+of copied into this repository:
 
 | Dark | Light |
 | --- | --- |
-| ![ZapFast dark reference](reference/zapfast-dark.png) | ![ZapFast light reference](reference/zapfast-light.png) |
+| [ZapFast dark reference](https://github.com/crmne/zapfast/blob/c73ce57522d28eff4da1a5cc9e3b6de0f27b0de0/docs/screenshot.png) | [ZapFast light reference](https://github.com/crmne/zapfast/blob/c73ce57522d28eff4da1a5cc9e3b6de0f27b0de0/docs/screenshot-light.png) |
 
 See [provenance and notices](../THIRD_PARTY_NOTICES.md). Theme colors are captured
 in [zapfast-theme.json](../prep/zapfast-theme.json). They are starting tokens;

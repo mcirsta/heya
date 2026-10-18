@@ -1193,8 +1193,8 @@ The first offline prototype was built and checked on 13 October 2026:
 - Native captures cover the default dark window, light at 800×600 and the narrow
   sidebar at 600×600. The initial timeline lands at its newest message after
   layout; dark capture metrics are 619 logical pixels of content, 552.25 visible
-  and an offset of -66.75. Saved [dark](screenshots/heya-dark.png) and
-  [light](screenshots/heya-light.png) previews use synthetic data only.
+  and an offset of -66.75. The dark/light previews used synthetic data only;
+  these superseded prototype captures were removed during workspace cleanup.
 - `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings` and
   the Slint compiler check pass. Tests and captures must be repeated when the
   relevant code changes.
@@ -1343,17 +1343,17 @@ choose its default parallelism; do not pass fixed job counts or set
 
 ## Reference checkouts
 
-Both requested repositories have been cloned into ignored local directories and
-checked out at the recorded revisions. They are clean, detached checkouts with
-the official GitHub repositories as origin:
+Reference checkouts are optional and disposable. When needed, create ignored,
+detached checkouts at the recorded revisions with the official GitHub repositories
+as origin:
 
 | Directory | Revision | Purpose |
 | --- | --- | --- |
 | `.references/whatsapp-rust` | `0dc38af07632f48f0cf6c66df285f1643fc22b95` | Inspect the public protocol APIs; use upstream unchanged where possible |
 | `.references/zapfast` | `c73ce57522d28eff4da1a5cc9e3b6de0f27b0de0` | Visual reference only |
 
-Heya's eventual Cargo dependency still uses the pinned upstream Git URL, not a
-path dependency on this inspection checkout. To reproduce the references in a
+Heya uses the pinned upstream Git URL plus its committed vendored patches, not a
+path dependency on these inspection checkouts. To reproduce the references in a
 fresh workspace, use:
 
 ```sh

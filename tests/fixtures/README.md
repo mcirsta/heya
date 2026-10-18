@@ -8,3 +8,14 @@ No document from an account or user screenshot is used.
 `preview-strip.png` is the portrait fixture's first 768×320 pixels rendered by
 the production `pdf_preview::render` path (Poppler). The demo and native UI
 benchmark use it to check actual PDF text and line detail inside document cards.
+
+To regenerate the strip on Linux with the same first-page scaling/crop options:
+
+```sh
+pdftoppm -f 1 -l 1 -singlefile -scale-dimension-before-rotation \
+  -scale-to-x 768 -scale-to-y -1 -x 0 -y 0 -W 768 -H 320 -cropbox -png -q \
+  tests/fixtures/preview-portrait.pdf tests/fixtures/preview-strip
+```
+
+Rendering/font library versions can affect PNG encoding; ordinary builds use
+the checked-in fixture and do not need ReportLab or Poppler to generate it.

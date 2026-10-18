@@ -77,6 +77,11 @@ i-slint-renderer-skia = "=1.18.1"
 
 [profile.dev]
 debug = 1
+# Generated Slint bindings otherwise accumulate very large incremental caches.
+incremental = false
+
+[profile.test]
+incremental = false
 
 [profile.release]
 lto = "thin"

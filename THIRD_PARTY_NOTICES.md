@@ -16,8 +16,6 @@ The following files derive from
 
 | Heya file | Original source | Use |
 | --- | --- | --- |
-| `docs/reference/zapfast-dark.png` | `docs/screenshot.png` | Unmodified documentation screenshot |
-| `docs/reference/zapfast-light.png` | `docs/screenshot-light.png` | Unmodified documentation screenshot |
 | `prep/zapfast-theme.json` | `src/theme.rs`, `Palette::dark` and `Palette::light` | Selected color constants transcribed into JSON |
 | `ui/*.slint` | `src/theme.rs`, `src/ui/{chats,conversation,widgets,login,settings}.rs` | Visual dimensions, typography and palette adapted to Slint; independently implemented behavior |
 | `ui/assets/wallpaper.svg` | `assets/wallpaper.svg` | Unmodified Lucide doodle tile (ISC) |
@@ -29,8 +27,9 @@ The following files derive from
 | `ui/icons/eye-off.svg`, `ui/icons/info.svg` | Existing Lucide outline vocabulary | Independently drawn menu outlines in the existing style (ISC) |
 | `ui/icons/play.svg`, `ui/icons/pause.svg`, `ui/icons/stop.svg` | Lucide media outline vocabulary | Recording/review outlines, adapted to the existing icon style (ISC) |
 
-The documentation screenshots remain unmodified visual references. The SVG
-assets listed above are also bundled in Heya; their Lucide ISC notice is retained. ZapFast's logo/name are not
+The documentation links to upstream screenshots at the pinned revision instead
+of bundling copies. The SVG assets listed above are bundled in Heya; their
+Lucide ISC notice is retained. ZapFast's logo/name are not
 Heya branding. Preserve the MIT notice when adapting substantial source, document
 the original path/revision, and record meaningful changes.
 

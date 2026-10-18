@@ -3,8 +3,30 @@
 /.prep/
 /.references/
 /whatsapp_desktop/
+/dist/
+/build/
 __pycache__/
 *.pyc
+
+# Compiled libraries, executables and distribution packages belong in releases.
+*.app/
+*.dSYM/
+*.dmg
+*.icns
+*.exe
+*.dll
+*.dylib
+*.so
+*.so.*
+*.a
+*.o
+*.rlib
+*.rmeta
+*.pdb
+*.AppImage
+*.msi
+*.deb
+*.rpm
 
 # Local assistant configuration
 /.agents/

@@ -10,6 +10,10 @@ Heya's behavior, storage, media and application architecture are implemented
 independently, with particular attention to video and desktop clipboard handling.
 Use whatsapp-rust unchanged through its public API wherever possible.
 
+Generated builds and validation outputs are disposable. See
+[workspace cleanup and reproduction](docs/workspace-cleanup.md) for the safe
+cleanup command and how to recreate them; application binaries belong in releases.
+
 **Status: first live text-messaging and encrypted-archive implementation.**
 Linux is the reference implementation, and the native macOS port is now active.
 Windows is the next planned target. Heya implements QR
