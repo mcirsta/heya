@@ -75,8 +75,10 @@ if [ "$heya_package" = true ]; then
     trap 'rm -rf -- "$heya_stage"' EXIT HUP INT TERM
     ditto "$heya_bundle" "$heya_stage/Heya.app"
     ln -s /Applications "$heya_stage/Applications"
+    # Leave room for filesystem metadata instead of relying on hdiutil's estimate.
+    heya_image_kib=$(du -sk "$heya_stage" | awk '{print $1 + 32768}')
     hdiutil create -volname "Heya $heya_version" -srcfolder "$heya_stage" \
-        -format UDZO -ov "target/dist/$heya_name"
+        -fs HFS+ -size "${heya_image_kib}k" -format UDZO -ov "target/dist/$heya_name"
     hdiutil verify "target/dist/$heya_name"
     (cd target/dist && shasum -a 256 "$heya_name" > "$heya_name.sha256")
     echo "Packaged target/dist/$heya_name"
