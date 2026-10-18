@@ -387,10 +387,13 @@ pub(crate) fn check_missing_font(ui: &AppWindow) {
             .unwrap();
         let p = panel.absolute_position();
         let n = notice.absolute_position();
-        assert!(notice.size().height > 30.);
+        // Platform fonts have different line heights. Require visible geometry
+        // and containment, rather than a particular font's wrapped height.
+        let size = notice.size();
+        assert!(size.width > 0. && size.height > 0., "Notice size: {size:?}");
         assert!(n.x >= p.x && n.y >= p.y);
-        assert!(n.x + notice.size().width <= p.x + panel.size().width);
-        assert!(n.y + notice.size().height <= p.y + panel.size().height);
+        assert!(n.x + size.width <= p.x + panel.size().width);
+        assert!(n.y + size.height <= p.y + panel.size().height);
     }
     ui.window().set_size(slint::LogicalSize::new(1200., 900.));
     ui.set_emoji_query("".into());
