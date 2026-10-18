@@ -2,6 +2,7 @@
 // Quartz PDF rendering runs in a disposable helper process, without account data.
 #import <AppKit/AppKit.h>
 #import <CoreGraphics/CoreGraphics.h>
+#import <CoreText/CoreText.h>
 #import <ImageIO/ImageIO.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #include <stdint.h>
@@ -11,6 +12,40 @@
 
 typedef void (*HeyaPanelReply)(uint64_t, const char *const *, size_t);
 static NSMutableDictionary<NSNumber *, NSSavePanel *> *panels;
+
+// Called once on a background worker. Probe native shaping, including joined
+// sequences, rather than guessing emoji support from the macOS version.
+void heya_emoji_support(const char *catalogue, uint8_t *supported, size_t count) {
+    @autoreleasepool {
+        memset(supported, 0, count);
+        NSArray<NSString *> *values = [[NSString stringWithUTF8String:catalogue] componentsSeparatedByString:@"\n"];
+        if (values.count != count) return;
+        CTFontRef font = CTFontCreateWithName(CFSTR("Apple Color Emoji"), 24, NULL);
+        NSDictionary *attributes = @{(__bridge NSString *)kCTFontAttributeName: (__bridge id)font};
+        NSAttributedString *reference = [[NSAttributedString alloc] initWithString:@"😀" attributes:attributes];
+        CTLineRef referenceLine = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)reference);
+        double cellWidth = CTLineGetTypographicBounds(referenceLine, NULL, NULL, NULL);
+        CFRelease(referenceLine);
+        for (NSUInteger i = 0; i < count; ++i) {
+            NSAttributedString *text = [[NSAttributedString alloc] initWithString:values[i] attributes:attributes];
+            CTLineRef line = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)text);
+            // A joined emoji can contain multiple overlapping glyphs. Reject
+            // unjoined sequences spanning multiple emoji cells, not glyph count.
+            BOOL available = CTLineGetTypographicBounds(line, NULL, NULL, NULL) <= cellWidth * 1.5;
+            CFArrayRef runs = CTLineGetGlyphRuns(line);
+            for (CFIndex j = 0; available && j < CFArrayGetCount(runs); ++j) {
+                CTRunRef run = CFArrayGetValueAtIndex(runs, j);
+                CTFontRef used = CFDictionaryGetValue(CTRunGetAttributes(run), kCTFontAttributeName);
+                CFStringRef name = CTFontCopyPostScriptName(used);
+                available = !CFStringHasPrefix(name, CFSTR("LastResort"));
+                CFRelease(name);
+            }
+            supported[i] = available;
+            CFRelease(line);
+        }
+        CFRelease(font);
+    }
+}
 
 static NSURL *fileURL(const char *path) {
     if (!path || !*path) return nil;

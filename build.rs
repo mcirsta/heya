@@ -28,6 +28,7 @@ fn cc_macos() {
     for framework in [
         "AppKit",
         "CoreGraphics",
+        "CoreText",
         "ImageIO",
         "Foundation",
         "UniformTypeIdentifiers",

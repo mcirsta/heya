@@ -2507,7 +2507,7 @@ checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 
 [[package]]
 name = "heya"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2524,6 +2524,7 @@ dependencies = [
  "hkdf 0.12.4",
  "i-slint-backend-testing",
  "i-slint-core",
+ "i-slint-renderer-skia",
  "image",
  "keyring",
  "libc",

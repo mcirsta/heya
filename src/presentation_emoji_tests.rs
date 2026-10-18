@@ -44,6 +44,21 @@ pub fn check_ui() {
         cells < 160,
         "the grid must instantiate visible rows, not the complete emoji database: {cells}"
     );
+    #[cfg(target_os = "macos")]
+    {
+        // A newer catalogue entry must not leave a blank picker cell on an
+        // older OS. Newer fonts that support it should keep offering it.
+        ui.set_emoji_query("distorted face".into());
+        ui.invoke_request_emojis();
+        let choices = ui
+            .get_emoji_rows()
+            .iter()
+            .map(|row| row.cells.row_count())
+            .sum::<usize>();
+        assert_eq!(choices, usize::from(crate::macos::supports_emoji("🫪")));
+        ui.set_emoji_query("".into());
+        ui.invoke_request_emojis();
+    }
     ui.invoke_choose_emoji("🙂".into());
     assert_eq!(ui.get_draft(), "你🙂好");
     ui.invoke_choose_emoji("👩🏽‍💻".into());

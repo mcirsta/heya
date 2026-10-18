@@ -26,10 +26,10 @@ permission description. The unbundled Cargo executable cannot request that permi
 
 ## Apple Silicon testing release
 
-[Download v0.1.0-alpha.1](https://github.com/mcirsta/heya/releases/tag/v0.1.0-alpha.1)
+[Download v0.1.0-alpha.2](https://github.com/mcirsta/heya/releases/tag/v0.1.0-alpha.2)
 for M1 and later Macs running macOS 15 or newer. The generic arm64 build uses no
 M4-specific CPU flags and needs neither Rosetta nor a Rust installation on the
-tester's Mac. See the [testing notes](releases/v0.1.0-alpha.1.md) for first launch,
+tester's Mac. See the [testing notes](releases/v0.1.0-alpha.2.md) for first launch,
 pairing and checks. This beta is ad hoc signed and not notarized; a Developer ID
 certificate is not configured.
 
@@ -39,7 +39,7 @@ On an Apple Silicon development machine, build and package with:
 scripts/build-macos.sh --target aarch64-apple-darwin --package
 ```
 
-The result is `target/macos-arm64/Heya.app`, plus a ZIP and SHA-256 file under
+The result is `target/macos-arm64/Heya.app`, plus a DMG and SHA-256 file under
 `target/dist/`. The build script sets the deployment target to 15.0 throughout
 the build, verifies the executable architecture and system-library dependencies,
 and signs and checks the bundle. The default invocation still builds the host
@@ -80,7 +80,7 @@ keyring entries are left untouched and are not migrated or accessed.
 | Service | macOS implementation |
 | --- | --- |
 | Windowing, input, clipboard, accessibility | AppKit through Winit/Slint |
-| Rendering | Skia over Metal |
+| Rendering | Skia over Metal, with Skia CPU rasterization as the software fallback |
 | Fonts | System interface font by default, Apple Color Emoji |
 | Keyboard shortcuts | Command for app actions, copy and send; Slint normalizes Command to its logical Control modifier |
 | Archive encryption key | Apple Keychain through keyring's `apple-native` backend |
@@ -100,7 +100,24 @@ dependencies, service implementations, fonts and layout adjustments are scoped
 to macOS; shared application features continue to support both platforms.
 SQLCipher and the WhatsApp protocol implementation remain shared application
 dependencies. Apple's ordinary SQLite cannot replace SQLCipher without losing
-the encrypted archive; the vendored OpenSSL dependency supplies its encryption.
+the encrypted archive; macOS uses Apple CommonCrypto for its encryption. Linux retains bundled OpenSSL.
+
+On macOS, Slint's separate software renderer is not enabled in production.
+Skia's built-in CPU surface remains enabled: if Metal initialization fails,
+Slint falls back to it and presents CPU-rendered pixels through CoreGraphics
+and Core Animation. This path needs no application Metal/OpenGL/Vulkan context.
+To explicitly select it, run:
+
+```sh
+SLINT_BACKEND=winit-skia-software /Applications/Heya.app/Contents/MacOS/heya
+```
+
+An offscreen test renders the actual app through Skia's CPU surface at three
+sizes, without creating a native window or graphics device. This verifies CPU
+rasterization and resizing; the automatic fallback order and macOS bitmap
+presentation are checked against the pinned Slint/softbuffer sources. It does
+not simulate a physical driver failure or prove recovery from a GPU failure
+after startup. Linux's existing renderer features are unchanged.
 
 The small Objective-C bridge is `src/platform/macos.m`; Rust owns cancellation
 and result delivery in `src/macos.rs`. No Objective-C object or raw window pointer

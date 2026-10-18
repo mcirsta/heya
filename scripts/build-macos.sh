@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build a standalone, ad hoc signed macOS bundle and optional testing ZIP.
+# Build a standalone, ad hoc signed macOS bundle and optional testing DMG.
 set -eu
 cd "$(dirname "$0")/.."
 if [ "$(uname -s)" != Darwin ]; then
@@ -35,7 +35,8 @@ fi
 heya_version=$(cargo metadata --locked --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "heya"))')
 heya_build=${HEYA_BUILD_NUMBER:-$(git rev-list --count HEAD)}
 mkdir -p "$heya_bundle/Contents/MacOS" "$heya_bundle/Contents/Resources"
-cp "$heya_binary" "$heya_bundle/Contents/MacOS/heya"
+cp "$heya_binary" "$heya_bundle/Contents/MacOS/heya.new"
+mv "$heya_bundle/Contents/MacOS/heya.new" "$heya_bundle/Contents/MacOS/heya"
 cp -R third_party/licenses "$heya_bundle/Contents/Resources/"
 python3 - "$heya_bundle" "$heya_version" "$heya_build" "$MACOSX_DEPLOYMENT_TARGET" <<'PY'
 import pathlib,plistlib,re,sys
@@ -68,9 +69,15 @@ for line in subprocess.check_output(['otool','-L',binary],text=True).splitlines(
 PY
 echo "Built $heya_bundle ($heya_arch, macOS $MACOSX_DEPLOYMENT_TARGET+)"
 if [ "$heya_package" = true ]; then
-    heya_name="Heya-$heya_version-macos-$heya_arch.zip"
+    heya_name="Heya-$heya_version-macos-$heya_arch.dmg"
     mkdir -p target/dist
-    ditto -c -k --sequesterRsrc --keepParent "$heya_bundle" "target/dist/$heya_name"
+    heya_stage=$(mktemp -d target/dist/.heya-dmg.XXXXXX)
+    trap 'rm -rf -- "$heya_stage"' EXIT HUP INT TERM
+    ditto "$heya_bundle" "$heya_stage/Heya.app"
+    ln -s /Applications "$heya_stage/Applications"
+    hdiutil create -volname "Heya $heya_version" -srcfolder "$heya_stage" \
+        -format UDZO -ov "target/dist/$heya_name"
+    hdiutil verify "target/dist/$heya_name"
     (cd target/dist && shasum -a 256 "$heya_name" > "$heya_name.sha256")
     echo "Packaged target/dist/$heya_name"
 fi

@@ -33,6 +33,13 @@ async fn protocol_store_uses_encrypted_connections_and_rejects_wrong_keys() {
         .query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get(0))
         .unwrap();
     assert!(tables > 0);
+    let provider: String = reader
+        .query_row("PRAGMA cipher_provider", [], |r| r.get(0))
+        .unwrap();
+    #[cfg(target_os = "macos")]
+    assert_eq!(provider, "commoncrypto");
+    #[cfg(target_os = "linux")]
+    assert_eq!(provider, "openssl");
     reader.execute_batch("CREATE VIRTUAL TABLE temp.search_probe USING fts5(text); INSERT INTO search_probe VALUES ('Hello Heya');").unwrap();
     let hits: i64 = reader
         .query_row(

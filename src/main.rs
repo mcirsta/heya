@@ -74,6 +74,8 @@ mod protocol_reads;
 mod protocol_sync;
 mod protocol_uploads;
 mod service;
+#[cfg(all(test, target_os = "macos"))]
+mod skia_cpu_tests;
 mod storage;
 mod voice;
 mod voice_recorder;
@@ -176,6 +178,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
     let demo = options.demo;
     let (preferences, wallpaper) = runtime.block_on(runtime.spawn_blocking(move || {
+        #[cfg(target_os = "macos")]
+        macos::prepare_emoji_support();
         (
             presentation_preferences::prepare(demo),
             presentation::wallpaper_pixels(),

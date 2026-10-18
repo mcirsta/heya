@@ -1,6 +1,6 @@
 [package]
 name = "heya"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 edition = "2024"
 rust-version = "1.99"
 publish = false
@@ -13,13 +13,13 @@ media-gstreamer = ["dep:gstreamer", "dep:gstreamer-app"]
 [dependencies]
 emojis = "0.9"
 unicode-segmentation = "=1.13.3"
-slint = { version = "=1.18.1", default-features = false, features = ["std", "backend-winit", "renderer-software", "accessibility", "compat-1-18", "unstable-winit-030"] }
+slint = { version = "=1.18.1", default-features = false, features = ["std", "backend-winit", "accessibility", "compat-1-18", "unstable-winit-030"] }
 # Isolated in presentation_scroll: retain the wheel gesture phase, which the
 # public PointerScrolled event cannot carry in this exact Slint release.
 i-slint-core = { version = "=1.18.1", default-features = false }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "process", "io-util"] }
 whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "0dc38af07632f48f0cf6c66df285f1643fc22b95", default-features = false, features = ["sqlite-storage", "tokio-transport", "tokio-runtime", "ureq-client", "tokio-native"] }
-rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl"] }
+rusqlite = "0.40"
 png = "0.18"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 ureq = { version = "3", default-features = false, features = ["rustls"] }
@@ -48,10 +48,12 @@ gstreamer = { version = "0.25", optional = true }
 gstreamer-app = { version = "0.25", optional = true }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
+rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl"] }
 # Preserve the existing Linux renderer selection.
-slint = { version = "=1.18.1", default-features = false, features = ["renderer-skia-vulkan", "renderer-skia-opengl"] }
+slint = { version = "=1.18.1", default-features = false, features = ["renderer-software", "renderer-skia-vulkan", "renderer-skia-opengl"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+rusqlite = { version = "0.40", features = ["bundled-sqlcipher"] }
 keyring = { version = "3.6", features = ["apple-native"] }
 ogg = "0.9"
 # Skia's platform renderer uses Metal on macOS.
@@ -69,6 +71,9 @@ slint-build = "=1.18.1"
 [dev-dependencies]
 flate2 = "1"
 i-slint-backend-testing = "=1.18.1"
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+i-slint-renderer-skia = "=1.18.1"
 
 [profile.dev]
 debug = 1

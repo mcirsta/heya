@@ -74,9 +74,18 @@ jobs:
           HEYA_BUILD_NUMBER: ${{ github.run_number }}
         run: scripts/build-macos.sh --target aarch64-apple-darwin --package
       - name: Check packaged helpers without an account or microphone
+        env:
+          VERSION: ${{ steps.metadata.outputs.version }}
         run: |
-          target/macos-arm64/Heya.app/Contents/MacOS/heya --help
-          python3 scripts/check-macos-bundle.py target/macos-arm64/Heya.app
+          heya_mount="$RUNNER_TEMP/heya-dmg"
+          mkdir -p "$heya_mount"
+          hdiutil attach "target/dist/Heya-$VERSION-macos-arm64.dmg" \
+            -readonly -nobrowse -mountpoint "$heya_mount"
+          trap 'hdiutil detach "$heya_mount"' EXIT
+          test "$(readlink "$heya_mount/Applications")" = /Applications
+          codesign --verify --deep --strict "$heya_mount/Heya.app"
+          "$heya_mount/Heya.app/Contents/MacOS/heya" --help
+          python3 scripts/check-macos-bundle.py "$heya_mount/Heya.app"
       - name: Include testing notes
         env:
           VERSION: ${{ steps.metadata.outputs.version }}
@@ -84,7 +93,10 @@ jobs:
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: macos-arm64-testing
-          path: target/dist/
+          path: |
+            target/dist/Heya-${{ steps.metadata.outputs.version }}-macos-arm64.dmg
+            target/dist/Heya-${{ steps.metadata.outputs.version }}-macos-arm64.dmg.sha256
+            target/dist/RELEASE_NOTES.md
           if-no-files-found: error
           retention-days: 14
       - name: Save build progress
@@ -123,7 +135,7 @@ jobs:
             *) echo "Only alpha testing versions are published by this workflow."; exit 0 ;;
           esac
           cd dist
-          shasum -a 256 -c "Heya-$VERSION-macos-arm64.zip.sha256"
+          shasum -a 256 -c "Heya-$VERSION-macos-arm64.dmg.sha256"
           current_main=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
           if [ "$current_main" != "$SOURCE_SHA" ]; then
             echo "Main advanced during this build; wait for the newer commit's checks."
@@ -134,8 +146,8 @@ jobs:
             exit 0
           fi
           gh release create "v$VERSION" \
-            "Heya-$VERSION-macos-arm64.zip" \
-            "Heya-$VERSION-macos-arm64.zip.sha256" \
+            "Heya-$VERSION-macos-arm64.dmg" \
+            "Heya-$VERSION-macos-arm64.dmg.sha256" \
             --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" \
             --title "Heya $VERSION — Apple Silicon testing" \
             --notes-file RELEASE_NOTES.md --prerelease

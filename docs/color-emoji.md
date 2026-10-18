@@ -5,6 +5,13 @@ badges, previews and the composer. No emoji image overlay, extra control, timer,
 or worker is created. Original UTF-8 text remains in the selectable TextInput.
 The existing virtual timeline caches presentation rows and exact bubble geometry.
 
+The macOS picker checks installed Apple Color Emoji support with CoreText once
+on the startup background worker. It omits entries that fall back to LastResort
+or split into multiple emoji cells, including Emoji 17 entries unavailable on
+macOS 15. Joined glyphs that overlap within one cell, skin tones, flags and
+keycaps remain supported. This only filters picker choices; received/stored
+text is never removed or rewritten. Linux's picker is unchanged.
+
 The pinned ZapFast `src/markup.rs::layout` enlarges messages containing one to
 three emoji to 2.4 times the body size. Heya applies the same display rule using
 Unicode grapheme boundaries and the existing `emojis` database; mixed text and

@@ -5,7 +5,7 @@
 
 use crate::downloads::{Control, Error};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     ffi::{CStr, CString, c_char, c_void},
     os::unix::ffi::{OsStrExt, OsStringExt},
     path::{Path, PathBuf},
@@ -20,8 +20,10 @@ type Reply = Result<Vec<PathBuf>, Error>;
 type Requests = Mutex<HashMap<u64, oneshot::Sender<Reply>>>;
 static REQUESTS: OnceLock<Requests> = OnceLock::new();
 static NEXT: AtomicU64 = AtomicU64::new(1);
+static EMOJI_SUPPORT: OnceLock<HashSet<&'static str>> = OnceLock::new();
 
 unsafe extern "C" {
+    fn heya_emoji_support(catalogue: *const c_char, supported: *mut u8, count: usize);
     fn heya_panel_begin(
         id: u64,
         kind: u32,
@@ -40,6 +42,47 @@ unsafe extern "C" {
         size: *mut usize,
     ) -> i32;
     fn heya_native_free(bytes: *mut c_void);
+}
+
+pub fn prepare_emoji_support() {
+    EMOJI_SUPPORT.get_or_init(|| {
+        let mut values = Vec::new();
+        for emoji in emojis::iter() {
+            if let Some(tones) = emoji.skin_tones() {
+                values.extend(tones.map(|e| e.as_str()));
+            } else {
+                values.push(emoji.as_str());
+            }
+        }
+        let catalogue = CString::new(values.join("\n")).expect("Emoji contain no NUL bytes");
+        let mut supported = vec![0; values.len()];
+        // Both buffers are owned here and live throughout the synchronous call.
+        unsafe { heya_emoji_support(catalogue.as_ptr(), supported.as_mut_ptr(), values.len()) };
+        values
+            .into_iter()
+            .zip(supported)
+            .filter_map(|(emoji, available)| (available != 0).then_some(emoji))
+            .collect()
+    });
+}
+
+pub fn supports_emoji(emoji: &str) -> bool {
+    prepare_emoji_support();
+    EMOJI_SUPPORT.get().unwrap().contains(emoji)
+}
+
+#[cfg(test)]
+mod emoji_tests {
+    #[test]
+    fn native_picker_coverage_retains_joined_flags_keycaps_and_skin_tones() {
+        for emoji in ["😀", "👩🏽‍💻", "🫱🏻‍🫲🏼", "🇷🇴", "1️⃣", "🙂‍↔️", "👨‍👩‍👧‍👦"]
+        {
+            assert!(
+                super::supports_emoji(emoji),
+                "Missing native emoji: {emoji}"
+            );
+        }
+    }
 }
 
 extern "C" fn panel_reply(id: u64, paths: *const *const c_char, count: usize) {

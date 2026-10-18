@@ -12,7 +12,7 @@ Use whatsapp-rust unchanged through its public API wherever possible.
 
 **Status: first live text-messaging and encrypted-archive implementation.**
 Linux is the reference implementation, and the native macOS port is now active.
-Windows remains a roadmap target. Heya implements QR
+Windows is the next planned target. Heya implements QR
 pairing, encrypted session resume, incoming direct/group text, history import,
 saved drafts, paged conversations, outgoing file/photo attachments, voice recording/sending and a durable outbox. Automated tests
 are offline. The owner has reached the connected chat list, and reopening the
@@ -28,8 +28,8 @@ remaining differences. Earlier prototype screenshots are not the current UI.
 ## Run Heya
 
 For Apple Silicon Macs running macOS 15 or newer, download the
-[testing release](https://github.com/mcirsta/heya/releases/tag/v0.1.0-alpha.1).
-See [testing and first-launch instructions](docs/releases/v0.1.0-alpha.1.md).
+[testing release](https://github.com/mcirsta/heya/releases/tag/v0.1.0-alpha.2).
+See [testing and first-launch instructions](docs/releases/v0.1.0-alpha.2.md).
 
 On macOS, see [the native macOS build guide](docs/macos.md). The macOS build
 uses Metal, AppKit file dialogs, Keychain and Quartz PDF previews. Native audio

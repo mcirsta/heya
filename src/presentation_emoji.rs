@@ -17,6 +17,16 @@ const GROUPS: [(emojis::Group, &str, &str); 9] = [
     (emojis::Group::Symbols, "🔣", "Symbols"),
     (emojis::Group::Flags, "🏁", "Flags"),
 ];
+
+fn available(emoji: &emojis::Emoji) -> bool {
+    #[cfg(target_os = "macos")]
+    return crate::macos::supports_emoji(emoji.as_str());
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = emoji;
+        true
+    }
+}
 #[derive(Default)]
 struct Picker {
     recent: Vec<String>,
@@ -82,6 +92,7 @@ impl Picker {
         };
         if !query.is_empty() {
             let found = emojis::iter()
+                .filter(|e| available(e))
                 .filter(|e| {
                     e.as_str() == query
                         || e.name().contains(&query)
@@ -102,6 +113,7 @@ impl Picker {
                 .opened
                 .iter()
                 .filter_map(|s| emojis::get(s))
+                .filter(|e| available(e))
                 .collect::<Vec<_>>();
             if !recent.is_empty() {
                 section(
@@ -115,7 +127,11 @@ impl Picker {
                 );
             }
             for (i, (group, _, label)) in GROUPS.iter().enumerate() {
-                section(label, i as i32 + 1, group.emojis().collect());
+                section(
+                    label,
+                    i as i32 + 1,
+                    group.emojis().filter(|e| available(e)).collect(),
+                );
             }
         }
         let mut categories = Vec::new();
