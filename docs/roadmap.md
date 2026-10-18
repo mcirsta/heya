@@ -44,6 +44,12 @@ coalesced UI application and render completion with a disposable synthetic
 publication and end-to-end application latencies, including actual history
 paging and incoming/unrelated bursts. This closes the prebuilt-snapshot coverage
 gap; it does not establish network, input-device, GPU or compositor latency.
+The archive retains one immutable loaded timeline and transcript, invalidated
+by relevant database writes. Unrelated message updates and composer drafts reuse
+that projection while sidebar, reply and permission state refresh independently.
+Strict appends decode only new rows and reuse unchanged transcript text; edits,
+deletions, out-of-order history and shared metadata changes rebuild the projection.
+The benchmark reports full/append projection, formatting and cache reuse explicitly.
 
 Record renderer/backend versions and identify any required Slint fixes. If a
 check exposes a missing primitive, implement a narrowly scoped adapter or a

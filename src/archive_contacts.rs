@@ -80,7 +80,8 @@ pub(super) fn profile(tx: &Transaction<'_>, jid: &str, name: &str) -> Result<()>
         let jid = canonical(tx, jid)?;
         tx.execute(
             "INSERT INTO contacts(jid,profile_name) VALUES(?1,?2)
-            ON CONFLICT(jid) DO UPDATE SET profile_name=excluded.profile_name",
+            ON CONFLICT(jid) DO UPDATE SET profile_name=excluded.profile_name
+            WHERE contacts.profile_name<>excluded.profile_name",
             params![jid, name],
         )?;
     }

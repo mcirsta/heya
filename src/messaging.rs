@@ -287,7 +287,7 @@ pub async fn run_with_history(
                 )
                 .await
             {
-                Ok(mut view) => {
+                Ok(view) => {
                     if let Some(conversation) = &view.conversation {
                         selected = conversation.chat.id;
                         history_boundary =
@@ -300,21 +300,6 @@ pub async fn run_with_history(
                             request,
                             success: true,
                         });
-                    }
-                    // Compare on the worker and retain immutable payloads when
-                    // a receipt or unrelated chat changed. The UI can skip them
-                    // by identity without copying or scanning message bodies.
-                    if let Some(previous) = &updates.borrow().view
-                        && let (Some(old), Some(new)) =
-                            (&previous.conversation, &mut view.conversation)
-                        && old.chat.id == new.chat.id
-                    {
-                        if old.messages == new.messages {
-                            new.messages = old.messages.clone();
-                        }
-                        if old.transcript == new.transcript {
-                            new.transcript = old.transcript.clone();
-                        }
                     }
                     let phone = crate::phone_history::Status {
                         available: selected > 0

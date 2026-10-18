@@ -548,6 +548,8 @@ It creates a disposable SQLCipher archive with 500 chats and a 10,000-message
 conversation, then uses the real messaging worker and coalesced Slint handoff.
 It measures archive queue/lock wait, database jobs, query/projection, snapshot
 publication, UI application, ingest-to-next-render and navigation-to-next-render.
+It also reports full/append timeline projection, transcript formatting and cached
+timeline reuse separately, so skipping UI work cannot hide archive rebuilding.
 Phases cover single arrivals, unrelated chats, twenty-message bursts, actual
 paging to 10,000 loaded rows, wheel scrolling and navigation. Issued, applied and
 rendered counts expose batching/coalescing; latency samples describe observed

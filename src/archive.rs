@@ -42,6 +42,8 @@ mod history;
 mod photos;
 #[path = "archive_repair.rs"]
 mod repair;
+#[path = "archive_timeline.rs"]
+mod timeline;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
@@ -130,6 +132,7 @@ pub struct View {
 
 struct Inner {
     connection: Mutex<Connection>,
+    timeline: Mutex<timeline::Cache>,
     probe: std::sync::OnceLock<Arc<crate::performance::Probe>>,
     changed: watch::Sender<u64>,
     avatars_changed: watch::Sender<u64>,
@@ -252,9 +255,11 @@ impl Archive {
             "UPDATE messages SET delivery='uncertain' WHERE delivery='sending'",
             [],
         )?;
+        timeline::install(&db)?;
         let (changed, _) = watch::channel(0);
         Ok(Self(Arc::new(Inner {
             connection: Mutex::new(db),
+            timeline: Default::default(),
             probe: Default::default(),
             changed,
             avatars_changed: watch::channel(0).0,
@@ -556,6 +561,7 @@ impl Archive {
         mark_read: bool,
     ) -> Result<View> {
         let probe = self.measurements();
+        let archive = self.clone();
         self.call(move |db| {
             let started=probe.as_ref().map(|_|std::time::Instant::now());
             expire(db)?;
@@ -610,27 +616,15 @@ impl Archive {
             let conversation = if let Some(summary) = summary {
                 let (group,draft,read_only): (bool,String,bool) = db.query_row("SELECT is_group,draft,read_only FROM chats WHERE id=?1", [selected], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
                 can_send = !read_only;
-                let total = db.query_row("SELECT count(*) FROM messages WHERE chat_id=?1 AND visible=1", [selected], |r| r.get::<_,i64>(0))? as usize;
-                let mut projections=actions::Projection::load(db,selected,limit)?;
-                let mut stmt = db.prepare("SELECT m.id,coalesce(nullif(n.saved_name,''),nullif(n.profile_name,''),m.sender_name),m.sender,m.body,m.stamp,m.outgoing,m.delivery,m.content,m.wire_id,m.deleted,length(m.raw) FROM (SELECT * FROM messages WHERE chat_id=?1 AND visible=1 ORDER BY stamp DESC,id DESC LIMIT ?2) m LEFT JOIN contacts n ON n.jid=m.sender ORDER BY m.stamp,m.id")?;
-                let messages = stmt.query_map(params![selected,limit as i64], |r| {
-                    let outgoing: bool = r.get(5)?;
-                    let name: String = r.get(1)?;
-                    let sender: String = r.get(2)?;
-                    let status: String = r.get(6)?;
-                    let when = crate::message_time::local(r.get(4)?);
-                    let mut content=serde_json::from_str::<crate::message_content::Content>(&r.get::<_,String>(7)?).unwrap_or_default();
-                    content.metadata=crate::message_actions::Metadata{wire:r.get(8)?,stamp:r.get(4)?,delivery:status.clone(),..Default::default()};
-                    content.unavailable=r.get::<_,bool>(9)? || (r.get::<_,i64>(10)?==0 && (!outgoing || !matches!(status.as_str(),"accepted"|"delivered"|"read")));
-                    if !r.get::<_,bool>(9)? {projections.apply(db,&r.get::<_,String>(8)?,&mut content).map_err(|_|rusqlite::Error::InvalidQuery)?;}
-                    let mut stamp = when.map(|t| t.format("%H:%M").to_string()).unwrap_or_default();
-                    if outgoing && !status.is_empty() { stamp.push_str(" · "); stamp.push_str(delivery_label(&status,group)); }
-                    if !content.metadata.pending.is_empty() {stamp.push_str(" · ");stamp.push_str(&content.metadata.pending);}
-                    Ok(domain::Message {id:r.get(0)?,sender:if outgoing {"You".into()} else if name.is_empty() {sender.split('@').next().unwrap_or(&sender).into()} else {name},sender_id:sender,text:r.get(3)?,time:stamp,date:when.map(|t| t.date_naive()),outgoing,local:false,content:Arc::new(content)})
-                })?.collect::<std::result::Result<Vec<_>,_>>()?;
-                let transcript = messages.iter().map(domain::Message::transcript_line).collect::<Vec<_>>().join("\n\n");
-                Some(domain::Conversation {chat:summary,is_group:group,messages:messages.into(),draft,reply:actions::draft(db,selected)?,older_count:total.saturating_sub(limit),transcript:transcript.into()})
-            } else { None };
+                // The cache contains only the loaded timeline. Sidebar, draft,
+                // reply, permissions and history state remain fresh on every view.
+                let rows = archive.0.timeline.lock().map_err(|_|Error::Database)?
+                    .load(db,selected,limit,group,probe.as_deref())?;
+                Some(domain::Conversation {chat:summary,is_group:group,messages:rows.messages,draft,reply:actions::draft(db,selected)?,older_count:rows.total.saturating_sub(limit),transcript:rows.transcript})
+            } else {
+                archive.0.timeline.lock().map_err(|_|Error::Database)?.clear(db)?;
+                None
+            };
             let history_failed = db.query_row("SELECT EXISTS(SELECT 1 FROM history_chunks WHERE state='failed')", [], |r| r.get(0))?;
             let result=View {chats,conversation,can_send,history_failed,phone_more:history::more(db,selected)?};
             if let (Some(probe),Some(started))=(probe,started) {probe.record(crate::performance::Metric::ViewBuild,started.elapsed());}

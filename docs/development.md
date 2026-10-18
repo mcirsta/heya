@@ -8,6 +8,103 @@ synthetic chats. See the
 [README](../README.md) for controls and the [roadmap](roadmap.md) for the remaining
 M0 integration checks.
 
+## Archive-to-UI optimization — 19 October 2026
+
+Measured two baseline runs at `1dacd34` and two final runs of the changed build,
+using the existing production-path synthetic benchmark: disposable SQLCipher
+archive, 500 chats, 10,000 loaded messages, real messaging worker, coalesced UI
+handoff and Slint render-completion callback. No compiler or test job ran during
+measurements. The machine used a Xeon E5-2697A v4, CachyOS Linux 7.2.9, Rust
+1.99.0, Slint 1.18.1 and Skia bindings 0.153.3. All native UI measurements used
+private Xvfb/Mesa software OpenGL via `scripts/ui-offscreen.sh`, without touching
+the working desktop or opening an account.
+
+Build and measure with:
+
+```sh
+cargo test --release --locked --config 'profile.release.build-override.debug-assertions=true'
+HEYA_BENCHMARK_ARCHIVE=1 HEYA_TEST_RENDERER=winit-skia-opengl scripts/ui-offscreen.sh --ui-benchmark
+```
+
+The build override emits Slint element metadata needed by synthetic layout
+checks; it does not enable application runtime debug assertions. Both baseline
+and final executables used this optimized configuration.
+
+| Measurement, milliseconds unless noted | Baseline runs 1 / 2 | Final runs 1 / 2 |
+| --- | ---: | ---: |
+| Incoming burst, 10,000 loaded: view/projection p95 | 87.50 / 103.59 | 17.94 / 18.61 |
+| Incoming burst: ingest start → render completion p95 | 175.07 / 197.36 | 68.07 / 70.15 |
+| Incoming burst: ingest start → render completion maximum | 184.02 / 202.29 | 70.69 / 74.07 |
+| Incoming burst: UI application p95 | 18.59 / 22.61 | 9.46 / 10.34 |
+| Unrelated burst, 10,000 loaded: view/projection p95 | 85.49 / 82.63 | 7.46 / 7.65 |
+| Unrelated burst: ingest start → render completion p95 | 155.80 / 155.76 | 50.12 / 50.18 |
+| Unrelated burst: ingest start → render completion maximum | 166.63 / 164.04 | 50.90 / 50.99 |
+| Navigation: command enqueue → render completion p95 | 54.60 / 50.91 | 53.96 / 53.71 |
+| Scrolling render CPU p95 | 10.88 / 10.74 | 10.75 / 10.85 |
+| 99 actual paging commands, total seconds | 4.71 / 5.15 | 4.58 / 4.86 |
+
+Bursts contain twenty messages per ingest. Incoming phases issued 720 / 620
+messages and applied/rendered 36 / 31 coalesced generations before, versus
+920 / 920 messages and 46 / 46 generations after. Unrelated phases issued
+720 / 700 messages with 36 / 35 generations before, versus 940 / 940 with
+47 / 47 after. Latencies describe observed snapshot generations, not individual
+messages; the producer waits 50 ms after each ingest, so reduced worker/lock
+cost also allows more ingests within its fixed three-second phase.
+
+The archive now retains one immutable projection of the loaded conversation.
+A single in-memory SQLite TEMP marker tracks whether relevant writes invalidate
+it or strictly later visible inserts can extend it. Transaction rollback restores
+that marker automatically. Shared names, aliases, identity and control changes
+invalidate conservatively; external commits are detected on the next view using
+`PRAGMA data_version`. Drafts, sidebar summaries, replies, permissions and history
+state are refreshed independently. The cache also retains equal payloads after a
+conservative invalidation; publication no longer performs a second value-comparison
+step that could leave the cache and UI with different payload identities.
+Repeated unchanged push names skip the contact write instead of invalidating the
+projection on every live envelope.
+
+Strict appends query/decode only the new rows and clone retained domain messages,
+reusing their decoded content. Transcript construction copies the retained text
+and formats only new/dropped boundary messages, preserving Unicode and embedded
+blank lines. A reference to an existing reaction/control event, an edit, deletion,
+delivery change, out-of-order insert, page-size change or changed context uses the
+full projection.
+No general diff engine, per-message revision map, dependency, persistent schema
+migration, extra worker or polling loop was added. Deselecting releases the cache.
+The full query reads the visible timeline index backwards and reverses its row
+vector instead of materializing `SELECT *` and sorting again.
+
+Incoming phases recorded 46 / 46 append projections. Unrelated phases recorded
+47 / 47 cache reuses and zero timeline/transcript rebuilds. Append projection p95
+was 7.18 / 7.45 ms; transcript formatting/copying p95 was
+1.21 / 1.16 ms, and unchanged timeline lookup p95 was 0.05 ms in both runs.
+An intermediate cache-only run still spent 83.30 ms p95 projecting incoming
+updates, including 7.68 ms formatting their transcripts; this justified the
+narrow append path rather than stopping at publication-time pointer reuse.
+
+This remains an array/string representation: appends still copy retained message
+strings and transcript bytes, so they are not constant-time. Paging and navigation
+show no established improvement. Cold offscreen startup still included a roughly
+1.7-second first render; the first incoming phase retained cold maxima of
+308 / 370 ms (baseline 306 / 319 ms). These are not claimed fixed. The measurements
+exclude compositor presentation, hardware GPU completion, actual input-device
+latency and phone/network behavior; two runs are a local comparison, not a
+statistical guarantee or a ZapFast comparison.
+
+The optimized suite passed 210 application tests plus the encrypted-storage
+integration test, with three intentional opt-in/helper skips. Nine new tests
+cover reuse with fresh sidebar/drafts/replies/read flags, text/attachment/delivery
+changes, names/quotes/reactions, paging/expiry, rollback/external commits, cache
+release, index plans without temporary sorts, rolling append windows compared
+with fresh projections, ambiguous wire keys and pending-control dependencies.
+Historical-schema upgrade tests still pass; temporary cache state adds nothing
+to saved archives. Native PDF/portal tests ran outside Codex's sandbox using
+synthetic inputs and private test services, with no visible desktop checks.
+Strict release all-target Clippy passed with and without GStreamer support; only
+the existing vendored Parley deprecation warning remains. Formatting and diff
+whitespace checks passed. The installed Linux executable was replaced atomically
+for the next normal launch, and generated build/benchmark outputs were removed.
+
 ## Linux validation after the macOS port and master-key change — 18 October 2026
 
 Fast-forwarded the Linux checkout from `8f26304` to `07b2d78` (11 commits),

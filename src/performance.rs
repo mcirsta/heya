@@ -19,8 +19,12 @@ pub enum Metric {
     IngestToRender,
     CommandToRender,
     Ingest,
+    TimelineBuild,
+    TranscriptBuild,
+    TimelineReuse,
+    TimelineAppend,
 }
-const LABELS: [&str; 9] = [
+const LABELS: [&str; 13] = [
     "archive queue/lock",
     "archive job",
     "SQLCipher view/projection",
@@ -30,6 +34,10 @@ const LABELS: [&str; 9] = [
     "ingest start to render complete",
     "command enqueue to render complete",
     "ingest commit",
+    "timeline projection build",
+    "transcript formatting",
+    "timeline cache reuse",
+    "timeline append projection",
 ];
 pub struct Probe {
     phase: AtomicUsize,
