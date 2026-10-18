@@ -35,3 +35,27 @@ The template desktop entry in `packaging/linux` uses `Exec=heya` for future
 packaging. The user installer writes an absolute executable path so it does not
 depend on the desktop session's PATH. This is development desktop integration,
 not a complete distributable package or a completed M4 milestone.
+
+## macOS bundle icon
+
+Finder and the Dock use the bundle icon rather than Slint's window-icon property.
+The macOS packager now converts `packaging/macos/Heya.iconset` into
+`Contents/Resources/Heya.icns` with Apple's `iconutil`, and declares
+`CFBundleIconFile = Heya.icns` in `Info.plist` before signing the app. The previous
+packager omitted both, producing the generic application icon.
+
+The ten standard/Retina PNGs cover 16 through 1024 physical pixels, each rendered
+directly from the canonical SVG. They preserve the logo's transparency and
+padding. The PNGs are checked in; ordinary Mac builds require no additional image
+tools. After changing the SVG, regenerate them using the existing Linux tool:
+
+```sh
+python3 scripts/macos-icons.py --generate
+```
+
+`python3 scripts/macos-icons.py` checks source and PNG hashes, completeness and
+dimensions. macOS builds run this check before packaging, and the mounted-DMG
+check uses `iconutil` to decode the shipped icon and verify every representation.
+Launch the `.app` bundle for Finder/Dock integration. The corrected resources
+still need visual verification on macOS; Linux asset checks cannot establish the
+Dock's cached appearance.

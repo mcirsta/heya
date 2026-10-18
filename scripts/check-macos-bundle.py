@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Synthetic media check of a packaged app; never opens an account or microphone."""
+"""Check the packaged icon and synthetic media; never opens an account or microphone."""
 import argparse
 import json
 import pathlib
+import plistlib
 import signal
 import struct
 import subprocess
+import tempfile
 import threading
 import time
 
@@ -15,6 +17,23 @@ parser.add_argument('--native-output', action='store_true',
                     help='Exercise output hardware at zero app volume instead of a silent clock')
 args = parser.parse_args()
 binary = args.bundle.resolve() / 'Contents/MacOS/heya'
+# Verify the delivered resource, not just the build source. Apple's decoder must
+# recognize every standard/Retina representation before this bundle is released.
+contents = args.bundle.resolve() / 'Contents'
+info = plistlib.loads((contents / 'Info.plist').read_bytes())
+assert info.get('CFBundleIconFile') == 'Heya.icns', 'Missing bundle icon declaration'
+icon = contents / 'Resources/Heya.icns'
+assert icon.is_file() and icon.stat().st_size > 8, 'Missing bundle icon resource'
+with tempfile.TemporaryDirectory(prefix='heya-icon-check-') as temporary:
+    iconset = pathlib.Path(temporary) / 'Heya.iconset'
+    subprocess.run(['iconutil', '-c', 'iconset', '-o', str(iconset), str(icon)],
+                   check=True, capture_output=True, timeout=15)
+    for points in (16, 32, 128, 256, 512):
+        for suffix, scale in (('', 1), ('@2x', 2)):
+            png = (iconset / f'icon_{points}x{points}{suffix}.png').read_bytes()
+            assert png[:8] == b'\x89PNG\r\n\x1a\n'
+            assert struct.unpack('>II', png[16:24]) == (points * scale, points * scale)
+print('Packaged macOS icon declaration and all ten native-decoded representations passed.')
 settings = json.dumps({'input': {'id': '', 'name': ''}, 'output': {'id': '', 'name': ''},
                        'input_volume': 100, 'output_volume': 0}).encode()
 magic = b'HEYA-VOICE/1\n'

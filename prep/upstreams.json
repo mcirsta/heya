@@ -55,11 +55,11 @@
       "patches": [
         {
           "path": "patches/parley-color-emoji.patch",
-          "sha256": "9e542df01c01a220b508185f98d90cbf042b48c423c705bef86af5202daa30de",
+          "sha256": "e9c1c2c123ae657252b2882664e7264624e667e03c611430f398f9dc5fe5143e",
           "crate": "parley",
           "vendored_path": "vendor/parley",
           "status": "local, not submitted",
-          "reason": "Prefer platform emoji family for emoji clusters while retaining text presentation and ordinary keycap bases"
+          "reason": "Prefer platform emoji family for emoji clusters while retaining text presentation and ordinary keycap bases; scope Apple's UI emoji face and baseline correction to macOS"
         }
       ]
     }

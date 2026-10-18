@@ -15,6 +15,7 @@ while [ "$#" -gt 0 ]; do
         *) echo "Usage: $0 [--target aarch64-apple-darwin|x86_64-apple-darwin] [--package]" >&2; exit 2 ;;
     esac
 done
+python3 scripts/macos-icons.py
 export MACOSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET:-15.0}
 if [ -n "$heya_target" ]; then
     case "$heya_target" in
@@ -38,6 +39,7 @@ mkdir -p "$heya_bundle/Contents/MacOS" "$heya_bundle/Contents/Resources"
 cp "$heya_binary" "$heya_bundle/Contents/MacOS/heya.new"
 mv "$heya_bundle/Contents/MacOS/heya.new" "$heya_bundle/Contents/MacOS/heya"
 cp -R third_party/licenses "$heya_bundle/Contents/Resources/"
+iconutil -c icns -o "$heya_bundle/Contents/Resources/Heya.icns" packaging/macos/Heya.iconset
 python3 - "$heya_bundle" "$heya_version" "$heya_build" "$MACOSX_DEPLOYMENT_TARGET" <<'PY'
 import pathlib,plistlib,re,sys
 bundle,version,build,minimum=sys.argv[1:]
@@ -47,6 +49,7 @@ assert re.fullmatch(r'\d+\.\d+(?:\.\d+)?',minimum)
 info={
  'CFBundleIdentifier':'org.heya.Heya','CFBundleName':'Heya','CFBundleDisplayName':'Heya',
  'CFBundleExecutable':'heya','CFBundlePackageType':'APPL',
+ 'CFBundleIconFile':'Heya.icns',
  'CFBundleShortVersionString':version.split('-')[0],'CFBundleVersion':build,
  'CFBundleGetInfoString':'Heya '+version,
  'NSHighResolutionCapable':True,'NSPrincipalClass':'NSApplication',

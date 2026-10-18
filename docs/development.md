@@ -8,6 +8,59 @@ synthetic chats. See the
 [README](../README.md) for controls and the [roadmap](roadmap.md) for the remaining
 M0 integration checks.
 
+## Linux validation after the macOS port and master-key change — 18 October 2026
+
+Fast-forwarded the Linux checkout from `8f26304` to `07b2d78` (11 commits),
+version `0.1.0-alpha.1`. Validation used the installed Arch Linux Rust/Cargo
+1.99.0 toolchain without installing packages or changing toolchains. Linux
+retains GStreamer, Secret Service, desktop portals, sandboxed Poppler previews
+and the Skia Vulkan/OpenGL feature selection. Apple framework adapters and
+emoji positioning remain scoped to macOS.
+
+Formatting, strict all-target Clippy and tests passed with both feature
+configurations: 193 application tests with default media support and 176
+without it, plus the encrypted-storage integration test in each configuration.
+The ordinary suites each left two opt-in/helper entries ignored. The native
+Secret Service test was then run explicitly with a disposable credential and
+temporary encrypted database; fresh-handle reopen and cleanup passed. The
+synthetic master-key test independently verifies one vault read on reopen,
+distinct durable session/archive keys, and rejection of the other database's
+key. These tests do not establish a new live-account pairing or microphone
+compatibility. Only the existing upstream Parley deprecation warning remains.
+
+The optimized build passed and resolves its native GStreamer libraries. All
+native automated UI work used `scripts/ui-offscreen.sh` on private Xvfb displays,
+with no compiler running during measurements. Startup/demo close cases exited
+in 40–75 ms without idle media threads. Mouse-wheel input, light color emoji,
+dark narrow photo layouts and sharp synthetic PDF cards passed smoke/visual
+checks. A paired 10,000-photo workload measured scroll render CPU p95 of
+10.15 ms before and 10.24 ms after, with 187 frames and zero remeasured rows in
+each scrolling phase. Layout p95 was 0.14 ms in both. This small comparison
+shows similar behavior; it is not a statistical equivalence or hardware-GPU
+claim.
+
+The application-path archive benchmark completed all eight phases and 99 real
+page commands. At 10,000 loaded messages, incoming bursts measured 170.85 ms
+p95 from ingest start to render completion (680 messages issued, 34 coalesced
+generations applied/rendered); navigation measured 49.79 ms p95 from enqueue
+to render completion. The private Mesa/OpenGL display does not measure physical
+input, phone/network latency, GPU completion or compositor presentation.
+
+The macOS emoji patch correctly reproduces the vendored Parley files, but its
+recorded checksum was stale. `prep/upstreams.json` now records the actual patch
+hash and its macOS scope; no application or vendored runtime code was changed
+during this validation. Build inputs and local evidence are recorded under
+ignored `.prep/validation/linux-sync-20261018/`.
+
+The new storage implementation uses `master-v1` and the `default-v2` profile;
+it deliberately does not migrate the former profile. QR pairing is required
+again. The former archive and keys are retained. The verified Linux build was
+installed through the regular desktop installer and launched normally, with
+matching built/installed SHA-256:
+`05727b2b97b3e8278249645bc313f3ca97d10275eb6838a096dfb0d88faa4caf`.
+macOS execution and signing were not retested on this Linux host. M0/M2
+acceptance gates remain open.
+
 ## SVG branding and Linux desktop icon — 15 October 2026
 
 The owner selected the lowercase-h speech bubble. Its source is

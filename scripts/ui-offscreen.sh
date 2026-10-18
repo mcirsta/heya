@@ -3,7 +3,7 @@
 set -euo pipefail
 
 usage() {
-    echo "Usage: $0 {--screenshot|--framebuffer} /tmp/heya.png [--size WIDTHxHEIGHT] [--light|--dark] [--demo-chat ID] [--click XxY (framebuffer only)] [--hover XxY (framebuffer only)] | --ui-benchmark | --wheel-check | --close-check" >&2
+    echo "Usage: $0 {--screenshot|--framebuffer} /tmp/heya.png [--size WIDTHxHEIGHT] [--light|--dark] [--demo-chat ID] [--click XxY (framebuffer only)] [--hover XxY (framebuffer only)] | --ui-benchmark | --wheel-check | --close-check | --startup-check" >&2
     exit 2
 }
 
@@ -42,7 +42,7 @@ case "${1:-}" in
             esac
         done
         ;;
-    --ui-benchmark|--wheel-check|--close-check)
+    --ui-benchmark|--wheel-check|--close-check|--startup-check)
         [[ $# == 1 ]] || usage
         ;;
     *)
@@ -70,6 +70,9 @@ case "$heya_renderer" in
 esac
 
 heya_command=("$heya_binary" --demo "${heya_args[@]}")
+if [[ "${heya_args[0]}" == --startup-check ]]; then
+    heya_command=(python3 "$heya_root/scripts/check-gui-startup.py" "$heya_binary" --software-only)
+fi
 if [[ "${heya_args[0]}" == --close-check ]]; then
     for program in python3 xdotool; do
         command -v "$program" >/dev/null || { echo "Close check needs $program." >&2; exit 1; }

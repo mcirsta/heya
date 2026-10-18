@@ -28,14 +28,20 @@ remaining differences. Earlier prototype screenshots are not the current UI.
 ## Run Heya
 
 For Apple Silicon Macs running macOS 15 or newer, download the
-[testing release](https://github.com/mcirsta/heya/releases/tag/v0.1.0-alpha.2).
-See [testing and first-launch instructions](docs/releases/v0.1.0-alpha.2.md).
+[testing release](https://github.com/mcirsta/heya/releases/tag/v0.1.0-alpha.3).
+See [testing and first-launch instructions](docs/releases/v0.1.0-alpha.3.md).
 
 On macOS, see [the native macOS build guide](docs/macos.md). The macOS build
 uses Metal, AppKit file dialogs, Keychain and Quartz PDF previews. Native audio
 uses Core Audio output queues for playback and Core Audio/AudioToolbox for microphone capture
 and Opus encoding. Launch the `.app` bundle to grant microphone permission;
 GStreamer is only used on Linux.
+
+macOS startup diagnostics are saved automatically under `~/Library/Logs/Heya`.
+If the process appears in the Dock without a window, retain the newest logs and
+try `--software-rendering --demo` after closing it. See
+[GUI startup diagnostics](docs/macos.md#gui-startup-diagnostics) for checkpoints,
+bounded retries and the native packaged-GUI check.
 
 macOS adaptations are scoped to that platform. Linux keeps its existing media,
 desktop services, renderers and layout; CI builds and tests Linux with and

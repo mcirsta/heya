@@ -23,6 +23,7 @@ static NEXT: AtomicU64 = AtomicU64::new(1);
 static EMOJI_SUPPORT: OnceLock<HashSet<&'static str>> = OnceLock::new();
 
 unsafe extern "C" {
+    fn heya_startup_system_info(output: *mut c_char, capacity: usize);
     fn heya_emoji_support(catalogue: *const c_char, supported: *mut u8, count: usize);
     fn heya_panel_begin(
         id: u64,
@@ -42,6 +43,18 @@ unsafe extern "C" {
         size: *mut usize,
     ) -> i32;
     fn heya_native_free(bytes: *mut c_void);
+}
+
+/// Fixed OS/CPU/model fields only; no hostname, username, serial or device UUID.
+pub fn startup_system_info() -> String {
+    let mut output = [0u8; 512];
+    // The bridge writes at most capacity bytes, including a terminating NUL.
+    unsafe { heya_startup_system_info(output.as_mut_ptr().cast(), output.len()) };
+    let end = output
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(output.len());
+    String::from_utf8_lossy(&output[..end]).into_owned()
 }
 
 pub fn prepare_emoji_support() {

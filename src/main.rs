@@ -76,6 +76,7 @@ mod protocol_uploads;
 mod service;
 #[cfg(all(test, target_os = "macos"))]
 mod skia_cpu_tests;
+mod startup;
 mod storage;
 mod voice;
 mod voice_recorder;
@@ -100,6 +101,9 @@ struct Options {
     ui_benchmark: bool,
     demo_chat: Option<i32>,
     size: Option<(u32, u32)>,
+    startup_trace: Option<PathBuf>,
+    software_rendering: bool,
+    startup_check: bool,
 }
 
 fn options_from(args: impl IntoIterator<Item = String>) -> Result<Option<Options>, String> {
@@ -112,6 +116,15 @@ fn options_from(args: impl IntoIterator<Item = String>) -> Result<Option<Options
             "--light" => options.theme = Some("Light".into()),
             "--dark" => options.theme = Some("Dark".into()),
             "--ui-benchmark" => options.ui_benchmark = true,
+            "--software-rendering" => options.software_rendering = true,
+            "--startup-check" => options.startup_check = true,
+            "--startup-trace" => {
+                options.startup_trace = Some(
+                    args.next()
+                        .ok_or("--startup-trace needs a log path")?
+                        .into(),
+                );
+            }
             "--demo-chat" => {
                 options.demo_chat = Some(
                     args.next()
@@ -136,7 +149,7 @@ fn options_from(args: impl IntoIterator<Item = String>) -> Result<Option<Options
             }
             "--help" | "-h" => {
                 println!(
-                    "Heya\n\nUsage: heya [--demo | --offline] [--light | --dark] [--size WIDTHxHEIGHT] [--demo-chat ID] [--screenshot FILE.png] [--ui-benchmark]\n\nSaved sessions resume automatically. On first use, click Connect to link WhatsApp.\n--offline opens saved chats without connecting; Connect remains available.\n--demo uses synthetic chats without opening account files or the network.\n--demo-chat selects a synthetic chat (1–13); 7 demonstrates message cards; 8 dates and spacing; 9 received photos; 10 received audio; 11 received documents; 12 pin/unpin notices; 13 color emoji.\n--screenshot requires --demo and exits after capturing the synthetic UI.\n--ui-benchmark requires --demo, measures synthetic updates/resizing and exits; it cannot be combined with --screenshot."
+                    "Heya\n\nUsage: heya [--demo | --offline] [--light | --dark] [--size WIDTHxHEIGHT] [--demo-chat ID] [--screenshot FILE.png] [--ui-benchmark] [--software-rendering] [--startup-trace FILE.log] [--startup-check]\n\nSaved sessions resume automatically. On first use, click Connect to link WhatsApp.\n--offline opens saved chats without connecting; Connect remains available.\n--demo uses synthetic chats without opening account files or the network.\n--demo-chat selects a synthetic chat (1–13); 7 demonstrates message cards; 8 dates and spacing; 9 received photos; 10 received audio; 11 received documents; 12 pin/unpin notices; 13 color emoji.\n--screenshot requires --demo and exits after capturing the synthetic UI.\n--ui-benchmark requires --demo, measures synthetic updates/resizing and exits; it cannot be combined with --screenshot.\n--software-rendering uses Skia's CPU renderer for GUI troubleshooting.\n--startup-trace writes bounded GUI checkpoints, without account content. macOS logs startup automatically under ~/Library/Logs/Heya.\n--startup-check requires --demo and exits after the first native redraw returns; do not combine it with screenshots or benchmarks."
                 );
                 return Ok(None);
             }
@@ -157,6 +170,11 @@ fn options_from(args: impl IntoIterator<Item = String>) -> Result<Option<Options
             "--ui-benchmark requires --demo and cannot be combined with --screenshot".into(),
         );
     }
+    if options.startup_check
+        && (!options.demo || options.screenshot.is_some() || options.ui_benchmark)
+    {
+        return Err("--startup-check requires --demo and cannot be combined with --screenshot or --ui-benchmark".into());
+    }
     Ok(Some(options))
 }
 
@@ -173,24 +191,79 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     else {
         return Ok(());
     };
+    let trace = startup::Trace::start(options.startup_trace.clone());
+    trace.install_panic_hook();
+    trace.record(
+        "process_start",
+        &format!(
+            "version={} build={} os={} arch={} pid={} mode={} renderer_request={}",
+            env!("CARGO_PKG_VERSION"),
+            option_env!("HEYA_BUILD_NUMBER").unwrap_or("development"),
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+            std::process::id(),
+            if options.demo {
+                "demo"
+            } else if options.offline {
+                "offline"
+            } else {
+                "normal"
+            },
+            startup::renderer_request(options.software_rendering)
+        ),
+    );
+    #[cfg(target_os = "macos")]
+    trace.record("system", &macos::startup_system_info());
+    let result = run(options, &trace);
+    trace.record(
+        "process_exit",
+        if result.is_ok() {
+            "ok"
+        } else {
+            "failed; see last checkpoint"
+        },
+    );
+    result
+}
+
+fn run(options: Options, trace: &startup::Trace) -> Result<(), Box<dyn std::error::Error>> {
+    startup::select_backend(trace, options.software_rendering, options.startup_check)?;
+    trace.record("runtime_create", "begin");
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
+    trace.record("runtime_create", "ok");
     let demo = options.demo;
+    let worker_trace = trace.clone();
     let (preferences, wallpaper) = runtime.block_on(runtime.spawn_blocking(move || {
         #[cfg(target_os = "macos")]
-        macos::prepare_emoji_support();
-        (
-            presentation_preferences::prepare(demo),
-            presentation::wallpaper_pixels(),
-        )
+        {
+            worker_trace.record("emoji_probe", "begin");
+            macos::prepare_emoji_support();
+            worker_trace.record("emoji_probe", "ok");
+        }
+        worker_trace.record("preferences_load", "begin");
+        let preferences = presentation_preferences::prepare(demo);
+        worker_trace.record("preferences_load", "ok");
+        worker_trace.record("wallpaper_decode", "begin");
+        let wallpaper = presentation::wallpaper_pixels();
+        worker_trace.record(
+            "wallpaper_decode",
+            if wallpaper.is_ok() { "ok" } else { "failed" },
+        );
+        (preferences, wallpaper)
     }))?;
     let (mut preferences, preferences_path, preferences_status) = preferences;
     let wallpaper = wallpaper?;
     if let Some(theme) = options.theme {
         preferences.theme = theme;
     }
-    let ui = AppWindow::new()?;
+    let ui = startup::gui_step(
+        trace,
+        "window_create",
+        options.software_rendering,
+        AppWindow::new,
+    )?;
     // Set this after backend initialization, before creating the native window.
     // Match the desktop entry so Wayland/X11 taskbars resolve Heya's icon.
     #[cfg(target_os = "linux")]
@@ -212,6 +285,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .set_size(slint::LogicalSize::new(width as f32, height as f32));
     }
     ui.set_demo_mode(options.demo);
+    // On macOS, retryable GUI setup precedes account services and their lock.
+    // Other platforms retain their existing show/attachment ordering.
+    #[cfg(target_os = "macos")]
+    startup::gui_step(trace, "window_show", options.software_rendering, || {
+        ui.show()
+    })?;
+    trace.record("presentation_attach", "begin");
     let (preference_saver, settings_operations, current_preferences) =
         presentation_preferences::attach(
             &ui,
@@ -226,6 +306,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         live_presentation::attach(&ui, &runtime, options.offline, current_preferences.clone())
     };
+    trace.record("presentation_attach", "ok");
     if let Some(id) = options.demo_chat {
         ui.invoke_select_chat(id);
         ui.set_show_conversation(true);
@@ -234,7 +315,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ui_benchmark
         .then(|| presentation::benchmark::start(&ui, &runtime))
         .transpose()?;
-    ui.show()?;
+    #[cfg(not(target_os = "macos"))]
+    startup::gui_step(trace, "window_show", options.software_rendering, || {
+        ui.show()
+    })?;
+    startup::observe_window(&ui, trace);
 
     let capture_error = std::rc::Rc::new(std::cell::RefCell::new(None));
     if let Some(path) = options.screenshot {
@@ -272,7 +357,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    trace.record("event_loop", "enter");
     let result = slint::run_event_loop();
+    match &result {
+        Ok(()) => trace.record("event_loop", "returned"),
+        Err(error) => trace.record("event_loop", &format!("failed error={error}")),
+    }
     let shutdown_started = std::time::Instant::now();
     let benchmark_failed = benchmark
         .as_ref()
@@ -300,12 +390,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     runtime.shutdown_timeout(Duration::from_secs(2));
+    trace.record(
+        "shutdown_finished",
+        &format!("elapsed_ms={}", shutdown_started.elapsed().as_millis()),
+    );
     eprintln!(
         "Heya shutdown: finished in {} ms.",
         shutdown_started.elapsed().as_millis()
     );
     result?;
     hidden?;
+    if options.startup_check && !trace.first_redraw_returned() {
+        return Err(
+            std::io::Error::other("Startup check did not reach a completed native redraw").into(),
+        );
+    }
     if benchmark_failed {
         return Err(std::io::Error::other(
             "The synthetic archive benchmark failed; see its diagnostics.",
@@ -353,6 +452,29 @@ mod option_tests {
                 .unwrap()
                 .unwrap()
                 .ui_benchmark
+        );
+        assert!(options_from(["--startup-check"].map(String::from)).is_err());
+        assert!(
+            options_from(["--demo", "--startup-check", "--ui-benchmark"].map(String::from))
+                .is_err()
+        );
+        assert!(options_from(["--startup-trace"].map(String::from)).is_err());
+        let startup = options_from(
+            [
+                "--demo",
+                "--startup-check",
+                "--software-rendering",
+                "--startup-trace",
+                "/tmp/startup.log",
+            ]
+            .map(String::from),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(startup.startup_check && startup.software_rendering);
+        assert_eq!(
+            startup.startup_trace,
+            Some(PathBuf::from("/tmp/startup.log"))
         );
     }
 }

@@ -9,6 +9,23 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <stdio.h>
+#include <sys/sysctl.h>
+
+void heya_startup_system_info(char *output, size_t capacity) {
+    @autoreleasepool {
+        NSOperatingSystemVersion os = NSProcessInfo.processInfo.operatingSystemVersion;
+        char model[128] = "unknown", cpu[128] = "unknown";
+        size_t modelSize = sizeof(model), cpuSize = sizeof(cpu);
+        sysctlbyname("hw.model", model, &modelSize, NULL, 0);
+        sysctlbyname("machdep.cpu.brand_string", cpu, &cpuSize, NULL, 0);
+        model[sizeof(model) - 1] = 0;
+        cpu[sizeof(cpu) - 1] = 0;
+        snprintf(output, capacity, "macos=%ld.%ld.%ld model=%s cpu=%s main_thread=%s",
+                 (long)os.majorVersion, (long)os.minorVersion, (long)os.patchVersion,
+                 model, cpu, NSThread.isMainThread ? "yes" : "no");
+    }
+}
 
 typedef void (*HeyaPanelReply)(uint64_t, const char *const *, size_t);
 static NSMutableDictionary<NSNumber *, NSSavePanel *> *panels;

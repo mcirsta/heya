@@ -26,10 +26,10 @@ permission description. The unbundled Cargo executable cannot request that permi
 
 ## Apple Silicon testing release
 
-[Download v0.1.0-alpha.2](https://github.com/mcirsta/heya/releases/tag/v0.1.0-alpha.2)
+[Download v0.1.0-alpha.3](https://github.com/mcirsta/heya/releases/tag/v0.1.0-alpha.3)
 for M1 and later Macs running macOS 15 or newer. The generic arm64 build uses no
 M4-specific CPU flags and needs neither Rosetta nor a Rust installation on the
-tester's Mac. See the [testing notes](releases/v0.1.0-alpha.2.md) for first launch,
+tester's Mac. See the [testing notes](releases/v0.1.0-alpha.3.md) for first launch,
 pairing and checks. This beta is ad hoc signed and not notarized; a Developer ID
 certificate is not configured.
 
@@ -118,6 +118,59 @@ rasterization and resizing; the automatic fallback order and macOS bitmap
 presentation are checked against the pinned Slint/softbuffer sources. It does
 not simulate a physical driver failure or prove recovery from a GPU failure
 after startup. Linux's existing renderer features are unchanged.
+
+### GUI startup diagnostics
+
+Normal macOS launches now write a small `startup-<timestamp>-<pid>.log` under
+`~/Library/Logs/Heya`, including launches from Finder. In Finder use **Go → Go to
+Folder** and enter that directory. Keep both logs if startup made a software
+retry. The five newest startup logs are retained, at most 64 KiB each. No log
+writer, watchdog or monitoring thread is created.
+
+The checkpoints include app version, executable architecture, macOS version,
+Mac model/CPU, main-thread status, backend selection, emoji/font probing,
+preferences, wallpaper decoding, component creation, window showing, presenter
+attachment and entry into the native event loop. Slint's Skia surface fallback
+errors are captured during startup; general toolkit debug output is excluded.
+Native-window size/scale and
+the first redraw's request/return are recorded separately. A Dock icon alone
+does not establish any of these later steps. The log excludes account data,
+message content, QR payloads, arbitrary command-line arguments and panic payloads.
+GUI initialization errors include their platform error; panics record the last
+stage and source line/column. Rust panics still use the ordinary stderr hook,
+and native crashes still need their macOS `.ips` crash report.
+
+For backend selection, component creation or synchronous window-show errors,
+an ordinary macOS launch makes one fresh-process attempt with Skia CPU rendering,
+before attaching account services. Slint's own Metal-to-CPU surface fallback is
+unchanged. An explicit `SLINT_BACKEND` or `--software-rendering` prevents another
+automatic attempt. After entering the event loop, native errors are logged and
+the app shuts down normally; account services are never blindly restarted.
+Two finite startup callbacks can re-show a native window if it is invisible
+before the first redraw. They do not undo minimization. A native call that hangs
+cannot be interrupted by an event-loop timer; its last checkpoint remains in
+the log. Close that process before retrying explicitly:
+
+```sh
+/Applications/Heya.app/Contents/MacOS/heya --software-rendering --demo
+```
+
+`--demo` isolates GUI testing from saved accounts. Omit it for an intentional
+normal-session launch. `--startup-trace /path/to/file.log` chooses another log
+file and also enables these diagnostics on Linux.
+
+CI now runs `scripts/check-gui-startup.py` against the app inside the mounted DMG,
+with the default renderer and Skia CPU rendering. Each synthetic invocation uses
+`--demo --startup-check`, has a 45-second external process deadline, and must
+create a native window, return from its first redraw and exit successfully.
+Startup logs and synthetic stderr are retained as CI artifacts on failure too.
+This checks native GUI startup in the runner's desktop session, not Gatekeeper,
+physical M4 Air graphics, compositor presentation or live-account compatibility.
+Linux checks run only on the private display:
+
+```sh
+scripts/ui-offscreen.sh --startup-check
+```
 
 The small Objective-C bridge is `src/platform/macos.m`; Rust owns cancellation
 and result delivery in `src/macos.rs`. No Objective-C object or raw window pointer

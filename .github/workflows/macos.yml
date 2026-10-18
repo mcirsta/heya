@@ -86,6 +86,16 @@ jobs:
           codesign --verify --deep --strict "$heya_mount/Heya.app"
           "$heya_mount/Heya.app/Contents/MacOS/heya" --help
           python3 scripts/check-macos-bundle.py "$heya_mount/Heya.app"
+          python3 scripts/check-gui-startup.py "$heya_mount/Heya.app/Contents/MacOS/heya" \
+            --log-dir target/gui-startup-check
+      - name: Keep synthetic GUI startup diagnostics
+        if: always() && !cancelled()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: macos-gui-startup-diagnostics
+          path: target/gui-startup-check/
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Include testing notes
         env:
           VERSION: ${{ steps.metadata.outputs.version }}
