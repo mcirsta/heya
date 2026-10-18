@@ -13,6 +13,8 @@ mod downloads;
 mod downloads_file;
 mod downloads_picker;
 mod fixtures;
+#[cfg(target_os = "linux")]
+mod linux_emoji;
 mod live_presentation;
 mod local_worker;
 #[cfg(target_os = "macos")]
@@ -236,10 +238,13 @@ fn run(options: Options, trace: &startup::Trace) -> Result<(), Box<dyn std::erro
     let demo = options.demo;
     let worker_trace = trace.clone();
     let (preferences, wallpaper) = runtime.block_on(runtime.spawn_blocking(move || {
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
             worker_trace.record("emoji_probe", "begin");
+            #[cfg(target_os = "macos")]
             macos::prepare_emoji_support();
+            #[cfg(target_os = "linux")]
+            linux_emoji::prepare_emoji_support();
             worker_trace.record("emoji_probe", "ok");
         }
         worker_trace.record("preferences_load", "begin");

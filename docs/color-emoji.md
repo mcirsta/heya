@@ -10,7 +10,14 @@ on the startup background worker. It omits entries that fall back to LastResort
 or split into multiple emoji cells, including Emoji 17 entries unavailable on
 macOS 15. Joined glyphs that overlap within one cell, skin tones, flags and
 keycaps remain supported. This only filters picker choices; received/stored
-text is never removed or rewritten. Linux's picker is unchanged.
+text is never removed or rewritten.
+
+Linux applies the same picker filtering to installed Noto Color Emoji using
+Slint's existing Parley/fontique dependencies. It shapes full sequences, rejects
+missing glyphs or fallback to another font, and excludes sequences wider than
+1.5 ordinary emoji cells. Coverage is cached on the startup background worker,
+including skin-tone variants. Search, categories and recent/frequent choices
+share this filter; no font is bundled or downloaded.
 
 The pinned ZapFast `src/markup.rs::layout` enlarges messages containing one to
 three emoji to 2.4 times the body size. Heya applies the same display rule using

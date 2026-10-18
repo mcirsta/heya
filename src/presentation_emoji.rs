@@ -21,7 +21,9 @@ const GROUPS: [(emojis::Group, &str, &str); 9] = [
 fn available(emoji: &emojis::Emoji) -> bool {
     #[cfg(target_os = "macos")]
     return crate::macos::supports_emoji(emoji.as_str());
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    return crate::linux_emoji::supports_emoji(emoji.as_str());
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         let _ = emoji;
         true

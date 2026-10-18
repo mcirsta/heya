@@ -44,7 +44,7 @@ pub fn check_ui() {
         cells < 160,
         "the grid must instantiate visible rows, not the complete emoji database: {cells}"
     );
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
         // A newer catalogue entry must not leave a blank picker cell on an
         // older OS. Newer fonts that support it should keep offering it.
@@ -55,7 +55,11 @@ pub fn check_ui() {
             .iter()
             .map(|row| row.cells.row_count())
             .sum::<usize>();
-        assert_eq!(choices, usize::from(crate::macos::supports_emoji("🫪")));
+        #[cfg(target_os = "macos")]
+        let supported = crate::macos::supports_emoji("🫪");
+        #[cfg(target_os = "linux")]
+        let supported = crate::linux_emoji::supports_emoji("🫪");
+        assert_eq!(choices, usize::from(supported));
         ui.set_emoji_query("".into());
         ui.invoke_request_emojis();
     }
