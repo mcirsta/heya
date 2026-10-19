@@ -2,8 +2,8 @@
 
 Preparation is complete; M0 implementation and the first M2 text/archive slice
 are in progress. All milestone
-acceptance gates below remain open until their evidence is recorded. Build
-Linux first, then validate Windows and macOS. Each milestone ends with a working
+acceptance gates below remain open until their evidence is recorded. Linux and
+macOS are active targets; Windows follows later. Each milestone ends with a working
 demonstration and recorded evidence, rather than an assertion based on library
 capabilities.
 
@@ -12,6 +12,42 @@ milestones define Heya's own implementation and do not require ZapFast feature
 parity or reuse of its application code.
 Omarchy-specific integration is deliberately outside Heya's scope.
 Keep whatsapp-rust unchanged where its public interfaces cover Heya's needs.
+
+## Current delivery priorities
+
+This is the order for new work across the open milestones, prioritized on
+19 October 2026. These are planned outcomes, not implemented features. Complete
+one bounded feature, its failure paths and validation before starting the next.
+
+| Order | Work | Completion criteria |
+| --- | --- | --- |
+| Release gate | Reliability of existing paths | Keep CI green. Deliberately verify voice capture/playback/delivery, ordinary direct/group edits and deletion, session resume and interrupted history/network recovery on Linux and macOS. Record remaining interoperability/device gaps with each release. Advanced variants remain separate work. |
+| 1 | Sender-facing read and voice played receipts, with receipt privacy | Specify and honor protocol/account privacy behavior before enabling receipts. Preserve the distinction from private linked-device unread synchronization. Hidden messages and audio downloads must not trigger receipts. Validate offline/restart behavior and direct/group cases. |
+| 2 | Local message search and quote navigation | Search the encrypted archive off the UI thread, including older cached messages. Edits update results; deleted/expired content stays excluded. Selecting a result or quote locates and highlights the original message, preserving a way back; unavailable originals get a clear state. |
+| 3 | Attachment paste/drop and copying images | Reuse the existing file/photo review and upload path. Preserve the intended recipient, caption and text draft; never send automatically. Cover clipboard images/files, duplicate events, cancellation and native platform integration. |
+| 4 | Video playback, then GIFs and animated stickers | First finish common video playback with audio, seek, pause, error recovery and teardown. Use native Apple media frameworks on macOS and existing GStreamer on Linux. Add other animation formats as separate validated increments. |
+| 5 | Desktop notifications and existing-window activation | A second launch activates the existing window. Notifications honor preview/privacy settings, open the intended conversation and handle unavailable services or denied permissions. Use native platform services. |
+| 6 | Richer message text | Add bold/italic/code formatting, inline links and mentions while preserving original text, copying, selection, Unicode and stable timeline geometry. Validate each text behavior before combining them. |
+| 7 | Chat management | Implement manual read/unread, pin/archive/mute, then favorites and the remaining filters. Persist real state and synchronize supported actions; do not present placeholder filters as working. |
+| 8 | Additional cards and advanced interaction | Polls, contact and location cards, cross-message drag selection and remaining advanced message-control variants follow the everyday messaging work above. Scope and validate each separately. |
+
+The first implementation slice is **sender-facing read receipts with defined
+privacy behavior**, followed by voice played receipts. First verify the pinned
+SDK's public APIs and the direct/group/voice privacy rules; document a concrete
+API gap before introducing an isolated protocol patch. Tests must cover inactive
+windows, older-history browsing, delayed arrivals, playback start versus download,
+offline/reconnect, deduplication and shutdown. Deliberate account tests remain
+separate from synthetic CI and require user participation/authorization.
+
+Search and quote navigation share message-identity lookup and bounded archive
+paging; finish that navigation path before adding more text-selection behavior.
+Clipboard/drop handling shares the existing attachment flow rather than creating
+a second sending pipeline.
+
+Performance regression checks accompany each increment. Existing before/after
+measurements establish changes within Heya, not speed parity with ZapFast;
+offscreen application/render timings do not establish compositor, device or
+end-to-end account performance. These priorities do not close M0 or M2 gates.
 
 ## M0 Prove the toolkit integrations
 
