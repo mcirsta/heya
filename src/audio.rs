@@ -176,7 +176,13 @@ pub async fn run(
     .await;
 }
 
-#[cfg(test)]
+#[cfg(all(
+    test,
+    any(
+        target_os = "macos",
+        all(feature = "media-gstreamer", target_os = "linux")
+    )
+))]
 async fn run_with_player(
     archives: watch::Receiver<Option<Archive>>,
     sources: watch::Receiver<Sources>,
