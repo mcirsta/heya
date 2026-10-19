@@ -281,7 +281,7 @@ async fn archived_cards_upgrade_repair_alias_merge_and_mutations_keep_privacy() 
                           DROP TABLE message_photos;
                           ALTER TABLE messages DROP COLUMN content;
                           ALTER TABLE messages DROP COLUMN thumbnail;
-                          DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; ALTER TABLE mutations DROP COLUMN raw; PRAGMA user_version=4;",
+                          DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; ALTER TABLE mutations DROP COLUMN raw; DROP TABLE outgoing_receipts; PRAGMA user_version=4;",
             )?;
             Ok(())
         })

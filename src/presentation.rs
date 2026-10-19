@@ -282,6 +282,11 @@ pub(crate) fn conversation(
     if restore_draft {
         ui.set_draft(view.draft.as_str().into());
     }
+    if changed {
+        // A late insertion can change the displayed messages without changing
+        // the last message ID or private unread badge. Reuse the visibility gate.
+        ui.invoke_read_visible();
+    }
     changed
 }
 

@@ -1,4 +1,61 @@
-# Linked-device read synchronization
+# Read synchronization and sender-facing receipts
+
+## Sender-facing read and played receipts
+
+Settings → Privacy → **Send read receipts** controls both read and voice played
+receipts sent by Heya. It defaults to on and is saved locally. Turning it off
+also suppresses Heya's group receipts, discards pending sender-facing receipts,
+and leaves private linked-device unread synchronization working. Enabling it
+does not backfill messages read while it was off. The account-wide read-receipt
+setting remains managed in WhatsApp on the phone; Heya does not change it.
+
+A visible read uses the existing active-window/latest-message gate below. In
+the same archive transaction, Heya records receipt intent for newly received
+incoming messages and known unread history through that exact message boundary,
+then advances private
+read state. Ingestion, history import, constructing a view and confirming an
+outgoing send do not independently queue sender-facing receipts. Older cached
+messages already marked read are not backfilled on upgrade. New live arrivals
+retain a separate unobserved marker, so a quick outgoing reply clearing the
+private badge cannot consume their sender-facing receipt eligibility.
+
+Played intent is recorded only for a current incoming voice-message envelope
+after the platform player reports playback progress, or successful completion
+of a short playing clip. Downloading, loading, paused seeking, failure before playback,
+outgoing audio and ordinary audio files do not count as playing a voice message.
+The coordinator uses the same rule for macOS native audio and Linux GStreamer.
+Each playback generation is handled once; stored completion deduplicates replay.
+
+Schema 15 adds an encrypted per-message receipt queue. One background sender
+batches up to 256 IDs with the same chat, participant and receipt kind. Before
+each batch it fetches account privacy through the pinned SDK's public API. A
+failed fetch or unknown value leaves the batch pending; it never defaults to
+permission to notify the sender. The SDK's existing privacy gate routes disabled
+direct-message receipts to `read-self`/`played-self`, while group behavior is
+preserved. Heya's local off switch suppresses both paths. This is the pinned
+SDK's policy, not a claim of verified behavior in every official client.
+
+Offline work waits for reconnect. Failure/timeout backs off for 30 seconds;
+disconnect, shutdown and local preference changes cancel in-flight work. An
+already transmitted receipt cannot be recalled. Successful SDK transmission
+marks the batch complete; a crash between transmission and saving completion
+may retry the same IDs. This is not proof of server delivery. Alias merges
+preserve intent, stale completions cannot clear a different target, and hidden,
+deleted or expired messages are removed from pending work.
+
+Synthetic coverage exercises encrypted reopen, exact boundaries, privacy off
+without historical backfill, bounded batches, alias merges, missing account
+privacy, offline retry/cancellation and controlled playback progress. Account
+interoperability and physical-device checks remain deliberate manual tests;
+Linux CI does not establish Linux desktop/device compatibility.
+
+The SDK's played-receipt privacy routing needs a deliberate account check:
+WhatsApp's [read-receipt help](https://faq.whatsapp.com/665923838265756/)
+describes voice-play exceptions, while the pinned SDK explicitly routes disabled
+DM played receipts to `played-self`. This slice keeps that more restrictive SDK
+behavior and does not override account privacy to force a public played receipt.
+
+## Private linked-device unread synchronization
 
 The previous build only cleared Heya's archive badge. The protocol adapter now
 uses the pinned SDK's public `chat_actions().mark_chat_as_read` API to synchronize

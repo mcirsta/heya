@@ -157,8 +157,14 @@ an active, visible conversation clears the local badge and queues a private read
 update for WhatsApp and other linked clients. Reads made offline persist in the
 encrypted archive and retry after reconnection at their original message position.
 Inactive/minimized windows and scrolling through older history do not clear newer
-messages. This synchronizes your devices; sender-facing blue-tick receipts remain
-pending. Confirmed sends also advance the private read range on your other
+messages. This synchronizes your devices. Sender-facing read receipts and voice
+played receipts now have a separate durable queue. Settings → Privacy → **Send
+read receipts** controls both for Heya, including groups; it defaults to on.
+The account privacy setting is fetched before sending, and remains managed on
+the phone. Turning Heya's switch off keeps private unread synchronization working
+and does not backfill private reads when re-enabled. These receipt changes require
+a current source build; previously published alpha.3 downloads are unchanged. Synthetic macOS checks do
+not establish live receipt interoperability. Confirmed sends also advance the private read range on your other
 devices, even when Heya's local unread badge is already zero. Queued/failed sends
 leave it unchanged. See [read synchronization](docs/read-sync.md) for behavior and validation.
 
@@ -298,7 +304,7 @@ are at most 640px on the long edge; the one open viewer uses at most 2048px.
 Expired CDN references may require the sender to resend the photo. Automatic
 media re-upload recovery, disk-cache eviction, image clipboard copying,
 and video playback remain pending. Other unsupported attachment types retain placeholders.
-View-once content is not opened. Administrator deletion variants, chat-settings synchronization, outgoing read receipts,
+View-once content is not opened. Administrator deletion variants, chat-settings synchronization,
 and full local account/data removal remain pending. Disappearing-message expiration is
 basic and depends on timer metadata supplied with messages/history.
 No live pairing or message sends have been performed by automated validation.

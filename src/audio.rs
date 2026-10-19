@@ -156,17 +156,19 @@ pub async fn run(
     demo: bool,
     preferences: watch::Receiver<crate::preferences::Preferences>,
 ) {
-    run_with_player(
+    let playback_preferences = preferences.clone();
+    run_with_player_and_receipts(
         archives,
         sources,
         commands,
         updates,
         demo,
+        preferences,
         move |desired, updates| {
             let output = if demo || cfg!(test) {
                 Output::Silent
             } else {
-                Output::Desktop(preferences.borrow().audio.clone())
+                Output::Desktop(playback_preferences.borrow().audio.clone())
             };
             audio_player::Worker::start(desired, updates, output)
         },
@@ -174,12 +176,34 @@ pub async fn run(
     .await;
 }
 
+#[cfg(test)]
 async fn run_with_player(
+    archives: watch::Receiver<Option<Archive>>,
+    sources: watch::Receiver<Sources>,
+    commands: mpsc::Receiver<Command>,
+    updates: watch::Sender<Status>,
+    demo: bool,
+    start_player: impl FnMut(Desired, watch::Sender<Status>) -> Result<Worker, Error>,
+) {
+    run_with_player_and_receipts(
+        archives,
+        sources,
+        commands,
+        updates,
+        demo,
+        watch::channel(crate::preferences::Preferences::default()).1,
+        start_player,
+    )
+    .await;
+}
+
+async fn run_with_player_and_receipts(
     mut archives: watch::Receiver<Option<Archive>>,
     mut sources: watch::Receiver<Sources>,
     mut commands: mpsc::Receiver<Command>,
     updates: watch::Sender<Status>,
     demo: bool,
+    preferences: watch::Receiver<crate::preferences::Preferences>,
     mut start_player: impl FnMut(Desired, watch::Sender<Status>) -> Result<Worker, Error>,
 ) {
     let (status_tx, mut status_rx) = watch::channel(Status::default());
@@ -192,6 +216,7 @@ async fn run_with_player(
     let mut loading: Option<Loading> = None;
     let mut request: Option<Request> = None;
     let mut serial = 0u64;
+    let mut played_generation = None;
     let mut sources_open = true;
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -268,6 +293,23 @@ async fn run_with_player(
                     && next.id == status.id && next.id != 0
                 {
                     status = next;
+                    let progressed=status.phase==2 && status.position>0.;
+                    let completed=status.phase==0 && desired.playing && status.duration>0. && status.position>=status.duration;
+                    if !demo && (progressed || completed)
+                        && played_generation!=Some(status.generation)
+                    {
+                        played_generation=Some(status.generation);
+                        let enabled=preferences.borrow().send_receipts;
+                        let archive=archives.borrow().clone();
+                        if enabled && let Some(guard)=&request && let Some(archive)=archive {
+                            let mut failed=archive.queue_played_receipt(guard).await.is_err();
+                            // The privacy switch may have changed while the DB
+                            // operation was queued. Do not leave late intent behind.
+                            let still_enabled=preferences.borrow().send_receipts;
+                            if !still_enabled {failed|=archive.discard_receipts().await.is_err();}
+                            if failed {status.fail(Error::Archive);desired.clear();}
+                        }
+                    }
                     if matches!(status.phase, 0 | 4) {
                         request = None;
                         desired.clear();

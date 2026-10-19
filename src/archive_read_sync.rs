@@ -55,7 +55,18 @@ pub(super) fn sent(db: &Connection, chat: i32, wire: &str) -> Result<()> {
 }
 
 impl Archive {
+    #[cfg(test)]
     pub async fn mark_visible_read(&self, chat: i32, message: i32) -> Result<()> {
+        self.mark_visible_read_with_receipts(chat, message, false)
+            .await
+    }
+
+    pub async fn mark_visible_read_with_receipts(
+        &self,
+        chat: i32,
+        message: i32,
+        send_receipts: bool,
+    ) -> Result<()> {
         let changed = self.call(move |db| {
             let tx = db.transaction()?;
             let chat = local_chat(&tx, chat)?;
@@ -65,6 +76,7 @@ impl Archive {
             ).optional()?;
             let Some(stamp) = boundary else { return Ok(false); };
             if stamp <= 0 { return Ok(false); }
+            let receipts = super::receipts::visible(&tx,chat,stamp,message,send_receipts)?;
             // A queued/failed local message has not reached our other devices.
             // Sync preceding observed messages now; sent() handles the later ACK.
             let position: Option<(i64,i64,String)> = tx.query_row(
@@ -74,7 +86,7 @@ impl Archive {
             let marked = tx.query_row("SELECT marked_unread FROM chats WHERE id=?1", [chat], |r|r.get(0))?;
             let queued = match position { Some((row,stamp,wire))=>queue(&tx,chat,row,stamp,&wire,marked)?, None=>false };
             tx.commit()?;
-            Ok(queued)
+            Ok(queued || receipts)
         }).await?;
         if changed {
             self.changed();
@@ -354,7 +366,7 @@ mod tests {
             .unwrap();
         let files = db.0._files.clone();
         db.blocking(|c| {
-            c.execute_batch("DROP TABLE outgoing_reads; DROP TRIGGER discard_changed_document_preview; DROP TABLE document_previews; DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; ALTER TABLE mutations DROP COLUMN raw; PRAGMA user_version=8;")?;
+            c.execute_batch("DROP TABLE outgoing_reads; DROP TRIGGER discard_changed_document_preview; DROP TABLE document_previews; DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; ALTER TABLE mutations DROP COLUMN raw; DROP TABLE outgoing_receipts; PRAGMA user_version=8;")?;
             Ok(())
         })
         .unwrap();

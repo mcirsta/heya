@@ -560,9 +560,11 @@ fn refresh(ui: &AppWindow, p: &Preferences) {
         (
             "Privacy",
             vec![
-                pending(
+                toggle(
+                    "send_receipts",
                     "Send read receipts",
-                    "Control when this client sends read receipts.",
+                    "Also controls played receipts. Account privacy is respected. Off suppresses Heya's group receipts too; unread badges still sync.",
+                    p.send_receipts,
                 ),
                 pending(
                     "Show when you are typing",
@@ -578,9 +580,9 @@ fn refresh(ui: &AppWindow, p: &Preferences) {
                 pending("Profile photo", "Manage who can see your profile photo."),
                 pending("About", "Manage who can see your About text."),
                 pending("Groups", "Manage who can add you to groups."),
-                pending(
+                info(
                     "Read receipts",
-                    "Manage the read-receipt setting for your whole account.",
+                    "Heya follows your account's read-receipt privacy. Change the account-wide setting in WhatsApp on your phone.",
                 ),
             ],
         ),
@@ -896,7 +898,9 @@ pub(crate) fn check_ui(runtime: &tokio::runtime::Runtime) {
     let privacy = ui.get_settings_sections().row_data(0).unwrap();
     assert_eq!(privacy.title, "Privacy");
     assert_eq!(privacy.rows.row_count(), 2);
-    assert!(privacy.rows.iter().all(|row| row.kind == 2));
+    assert_eq!(privacy.rows.row_data(0).unwrap().key, "send_receipts");
+    assert_eq!(privacy.rows.row_data(0).unwrap().kind, 0);
+    assert_eq!(privacy.rows.row_data(1).unwrap().kind, 3);
     ui.set_settings_query("not-a-setting".into());
     ui.invoke_search_settings(ui.get_settings_query());
     assert_eq!(ui.get_settings_sections().row_count(), 0);

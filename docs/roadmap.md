@@ -16,7 +16,8 @@ Keep whatsapp-rust unchanged where its public interfaces cover Heya's needs.
 ## Current delivery priorities
 
 This is the order for new work across the open milestones, prioritized on
-19 October 2026. These are planned outcomes, not implemented features. Complete
+19 October 2026. The table sets delivery goals; current progress and outstanding
+validation are recorded below. Complete
 one bounded feature, its failure paths and validation before starting the next.
 
 | Order | Work | Completion criteria |
@@ -31,13 +32,15 @@ one bounded feature, its failure paths and validation before starting the next.
 | 7 | Chat management | Implement manual read/unread, pin/archive/mute, then favorites and the remaining filters. Persist real state and synchronize supported actions; do not present placeholder filters as working. |
 | 8 | Additional cards and advanced interaction | Polls, contact and location cards, cross-message drag selection and remaining advanced message-control variants follow the everyday messaging work above. Scope and validate each separately. |
 
-The first implementation slice is **sender-facing read receipts with defined
-privacy behavior**, followed by voice played receipts. First verify the pinned
-SDK's public APIs and the direct/group/voice privacy rules; document a concrete
-API gap before introducing an isolated protocol patch. Tests must cover inactive
-windows, older-history browsing, delayed arrivals, playback start versus download,
-offline/reconnect, deduplication and shutdown. Deliberate account tests remain
-separate from synthetic CI and require user participation/authorization.
+The first slice now implements **sender-facing read and voice played receipts**
+through the pinned SDK's public APIs, with a local privacy switch and account
+privacy fetch before transmission. A separate encrypted queue records visible
+reads and confirmed voice playback without backfilling historical read messages.
+See [receipt behavior and validation limits](read-sync.md). Local macOS synthetic
+tests cover queueing, privacy, cancellation and playback progress; Linux CI and
+later deliberate Linux/device/account checks remain required. This is not a
+completed release gate or a claim of official-client parity. Broader account
+privacy editing remains on the phone for this slice.
 
 Search and quote navigation share message-identity lookup and bounded archive
 paging; finish that navigation path before adding more text-selection behavior.
@@ -183,8 +186,9 @@ PN/LID merging. A schema-9 durable queue now sends private local read positions
 back through the SDK's app-state API. Active-window/timeline visibility gates
 local reads; serial background retries preserve the displayed boundary. Synthetic
 archive, service, transport and toolkit tests cover this path. Live propagation
-to the phone and ZapFast still needs owner verification; sender-facing read
-receipts and their privacy controls remain pending.
+to the phone and ZapFast still needs owner verification. Sender-facing read and
+played receipts now use their own durable queue and local privacy switch, with
+the account setting checked before sending. Live interoperability remains open.
 
 Business templates expose supplied text, clickable URL actions and copy-code
 buttons. Received link previews use sender-supplied metadata and on-demand
@@ -206,7 +210,7 @@ aggregate reaction snapshots in history remain pending. These paths have
 synthetic validation only; live account interoperability is still open.
 
 Remaining: full local account/data removal, complete edit/delete variants,
-typing, outgoing read receipts/privacy, full-text search, live chat
+typing, broader account privacy controls, full-text search, live chat
 metadata/settings updates, recovery UI and deliberate account tests. Received media support is described under M3. Basic disappearing-message expiry does not establish
 complete lifecycle parity. M2 is not complete.
 

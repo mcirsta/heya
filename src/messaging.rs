@@ -89,10 +89,27 @@ pub async fn run(
     run_with_history(archives, commands, updates, sources).await;
 }
 pub async fn run_with_history(
+    archives: watch::Receiver<Option<Archive>>,
+    commands: mpsc::Receiver<Command>,
+    updates: watch::Sender<Snapshot>,
+    phone_sources: watch::Receiver<crate::phone_history::Sources>,
+) {
+    run_with_preferences(
+        archives,
+        commands,
+        updates,
+        phone_sources,
+        watch::channel(crate::preferences::Preferences::default()).1,
+    )
+    .await;
+}
+
+pub async fn run_with_preferences(
     mut archives: watch::Receiver<Option<Archive>>,
     mut commands: mpsc::Receiver<Command>,
     updates: watch::Sender<Snapshot>,
     mut phone_sources: watch::Receiver<crate::phone_history::Sources>,
+    mut preferences: watch::Receiver<crate::preferences::Preferences>,
 ) {
     let mut archive: Option<Archive> = None;
     let mut changed: Option<watch::Receiver<u64>> = None;
@@ -110,11 +127,19 @@ pub async fn run_with_history(
     let mut phone_cooldowns = std::collections::HashMap::<i32, tokio::time::Instant>::new();
     let mut phone_sources_open = true;
     let mut archives_open = true;
+    let mut preferences_open = true;
     let mut expiry = tokio::time::interval(std::time::Duration::from_secs(30));
     loop {
         let mut notice = String::new();
         let mut page = None;
         tokio::select! {
+            event=preferences.changed(), if preferences_open => {
+                preferences_open=event.is_ok();
+                let enabled=preferences.borrow_and_update().send_receipts;
+                if !enabled && let Some(db)=&archive
+                    && let Err(error)=db.discard_receipts().await {notice=error.to_string();}
+                if notice.is_empty(){continue;}
+            }
             _ = expiry.tick(), if archive.is_some() => {},
             event = archives.changed(), if archives_open => {
                 if event.is_err() { archives_open=false;continue; }
@@ -122,6 +147,9 @@ pub async fn run_with_history(
                 if let Some((chat,request,_))=phone_context.take(){history=Some(crate::domain::HistoryReply{chat,request,success:false});}
                 archive = archives.borrow_and_update().clone();
                 changed = archive.as_ref().map(Archive::subscribe);
+                let enabled=preferences.borrow().send_receipts;
+                if !enabled && let Some(db)=&archive
+                    && let Err(error)=db.discard_receipts().await {notice=error.to_string();}
             }
             _ = async { match &mut changed {Some(changed)=>{let _=changed.changed().await;},None=>std::future::pending().await} } => {},
             event=phone_sources.changed(), if phone_sources_open => {
@@ -173,7 +201,8 @@ pub async fn run_with_history(
                     }
                     Command::ReadVisible {chat,message,revision:seen} => {
                         if seen!=revision || !updates.borrow().view.as_ref().and_then(|v| v.conversation.as_ref()).is_some_and(|c| c.chat.id==chat) { continue; }
-                        db.mark_visible_read(chat,message).await
+                        let send_receipts=preferences.borrow().send_receipts;
+                        db.mark_visible_read_with_receipts(chat,message,send_receipts).await
                     }
                     Command::Action(crate::message_actions::Command::Reply {chat,message,request})=>{
                         let result=db.set_reply(chat,message).await;
@@ -419,6 +448,56 @@ mod tests {
         })
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn offline_open_with_receipts_disabled_discards_old_intent_but_keeps_private_sync() {
+        let (_temp, db) = fixture();
+        db.ingest(crate::archive::Batch {
+            messages: vec![crate::archive::tests::record("unread")],
+            live: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let view = db
+            .view(1, 100, String::new(), false, false)
+            .await
+            .unwrap()
+            .conversation
+            .unwrap();
+        db.mark_visible_read_with_receipts(1, view.messages[0].id, true)
+            .await
+            .unwrap();
+        assert!(db.next_receipt().await.unwrap().is_some());
+        let (archives, rx) = watch::channel(None);
+        let (commands, command_rx) = mpsc::channel(4);
+        let (updates, mut views) = watch::channel(Snapshot::empty());
+        let (_sources, sources) = watch::channel(None);
+        let (preferences, prefs) = watch::channel(crate::preferences::Preferences {
+            send_receipts: false,
+            ..Default::default()
+        });
+        let task = tokio::spawn(run_with_preferences(
+            rx, command_rx, updates, sources, prefs,
+        ));
+        archives.send_replace(Some(db.clone()));
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while views.borrow().view.is_none() {
+                views.changed().await.unwrap();
+            }
+        })
+        .await
+        .unwrap();
+        assert!(db.next_receipt().await.unwrap().is_none());
+        assert!(db.next_read_sync().await.unwrap().is_some());
+        preferences.send_modify(|p| p.send_receipts = true);
+        assert!(db.next_receipt().await.unwrap().is_none());
+        drop(commands);
+        tokio::time::timeout(Duration::from_secs(3), task)
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     #[tokio::test]

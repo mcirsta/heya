@@ -260,6 +260,7 @@ pub fn attach(
                 updates,
                 archives,
                 protocol::LiveServices {
+                    preferences: preferences.clone(),
                     avatar_demand: avatar_demand.clone(),
                     photo_demand: photo_fetch_demand,
                     thumbnail_demand: message_image_demand.clone(),
@@ -284,7 +285,13 @@ pub fn attach(
                 photo_snapshots,
                 crate::presentation_photos::publish
             ),
-            messaging::run_with_history(archive_rx, command_rx, views, history_source_rx),
+            messaging::run_with_preferences(
+                archive_rx,
+                command_rx,
+                views,
+                history_source_rx,
+                preferences.clone()
+            ),
             audio_task,
             downloads,
             uploads,

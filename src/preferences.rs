@@ -29,6 +29,7 @@ pub struct Preferences {
     pub show_shortcut_hint: bool,
     pub show_wallpaper: bool,
     pub auto_download_photos: bool,
+    pub send_receipts: bool,
     pub audio: crate::audio_devices::Settings,
     pub download_directory: PathBuf,
 }
@@ -48,6 +49,7 @@ impl Default for Preferences {
             show_shortcut_hint: true,
             show_wallpaper: true,
             auto_download_photos: true,
+            send_receipts: true,
             audio: Default::default(),
             download_directory: default_download_directory(),
         }
@@ -81,10 +83,15 @@ impl Preferences {
             "font" if (0..=1).contains(&value) => {
                 self.font = if value == 0 { "System" } else { "Inter" }.into()
             }
-            "enter_sends" | "show_shortcut_hint" | "show_wallpaper" | "auto_download_photos"
+            "enter_sends"
+            | "show_shortcut_hint"
+            | "show_wallpaper"
+            | "auto_download_photos"
+            | "send_receipts"
                 if (0..=1).contains(&value) =>
             {
                 let field = match key {
+                    "send_receipts" => &mut self.send_receipts,
                     "auto_download_photos" => &mut self.auto_download_photos,
                     "enter_sends" => &mut self.enter_sends,
                     "show_shortcut_hint" => &mut self.show_shortcut_hint,
@@ -194,6 +201,11 @@ mod tests {
         assert!(!settings.change("theme", -1));
         assert!(!settings.change("theme", THEMES.len() as i32));
         assert!(!settings.change("send_read_receipts", 1));
+        assert!(settings.change("send_receipts", 0));
+        save(&path, &settings).unwrap();
+        assert!(!load(&path).unwrap().send_receipts);
+        assert!(!settings.change("send_receipts", 2));
+        assert!(settings.change("send_receipts", 1));
         assert!(!settings.change("enter_sends", 2));
         assert!(settings.change("auto_download_photos", 0));
         save(&path, &settings).unwrap();

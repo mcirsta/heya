@@ -71,5 +71,18 @@ pub fn check_ui() {
         matches!(commands.try_recv().unwrap(),Command::ReadVisible {chat,message,revision:1} if chat==ui.get_selected_id() && message==last)
     );
     assert!(commands.try_recv().is_err());
+    let mut view = demo.conversation();
+    view.chat.unread = 0;
+    let mut messages = view.messages.to_vec();
+    messages[0].text.push_str(" (late update)");
+    view.messages = messages.into();
+    assert!(presentation::conversation(&ui, &view, false));
+    ui.invoke_layout_timeline();
+    assert_eq!(ui.get_read_tail(), last);
+    std::thread::sleep(std::time::Duration::from_millis(220));
+    slint::platform::update_timers_and_animations();
+    assert!(
+        matches!(commands.try_recv().unwrap(),Command::ReadVisible{message,..} if message==last)
+    );
     ui.hide().unwrap();
 }

@@ -169,6 +169,7 @@ fn requested(requests: &watch::Receiver<Request>) -> bool {
 }
 
 pub struct LiveServices {
+    pub preferences: watch::Receiver<crate::preferences::Preferences>,
     pub avatar_demand: watch::Receiver<Vec<i32>>,
     pub photo_demand: watch::Receiver<crate::photos::Demand>,
     pub thumbnail_demand: watch::Receiver<Vec<i32>>,
@@ -315,6 +316,7 @@ async fn connect(
         bot.client(),
         online.clone(),
         stop.clone(),
+        services.preferences.clone(),
     ));
     let mut presence = tokio::spawn(crate::protocol_presence::run(
         archive.clone(),
@@ -1195,6 +1197,7 @@ mod tests {
             updates,
             watch::channel(None).0,
             LiveServices {
+                preferences: watch::channel(crate::preferences::Preferences::default()).1,
                 avatar_demand: watch::channel(Vec::new()).1,
                 photo_demand: watch::channel(crate::photos::Demand::default()).1,
                 thumbnail_demand: watch::channel(Vec::new()).1,

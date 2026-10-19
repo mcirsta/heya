@@ -166,7 +166,7 @@ async fn photos_upgrade_reopen_encrypted_and_keep_exact_duplicate_cache() {
     old.content = Default::default();
     old.thumbnail.clear();
     insert(&db, vec![old]).await;
-    db.blocking(|c|{c.execute_batch("DROP TRIGGER discard_changed_document_preview; DROP TABLE document_previews; DROP TABLE outgoing_reads; DROP INDEX messages_action_wire; DROP TABLE reply_drafts; DROP TABLE reactions; DROP TRIGGER discard_changed_audio; DROP TABLE message_audio; DROP TRIGGER discard_changed_photo; DROP TABLE message_photos; DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; ALTER TABLE mutations DROP COLUMN raw; PRAGMA user_version=5; INSERT OR REPLACE INTO metadata(key,value) VALUES('content_decoder_revision','1');")?;Ok(())}).unwrap();
+    db.blocking(|c|{c.execute_batch("DROP TRIGGER discard_changed_document_preview; DROP TABLE document_previews; DROP TABLE outgoing_reads; DROP INDEX messages_action_wire; DROP TABLE reply_drafts; DROP TABLE reactions; DROP TRIGGER discard_changed_audio; DROP TABLE message_audio; DROP TRIGGER discard_changed_photo; DROP TABLE message_photos; DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; ALTER TABLE mutations DROP COLUMN raw; DROP TABLE outgoing_receipts; PRAGMA user_version=5; INSERT OR REPLACE INTO metadata(key,value) VALUES('content_decoder_revision','1');")?;Ok(())}).unwrap();
     drop(db);
     let db = Archive::open(files.clone(), KEY).unwrap();
     crate::protocol_messages::repair_text(&db).unwrap();

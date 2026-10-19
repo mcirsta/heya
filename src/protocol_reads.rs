@@ -78,16 +78,20 @@ pub async fn run(
     client: Arc<Client>,
     online: watch::Receiver<bool>,
     stop: watch::Receiver<bool>,
+    preferences: watch::Receiver<crate::preferences::Preferences>,
 ) -> archive::Result<()> {
-    worker(
-        archive,
-        WhatsApp(client),
-        online,
-        stop,
-        Duration::from_secs(45),
-        Duration::from_secs(30),
-    )
-    .await
+    tokio::try_join!(
+        worker(
+            archive.clone(),
+            WhatsApp(client.clone()),
+            online.clone(),
+            stop.clone(),
+            Duration::from_secs(45),
+            Duration::from_secs(30),
+        ),
+        crate::protocol_receipts::run(archive, client, online, stop, preferences)
+    )?;
+    Ok(())
 }
 
 async fn worker(

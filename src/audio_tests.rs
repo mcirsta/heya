@@ -358,7 +358,7 @@ async fn old_envelopes_migrate_and_cached_audio_reopens_encrypted() {
     let files = prepare_at(temp.path(), &MemoryVault::default()).unwrap();
     let db = Archive::open(files.clone(), KEY).unwrap();
     let id = inserted(&db).await;
-    db.blocking(|c|{c.execute_batch("DROP TRIGGER discard_changed_document_preview; DROP TABLE document_previews; DROP TABLE outgoing_reads; DROP INDEX messages_action_wire; DROP TABLE reply_drafts; DROP TABLE reactions; DROP TRIGGER discard_changed_audio; DROP TABLE message_audio; UPDATE messages SET content=''; DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; ALTER TABLE mutations DROP COLUMN raw; PRAGMA user_version=6; INSERT OR REPLACE INTO metadata(key,value) VALUES('content_decoder_revision','2');")?;Ok(())}).unwrap();
+    db.blocking(|c|{c.execute_batch("DROP TRIGGER discard_changed_document_preview; DROP TABLE document_previews; DROP TABLE outgoing_reads; DROP INDEX messages_action_wire; DROP TABLE reply_drafts; DROP TABLE reactions; DROP TRIGGER discard_changed_audio; DROP TABLE message_audio; UPDATE messages SET content=''; DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; ALTER TABLE mutations DROP COLUMN raw; DROP TABLE outgoing_receipts; PRAGMA user_version=6; INSERT OR REPLACE INTO metadata(key,value) VALUES('content_decoder_revision','2');")?;Ok(())}).unwrap();
     drop(db);
     let db = Archive::open(files.clone(), KEY).unwrap();
     crate::protocol_messages::repair_text(&db).unwrap();

@@ -73,6 +73,7 @@ mod protocol_outbox;
 mod protocol_photos;
 mod protocol_presence;
 mod protocol_reads;
+mod protocol_receipts;
 mod protocol_sync;
 mod protocol_uploads;
 mod service;

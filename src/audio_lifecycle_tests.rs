@@ -2,6 +2,95 @@ use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[tokio::test(flavor = "multi_thread")]
+async fn played_receipts_follow_confirmed_progress_and_local_privacy_not_loading_or_paused_seek() {
+    if !SUPPORTED {
+        return;
+    }
+    for (enabled, completed) in [(false, false), (true, false), (true, true)] {
+        let (_temp, db) = fixture();
+        let id = inserted(&db).await;
+        db.save_audio(
+            &db.audio_request(id).await.unwrap().unwrap(),
+            crate::fixtures::audio_bytes(),
+        )
+        .await
+        .unwrap();
+        let (_archives, archives) = watch::channel(Some(db.clone()));
+        let (_sources, sources) = watch::channel(None);
+        let (commands, rx) = mpsc::channel(8);
+        let (updates, mut status) = watch::channel(Status::default());
+        let (_prefs, preferences) = watch::channel(crate::preferences::Preferences {
+            send_receipts: enabled,
+            ..Default::default()
+        });
+        let (events, events_rx) = mpsc::unbounded_channel::<(i32, f64)>();
+        let mut events_rx = Some(events_rx);
+        let service = tokio::spawn(run_with_player_and_receipts(
+            archives,
+            sources,
+            rx,
+            updates,
+            false,
+            preferences,
+            move |initial, updates| {
+                let mut events = events_rx.take().unwrap();
+                Worker::spawn(initial, updates, move |mut desired, updates| {
+                    let initial = desired.borrow().clone();
+                    tokio::runtime::Handle::current().block_on(async move {
+                    loop {
+                        tokio::select! {
+                            event=events.recv()=>{
+                                let Some((phase,position))=event else {return Status::default();};
+                                updates.send_replace(Status{generation:initial.generation,id:initial.id,phase,position,duration:4.,speed:1.,..Default::default()});
+                            }
+                            changed=desired.changed()=>{
+                                if changed.is_err() || desired.borrow().bytes.is_none(){return Status::default();}
+                            }
+                        }
+                    }
+                })
+                })
+            },
+        ));
+        commands.send(Command::Toggle(id)).await.unwrap();
+        events.send((3, 3.)).unwrap();
+        until(&mut status, |s| s.phase == 3).await;
+        assert!(
+            db.next_receipt().await.unwrap().is_none(),
+            "paused seeking is not playback"
+        );
+        events.send((2, 0.)).unwrap();
+        until(&mut status, |s| s.phase == 2 && s.position == 0.).await;
+        assert!(
+            db.next_receipt().await.unwrap().is_none(),
+            "starting/loading without progress is not played"
+        );
+        let event = if completed { (0, 4.) } else { (2, 0.1) };
+        events.send(event).unwrap();
+        until(&mut status, |s| s.phase == event.0 && s.position == event.1).await;
+        let job = db.next_receipt().await.unwrap();
+        assert_eq!(job.is_some(), enabled);
+        if let Some(job) = job {
+            assert!(job.kind == crate::archive::ReceiptKind::Played);
+            db.finish_receipt(job).await.unwrap();
+        }
+        if !completed {
+            events.send((2, 0.2)).unwrap();
+            until(&mut status, |s| s.position == 0.2).await;
+        }
+        assert!(
+            db.next_receipt().await.unwrap().is_none(),
+            "progress must not duplicate a receipt"
+        );
+        drop(commands);
+        tokio::time::timeout(Duration::from_secs(3), service)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn idle_download_cancel_and_load_failure_never_start_a_player() {
     let (_temp, db) = fixture();
     let id = inserted(&db).await;
@@ -63,6 +152,7 @@ async fn idle_download_cancel_and_load_failure_never_start_a_player() {
         .unwrap()
         .unwrap();
     assert_eq!(starts.load(Ordering::SeqCst), 2);
+    assert!(db.next_receipt().await.unwrap().is_none());
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -22,6 +22,9 @@ pub use reads::ReadUpdate;
 #[path = "archive_read_sync.rs"]
 mod read_sync;
 pub use read_sync::{ReadMessage, ReadSync};
+#[path = "archive_receipts.rs"]
+mod receipts;
+pub use receipts::{ReceiptJob, ReceiptKind};
 #[path = "archive_actions.rs"]
 mod actions;
 #[path = "archive_attachments.rs"]
@@ -158,7 +161,7 @@ impl Archive {
         db.busy_timeout(Duration::from_secs(5))?;
         db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA secure_delete=ON; PRAGMA temp_store=MEMORY;")?;
         let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if version > 14 {
+        if version > 15 {
             return Err(Error::Database);
         }
         if version == 0 {
@@ -247,6 +250,12 @@ impl Archive {
             let tx = db.transaction()?;
             tx.execute_batch(include_str!("archive_history.sql"))?;
             tx.pragma_update(None, "user_version", 14)?;
+            tx.commit()?;
+        }
+        if version < 15 {
+            let tx = db.transaction()?;
+            tx.execute_batch(include_str!("archive_receipts.sql"))?;
+            tx.pragma_update(None, "user_version", 15)?;
             tx.commit()?;
         }
         // Never resend something that may have reached the network before a crash.
@@ -729,6 +738,9 @@ fn insert_record(tx: &Transaction<'_>, r: Record, live: bool) -> Result<()> {
     }
     if inserted > 0 {
         reads::inserted(tx, chat, inserted_row, live)?;
+        if live {
+            receipts::inserted(tx, inserted_row)?;
+        }
     }
     apply_mutations(tx, chat)?;
     controls::hide_if_needed(tx, chat, &sender, &r.id)?;
@@ -901,6 +913,11 @@ fn move_records(
         WHERE loser.{column}=?1 AND winner.id<>loser.id AND winner.raw=loser.raw AND winner.content=loser.content
         AND winner.deleted=0 AND winner.visible=1 AND (winner.expires IS NULL OR winner.expires>unixepoch())
         ON CONFLICT(message_id) DO NOTHING"), [from,to])?;
+    tx.execute(&format!("INSERT INTO outgoing_receipts(message_id,kind,state)
+        SELECT winner.id,r.kind,r.state FROM messages loser
+        JOIN messages winner ON winner.chat_id={target_chat} AND winner.sender={target_sender} AND winner.wire_id=loser.wire_id
+        JOIN outgoing_receipts r ON r.message_id=loser.id WHERE loser.{column}=?1 AND winner.id<>loser.id
+        ON CONFLICT(message_id,kind) DO UPDATE SET state=min(outgoing_receipts.state,excluded.state)"),[from,to])?;
     tx.execute(&format!("UPDATE reply_drafts SET message_id=(SELECT winner.id FROM messages loser JOIN messages winner ON winner.chat_id={target_chat} AND winner.sender={target_sender} AND winner.wire_id=loser.wire_id WHERE loser.id=reply_drafts.message_id AND loser.{column}=?1) WHERE message_id IN (SELECT id FROM messages WHERE {column}=?1)"),[from,to])?;
     tx.execute(&format!("DELETE FROM messages WHERE {column}=?1"), [from])?;
     tx.execute(
