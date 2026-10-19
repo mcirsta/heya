@@ -1,5 +1,8 @@
 //! Application commands and archive-backed views, independent of Slint/SDK types.
 #[cfg(test)]
+#[path = "message_navigation_tests.rs"]
+mod navigation_tests;
+#[cfg(test)]
 #[path = "messaging_phone_tests.rs"]
 mod phone_tests;
 use crate::archive::{Archive, Error, View};
@@ -7,6 +10,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, watch};
 
 pub enum Command {
+    Navigation(crate::message_navigation::Command),
     FetchPhone {
         chat: i32,
         revision: i32,
@@ -55,6 +59,8 @@ pub struct SendReply {
 }
 #[derive(Clone)]
 pub struct Snapshot {
+    pub search: crate::message_navigation::Search,
+    pub jump: crate::message_navigation::Jump,
     pub history: Option<crate::domain::HistoryReply>,
     pub phone: crate::phone_history::Status,
     pub operation: Option<crate::message_actions::OperationReply>,
@@ -67,6 +73,8 @@ pub struct Snapshot {
 impl Snapshot {
     pub fn empty() -> Self {
         Self {
+            search: Default::default(),
+            jump: Default::default(),
             history: None,
             phone: Default::default(),
             operation: None,
@@ -121,6 +129,10 @@ pub async fn run_with_preferences(
     let mut destinations: Arc<[crate::message_actions::Destination]> = Arc::from([]);
     let mut sent_draft: Option<(i32, String, i32)> = None;
     let mut history = None;
+    let mut search = crate::message_navigation::Search::default();
+    let mut jump = crate::message_navigation::Jump::default();
+    let mut window = None;
+    let mut return_limit = 100;
     let mut history_boundary: Option<(i32, bool, bool)> = None;
     let mut phone_pending: Option<crate::phone_history::Pending> = None;
     let mut phone_context: Option<(i32, i32, i32)> = None;
@@ -146,6 +158,7 @@ pub async fn run_with_preferences(
                 phone_pending=None;
                 if let Some((chat,request,_))=phone_context.take(){history=Some(crate::domain::HistoryReply{chat,request,success:false});}
                 archive = archives.borrow_and_update().clone();
+                window=None;search=Default::default();jump=Default::default();
                 changed = archive.as_ref().map(Archive::subscribe);
                 let enabled=preferences.borrow().send_receipts;
                 if !enabled && let Some(db)=&archive
@@ -181,6 +194,30 @@ pub async fn run_with_preferences(
                 let Some(command) = command else { return; };
                 let Some(db) = &archive else { continue; };
                 let result = match command {
+                    Command::Navigation(crate::message_navigation::Command::Search {chat,query,request,revision:seen}) => {
+                        if chat!=selected || seen!=revision {continue;}
+                        search=crate::message_navigation::Search {chat,query,request,..Default::default()};
+                        Ok(())
+                    }
+                    Command::Navigation(crate::message_navigation::Command::Navigate {chat,message,quote,request,revision:seen}) => {
+                        if chat!=selected || seen!=revision {continue;}
+                        if message==0 {
+                            window=None; limit=return_limit;
+                            jump=crate::message_navigation::Jump {request,returning:true,..Default::default()};
+                            Ok(())
+                        } else {
+                            match db.navigation_target(chat,message,quote).await {
+                                Ok((target,end))=>{
+                                    if window.is_none() {return_limit=limit;}
+                                    window=Some(end); limit=100;
+                                    phone_pending=None;phone_context=None;
+                                    jump=crate::message_navigation::Jump {request,message:target,browsing:true,returning:false};
+                                    Ok(())
+                                }
+                                Err(_)=>{jump=crate::message_navigation::Jump {request,browsing:window.is_some(),..Default::default()};notice="The original message is not available in saved history.".into();Ok(())}
+                            }
+                        }
+                    }
                     Command::Action(crate::message_actions::Command::CloseInfo)=>{info_target=None;continue;}
                     Command::Action(crate::message_actions::Command::Info {chat,message,request})=>{info_target=Some((chat,message,request));Ok(())}
                     Command::Action(crate::message_actions::Command::Edit {chat,message,expected,text,request})=>{
@@ -200,7 +237,7 @@ pub async fn run_with_preferences(
                         operation=Some(operation_reply(request,2,&result));result
                     }
                     Command::ReadVisible {chat,message,revision:seen} => {
-                        if seen!=revision || !updates.borrow().view.as_ref().and_then(|v| v.conversation.as_ref()).is_some_and(|c| c.chat.id==chat) { continue; }
+                        if window.is_some() || seen!=revision || !updates.borrow().view.as_ref().and_then(|v| v.conversation.as_ref()).is_some_and(|c| c.chat.id==chat) { continue; }
                         let send_receipts=preferences.borrow().send_receipts;
                         db.mark_visible_read_with_receipts(chat,message,send_receipts).await
                     }
@@ -226,10 +263,11 @@ pub async fn run_with_preferences(
                         let saved = save_draft(db,previous,draft,draft_version,&sent_draft).await;
                         if let Err(error)=saved {
                             revision=next;
-                            updates.send_replace(Snapshot{history,phone:Default::default(),operation:operation.clone(),destinations:destinations.clone(),revision,view:None,reply:reply.clone(),notice:error.to_string()});
+                            updates.send_replace(Snapshot{search:search.clone(),jump,history,phone:Default::default(),operation:operation.clone(),destinations:destinations.clone(),revision,view:None,reply:reply.clone(),notice:error.to_string()});
                             continue;
                         }
-                        selected=id;revision=next;limit=100;saved
+                        selected=id;revision=next;limit=100;window=None;
+                        search=Default::default();jump=Default::default();saved
                     }
                     Command::Draft(chat,text,version) => {
                         if save_draft(db,chat,text,version,&sent_draft).await.is_err() { notice="The draft could not be saved. Keep this window open and copy your text.".into(); }
@@ -279,11 +317,11 @@ pub async fn run_with_preferences(
                         revision=next;phone_pending=None;
                 if let Some((chat,request,_))=phone_context.take(){history=Some(crate::domain::HistoryReply{chat,request,success:false});}
                         if let Err(error) = save_draft(db,previous,draft,draft_version,&sent_draft).await {
-                            updates.send_replace(Snapshot {history,phone:Default::default(),operation:operation.clone(),destinations:destinations.clone(),revision,view:None,reply:reply.clone(),notice:error.to_string()});
+                            updates.send_replace(Snapshot {search:search.clone(),jump,history,phone:Default::default(),operation:operation.clone(),destinations:destinations.clone(),revision,view:None,reply:reply.clone(),notice:error.to_string()});
                             continue;
                         }
                         match crate::protocol_messages::new_chat(&value) {
-                            Ok(jid)=>match db.create_chat(jid).await {Ok(id)=>{selected=id;revision=next;limit=100;Ok(())},Err(e)=>Err(e)},
+                            Ok(jid)=>match db.create_chat(jid).await {Ok(id)=>{selected=id;revision=next;limit=100;window=None;search=Default::default();jump=Default::default();Ok(())},Err(e)=>Err(e)},
                             Err(e)=>{notice="Enter a phone number with its country code, such as +40 …".into();Err(e)}
                         }
                     }
@@ -292,6 +330,22 @@ pub async fn run_with_preferences(
             }
         }
         if let Some(db) = &archive {
+            if search.chat == selected && !search.query.trim().is_empty() {
+                match db
+                    .search_messages(selected, search.query.clone(), search.request)
+                    .await
+                {
+                    Ok(value) => search = value,
+                    Err(error) => {
+                        search.hits.clear();
+                        search.more = false;
+                        notice = error.to_string();
+                    }
+                }
+            } else {
+                search.hits.clear();
+                search.more = false;
+            }
             if let Some((chat, message, request)) = info_target {
                 operation = Some(match db.message_info(chat, message).await {
                     Ok(info) => crate::message_actions::OperationReply {
@@ -307,12 +361,11 @@ pub async fn run_with_preferences(
             let probe = db.measurements();
             let view_started = probe.as_ref().map(|_| std::time::Instant::now());
             match db
-                .view(
+                .view_window(
                     selected,
                     page.map_or(limit, |(_, _, target)| target),
-                    query.clone(),
-                    unread,
-                    false,
+                    (query.clone(), unread, false),
+                    window,
                 )
                 .await
             {
@@ -348,6 +401,8 @@ pub async fn run_with_preferences(
                         );
                     }
                     updates.send_replace(Snapshot {
+                        search: search.clone(),
+                        jump,
                         phone,
                         history,
                         operation: operation.clone(),
@@ -367,6 +422,8 @@ pub async fn run_with_preferences(
                         });
                     }
                     updates.send_replace(Snapshot {
+                        search: search.clone(),
+                        jump,
                         phone: Default::default(),
                         history,
                         operation: operation.clone(),

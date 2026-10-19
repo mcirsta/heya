@@ -289,12 +289,11 @@ async fn deselecting_releases_the_cached_timeline_and_query_uses_the_ordered_ind
     db.blocking(|c| {
         for append in [false, true] {
             let mut query = c.prepare(&format!("EXPLAIN QUERY PLAN {}", query(append)))?;
-            let params = [1, 100, 0, 0];
+            let params = [1i64, 100, 0, 0, i64::MAX, i32::MAX as i64];
             let plan = query
-                .query_map(
-                    rusqlite::params_from_iter(params[..if append { 4 } else { 2 }].iter()),
-                    |r| r.get::<_, String>(3),
-                )?
+                .query_map(rusqlite::params_from_iter(params.iter()), |r| {
+                    r.get::<_, String>(3)
+                })?
                 .collect::<std::result::Result<Vec<_>, _>>()?
                 .join("\n");
             assert!(plan.contains("messages_visible_timeline"), "{plan}");

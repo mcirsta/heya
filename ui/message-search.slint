@@ -1,0 +1,49 @@
+import { ListView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { IconButton } from "components.slint";
+export struct MessageSearchHit {id:int,text:string,time:string}
+export component MessageSearch inherits Rectangle {
+    in property <[MessageSearchHit]> hits;
+    in property <string> status;
+    in property <bool> busy;
+    callback search(string);
+    callback choose(int);
+    callback close();
+    background:Theme.panel;
+    FocusScope {
+        width:parent.width;height:parent.height;
+        init=>{field.focus();}
+        key-pressed(event)=>{if event.text==Key.Escape {root.close();return accept;} return reject;}
+        VerticalLayout {
+            padding:10px;spacing:6px;
+            HorizontalLayout {
+                height:34px;spacing:8px;
+                Rectangle {
+                    horizontal-stretch:1;background:Theme.surface;border-radius:8px;
+                    Text {x:10px;height:parent.height;text:@tr("Search saved messages");visible:field.text=="";color:Theme.dim;vertical-alignment:center;}
+                    field:=TextInput {
+                        x:10px;width:parent.width - 20px;height:parent.height;single-line:true;
+                        color:Theme.text;vertical-alignment:center;accessible-label:@tr("Search saved messages in this conversation");
+                        edited=>{root.search(self.text);}
+                        accepted=>{if !root.busy && root.hits.length>0 {root.choose(root.hits[0].id);}}
+                    }
+                }
+                IconButton {icon:@image-url("icons/close.svg");label:@tr("Close message search");activated=>{root.close();}}
+            }
+            Text {height:20px;text:root.status;color:Theme.secondary;font-size:12px;overflow:elide;}
+            ListView {
+                for hit in root.hits: Rectangle {
+                    height:52px;background:area.has-hover ? Theme.hover : transparent;
+                    Text {x:8px;y:3px;width:parent.width - 16px;height:24px;text:hit.text;color:Theme.text;overflow:elide;}
+                    Text {x:8px;y:29px;width:parent.width - 16px;height:17px;text:hit.time;color:Theme.secondary;font-size:11px;overflow:elide;}
+                    area:=TouchArea {
+                        enabled:!root.busy;mouse-cursor:pointer;
+                        accessible-role:button;accessible-label:hit.text + " " + hit.time;
+                        accessible-action-default=>{root.choose(hit.id);}
+                        clicked=>{root.choose(hit.id);}
+                    }
+                }
+            }
+        }
+    }
+}

@@ -31,6 +31,7 @@ export component TimelineItem inherits Rectangle {
     in property <bool> can-reply: true;
     in property <bool> selection-mode;
     in property <bool> selected;
+    in property <bool> highlighted;
     in property <length> viewport-top;
     in property <length> viewport-bottom;
     private property <bool> new-day: root.day-label != "";
@@ -41,6 +42,7 @@ export component TimelineItem inherits Rectangle {
     private property <length> before-bubble: root.top-inset + (root.new-day ? 8px + root.date-height + 7px : (!root.first && root.message.first-in-run ? 5px : 0px));
     out property <length> bubble-offset: root.before-bubble;
     height: root.before-bubble + root.body-height + (root.last ? 14px : 0px);
+    if root.highlighted && !root.measurement-only:Rectangle {width:root.width;height:root.height;background:Theme.selected.with-alpha(0.5);}
     if root.selection-mode && root.selected:Rectangle {
         width:root.width;height:root.height;background:Theme.selected.with-alpha(0.5);
     }

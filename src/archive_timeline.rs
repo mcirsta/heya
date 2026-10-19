@@ -7,7 +7,7 @@ const SELECT: &str =
     "SELECT m.id,coalesce(nullif(n.saved_name,''),nullif(n.profile_name,''),m.sender_name),
     m.sender,m.body,m.stamp,m.outgoing,m.delivery,m.content,m.wire_id,m.deleted,length(m.raw)
     FROM messages m LEFT JOIN contacts n ON n.jid=m.sender
-    WHERE m.chat_id=?1 AND m.visible=1";
+    WHERE m.chat_id=?1 AND m.visible=1 AND (m.stamp,m.id)<=(?5,?6)";
 fn query(append: bool) -> String {
     let after = if append {
         " AND (m.stamp,m.id)>(?3,?4)"
@@ -28,6 +28,7 @@ struct Key {
     chat: i32,
     limit: usize,
     group: bool,
+    end: Option<(i64, i32)>,
     utc_offset: i32,
     data_version: i64,
 }
@@ -109,6 +110,7 @@ impl Cache {
         chat: i32,
         limit: usize,
         group: bool,
+        end: Option<(i64, i32)>,
         probe: Option<&Probe>,
     ) -> Result<Rows> {
         let started = probe.map(|_| Instant::now());
@@ -116,6 +118,7 @@ impl Cache {
             chat,
             limit,
             group,
+            end,
             utc_offset: chrono::Local::now().offset().local_minus_utc(),
             // TEMP triggers see our connection only. Also detect commits from
             // another connection, such as a repair tool or an archive test.
@@ -134,6 +137,10 @@ impl Cache {
         } else {
             None
         };
+        if end.is_some() && cached.as_ref().is_some_and(|(_, count)| *count > 0) {
+            cached = None;
+        }
+        let boundary = end.unwrap_or((i64::MAX, i32::MAX));
         if let Some((rows, 0)) = &cached {
             if let (Some(probe), Some(started)) = (probe, started) {
                 probe.record(Metric::TimelineReuse, started.elapsed());
@@ -161,15 +168,15 @@ impl Cache {
             rows.total + count
         } else {
             db.query_row(
-                "SELECT count(*) FROM messages WHERE chat_id=?1 AND visible=1",
-                [chat],
+                "SELECT count(*) FROM messages WHERE chat_id=?1 AND visible=1 AND (stamp,id)<=(?2,?3)",
+                params![chat,boundary.0,boundary.1],
                 |r| r.get::<_, i64>(0),
             )? as usize
         };
         let projection_limit = cached
             .as_ref()
             .map_or(limit, |(_, count)| limit.min(*count));
-        let mut projections = actions::Projection::load(db, chat, projection_limit)?;
+        let mut projections = actions::Projection::load(db, chat, projection_limit, boundary)?;
         // Read the timeline index backwards and reverse the row vector.
         // Avoid materializing SELECT * (including envelopes/thumbnails) and a
         // second SQL sort just to restore chronological display order.
@@ -230,11 +237,28 @@ impl Cache {
         let rows = if let Some((old, _)) = &cached {
             let last = old.messages.last().ok_or(Error::Database)?;
             stmt.query_map(
-                params![chat, limit as i64, last.content.metadata.stamp, last.id],
+                params![
+                    chat,
+                    limit as i64,
+                    last.content.metadata.stamp,
+                    last.id,
+                    boundary.0,
+                    boundary.1
+                ],
                 decode,
             )?
         } else {
-            stmt.query_map(params![chat, limit as i64], decode)?
+            stmt.query_map(
+                params![
+                    chat,
+                    limit as i64,
+                    rusqlite::types::Null,
+                    rusqlite::types::Null,
+                    boundary.0,
+                    boundary.1
+                ],
+                decode,
+            )?
         };
         let mut messages = rows.collect::<std::result::Result<Vec<_>, _>>()?;
         messages.reverse();

@@ -314,7 +314,7 @@ pub fn attach(
     })
 }
 
-fn enqueue(ui: &AppWindow, commands: &mpsc::Sender<Command>, command: Command) -> bool {
+pub(crate) fn enqueue(ui: &AppWindow, commands: &mpsc::Sender<Command>, command: Command) -> bool {
     if commands.try_send(command).is_err() {
         ui.set_notice("Heya is busy. Your text is still here; please try again.".into());
         false
@@ -403,6 +403,7 @@ pub(crate) fn bind_messages(ui: &AppWindow, commands: mpsc::Sender<Command>) {
             }
         }
     });
+    crate::presentation_navigation::bind_live(ui, commands.clone());
     ui.on_search_chats({
         let weak = ui.as_weak();
         let tx = commands.clone();
@@ -552,6 +553,8 @@ pub(crate) fn publish_messages(ui: &AppWindow, snapshot: &messaging::Snapshot) {
         // Release the navigation gate so editing/retry remains possible. Keep
         // the last chat's capability; the archive rechecks it on every send.
         ui.set_live_shown_revision(snapshot.revision);
+        ui.set_navigation_shown(ui.get_navigation_request());
+        ui.set_message_search_busy(false);
         if let Some(reply) = snapshot.history {
             presentation::timeline::history_finished(ui, reply);
         }
@@ -573,6 +576,7 @@ pub(crate) fn publish_messages(ui: &AppWindow, snapshot: &messaging::Snapshot) {
                 .into(),
         );
     }
+    crate::presentation_navigation::prepare(ui, snapshot);
     if let Some(conversation) = &view.conversation {
         let restore = ui.get_live_shown_revision() != snapshot.revision
             || ui.get_selected_id() != conversation.chat.id;
@@ -591,6 +595,7 @@ pub(crate) fn publish_messages(ui: &AppWindow, snapshot: &messaging::Snapshot) {
         ui.set_older_count(0);
     }
     ui.set_live_shown_revision(snapshot.revision);
+    crate::presentation_navigation::publish(ui, snapshot);
     if let Some(reply) = snapshot.history {
         presentation::timeline::history_finished(ui, reply);
     }

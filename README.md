@@ -120,7 +120,14 @@ that reports no more accessible history stops further requests. Navigation,
 disconnect and close cancel pending request work; late replies still import
 safely. The owner confirmed older messages loading from the phone on 17 October
 2026. Recovery across phone/network failures still needs deliberate live checks.
-Chat search matches the displayed chat name (or number for unnamed chats); full message search is still pending. Cached chats remain
+Chat search matches the displayed chat name (or number for unnamed chats).
+The conversation header’s search button searches saved message text and captions,
+including older cached messages. It shows the newest 100 matches; narrow the query
+for more. Select a result or click a quoted message to highlight the original.
+**Back to previous view** restores the earlier timeline position and keeps the draft.
+Search stays local to the encrypted archive; missing, deleted or expired originals
+are reported as unavailable, without automatically requesting phone history.
+Cached chats remain
 available after Disconnect and can be reopened with `--offline`.
 
 Synced phonebook names are stored separately from sender profile names and take

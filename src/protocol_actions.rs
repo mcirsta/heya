@@ -161,3 +161,20 @@ pub fn decorate(message: &wa::Message, content: &mut message_content::Content) {
         }
     }
 }
+
+/// Original quote identity, including legacy archived envelopes. SDK types stay here.
+pub fn quoted_key(raw: &[u8]) -> Option<(String, String, String)> {
+    let message = codec::message_decode(raw).ok()?;
+    let context = message.get_base_message().context_info()?;
+    let address = |value: Option<&str>| -> Option<String> {
+        match value.filter(|s| !s.is_empty()) {
+            Some(value) => Some(crate::protocol_messages::address(&value.parse().ok()?)),
+            None => Some(String::new()),
+        }
+    };
+    Some((
+        context.stanza_id.clone().filter(|s| !s.is_empty())?,
+        address(context.participant.as_deref())?,
+        address(context.remote_jid.as_deref())?,
+    ))
+}

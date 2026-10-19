@@ -192,6 +192,8 @@ pub struct DemoState {
     pub query: String,
     pub unread_only: bool,
     next_message_id: MessageId,
+    pub navigation_end: Option<usize>,
+    pub quote_targets: std::collections::HashMap<MessageId, MessageId>,
 }
 
 impl Chat {
@@ -242,6 +244,8 @@ impl DemoState {
             query: String::new(),
             unread_only: false,
             next_message_id,
+            navigation_end: None,
+            quote_targets: Default::default(),
         }
     }
 
@@ -261,8 +265,12 @@ impl DemoState {
             .iter()
             .find(|c| c.id == self.selected)
             .expect("selected chat exists");
-        let start = chat.messages.len().saturating_sub(chat.visible_count);
-        let messages = chat.messages[start..].to_vec();
+        let end = self
+            .navigation_end
+            .unwrap_or(chat.messages.len())
+            .min(chat.messages.len());
+        let start = end.saturating_sub(chat.visible_count);
+        let messages = chat.messages[start..end].to_vec();
         let transcript = messages
             .iter()
             .map(Message::transcript_line)
@@ -283,6 +291,7 @@ impl DemoState {
         if let Some(chat) = self.chats.iter_mut().find(|c| c.id == id) {
             chat.unread = 0;
             self.selected = id;
+            self.navigation_end = None;
             true
         } else {
             false
@@ -313,6 +322,7 @@ impl DemoState {
             content: Default::default(),
         };
         if let Some(reply) = self.reply_drafts.remove(&id) {
+            self.quote_targets.insert(message.id, reply.id);
             std::sync::Arc::make_mut(&mut message.content).quote =
                 Some(crate::message_content::Quote {
                     sender: reply.sender,

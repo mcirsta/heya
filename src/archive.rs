@@ -41,6 +41,8 @@ mod downloads;
 mod edits;
 #[path = "archive_history.rs"]
 mod history;
+#[path = "archive_navigation.rs"]
+mod navigation;
 #[path = "archive_photos.rs"]
 mod photos;
 #[path = "archive_repair.rs"]
@@ -561,6 +563,7 @@ impl Archive {
         Ok(())
     }
 
+    #[cfg(test)]
     pub async fn view(
         &self,
         selected: i32,
@@ -569,6 +572,18 @@ impl Archive {
         unread: bool,
         mark_read: bool,
     ) -> Result<View> {
+        self.view_window(selected, limit, (query, unread, mark_read), None)
+            .await
+    }
+
+    pub async fn view_window(
+        &self,
+        selected: i32,
+        limit: usize,
+        filters: (String, bool, bool),
+        end: Option<(i64, i32)>,
+    ) -> Result<View> {
+        let (query, unread, mark_read) = filters;
         let probe = self.measurements();
         let archive = self.clone();
         self.call(move |db| {
@@ -628,14 +643,14 @@ impl Archive {
                 // The cache contains only the loaded timeline. Sidebar, draft,
                 // reply, permissions and history state remain fresh on every view.
                 let rows = archive.0.timeline.lock().map_err(|_|Error::Database)?
-                    .load(db,selected,limit,group,probe.as_deref())?;
+                    .load(db,selected,limit,group,end,probe.as_deref())?;
                 Some(domain::Conversation {chat:summary,is_group:group,messages:rows.messages,draft,reply:actions::draft(db,selected)?,older_count:rows.total.saturating_sub(limit),transcript:rows.transcript})
             } else {
                 archive.0.timeline.lock().map_err(|_|Error::Database)?.clear(db)?;
                 None
             };
             let history_failed = db.query_row("SELECT EXISTS(SELECT 1 FROM history_chunks WHERE state='failed')", [], |r| r.get(0))?;
-            let result=View {chats,conversation,can_send,history_failed,phone_more:history::more(db,selected)?};
+            let result=View {chats,conversation,can_send,history_failed,phone_more:end.is_none() && history::more(db,selected)?};
             if let (Some(probe),Some(started))=(probe,started) {probe.record(crate::performance::Metric::ViewBuild,started.elapsed());}
             Ok(result)
         }).await

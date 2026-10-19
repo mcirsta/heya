@@ -238,6 +238,8 @@ pub fn start(
         phone_more: false,
     };
     let snapshot = messaging::Snapshot {
+        search: Default::default(),
+        jump: Default::default(),
         history: None,
         phone: Default::default(),
         operation: None,
@@ -324,6 +326,8 @@ pub fn start(
     let stress_snapshot = {
         state.chats[5].visible_count = 10_000;
         messaging::Snapshot {
+            search: Default::default(),
+            jump: Default::default(),
             operation: None,
             destinations: Arc::from([]),
             view: Some(Arc::new(View {
@@ -349,6 +353,8 @@ pub fn start(
                 let mut view = view.clone();
                 Arc::make_mut(&mut view.chats)[0].preview = format!("Synthetic update {sequence}");
                 updates.send_replace(messaging::Snapshot {
+                    search: Default::default(),
+                    jump: Default::default(),
                     operation: None,
                     destinations: Arc::from([]),
                     view: Some(Arc::new(view)),

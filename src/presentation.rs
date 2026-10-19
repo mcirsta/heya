@@ -240,6 +240,15 @@ pub(crate) fn conversation(
         (view.chat.tint >> 8) as u8,
         view.chat.tint as u8,
     );
+    if restore_draft {
+        ui.set_message_search_open(false);
+        ui.set_message_search_query("".into());
+        ui.set_browsing_history(false);
+        ui.set_highlighted_message(0);
+        ui.set_navigation_shown(ui.get_navigation_request());
+        ui.set_message_search_busy(false);
+        ui.set_message_search_hits(ModelRc::default());
+    }
     ui.set_selected_id(view.chat.id);
     ui.set_read_needs_clear(view.chat.unread > 0 || view.chat.marked_unread);
     ui.set_reply_id(view.reply.as_ref().map_or(0, |r| r.id));
@@ -292,6 +301,27 @@ pub(crate) fn conversation(
 
 fn publish(ui: &AppWindow, update: Update) {
     match update {
+        Update::Search(search) => {
+            crate::presentation_navigation::publish(
+                ui,
+                &crate::messaging::Snapshot {
+                    search,
+                    ..crate::messaging::Snapshot::empty()
+                },
+            );
+        }
+        Update::Navigation { view, jump } => {
+            let snapshot = crate::messaging::Snapshot {
+                jump,
+                ..crate::messaging::Snapshot::empty()
+            };
+            crate::presentation_navigation::prepare(ui, &snapshot);
+            conversation(ui, &view, false);
+            crate::presentation_navigation::publish(ui, &snapshot);
+            if jump.message == 0 && !jump.returning {
+                ui.set_notice("The original message is not available in saved history.".into());
+            }
+        }
         Update::Action {
             view,
             result,
@@ -348,6 +378,10 @@ pub fn attach(
         move |command| tx.try_send(Command::Action(command)).is_ok()
     });
     let tx = Rc::new(tx);
+    crate::presentation_navigation::bind(ui, {
+        let tx = tx.clone();
+        move |ui, command| enqueue(ui, &tx, Command::Navigation(command))
+    });
 
     ui.on_select_chat({
         let weak = ui.as_weak();
@@ -952,6 +986,8 @@ mod tests {
         Arc::make_mut(&mut conversation.messages)[0].time =
             "14 Oct 12:00 · Unconfirmed · check phone".into();
         let snapshot = messaging::Snapshot {
+            search: Default::default(),
+            jump: Default::default(),
             history: None,
             phone: Default::default(),
             operation: None,
@@ -1028,6 +1064,8 @@ mod tests {
         live_presentation::publish_messages(
             &ui,
             &messaging::Snapshot {
+                search: Default::default(),
+                jump: Default::default(),
                 operation: None,
                 destinations: Arc::from([]),
                 reply: Some(reply),
@@ -1051,6 +1089,8 @@ mod tests {
         live_presentation::publish_messages(
             &ui,
             &messaging::Snapshot {
+                search: Default::default(),
+                jump: Default::default(),
                 operation: None,
                 destinations: Arc::from([]),
                 revision: ui.get_live_revision(),
@@ -1114,6 +1154,7 @@ mod tests {
         crate::presentation_attachments::check_ui();
         crate::presentation_voice::check_ui();
         crate::presentation_read_tests::check_ui();
+        crate::presentation_navigation::check_ui();
         crate::presentation_presence::tests::check_ui();
         check_wallpaper_coverage();
         let ui = AppWindow::new().unwrap();

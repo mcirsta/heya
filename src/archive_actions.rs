@@ -75,14 +75,19 @@ pub(super) struct Projection {
     pending: std::collections::HashMap<String, String>,
 }
 impl Projection {
-    pub(super) fn load(db: &Connection, chat: i32, limit: usize) -> Result<Self> {
+    pub(super) fn load(
+        db: &Connection,
+        chat: i32,
+        limit: usize,
+        boundary: (i64, i32),
+    ) -> Result<Self> {
         let mut value = Self {
             reactions: Default::default(),
             names: Default::default(),
             pending: controls::pending(db, chat, limit)?,
         };
-        let mut q=db.prepare("SELECT r.target,r.actor,r.emoji,coalesce(m.delivery,r.delivery) FROM reactions r LEFT JOIN messages m ON r.actor='#self' AND m.chat_id=r.chat_id AND m.sender='#self' AND m.wire_id=r.event_wire WHERE r.chat_id=?1 AND r.target IN (SELECT wire_id FROM messages WHERE chat_id=?1 AND visible=1 AND deleted=0 ORDER BY stamp DESC,id DESC LIMIT ?2) AND (SELECT count(*) FROM messages original WHERE original.chat_id=r.chat_id AND original.wire_id=r.target AND original.visible=1)=1")?;
-        for row in q.query_map(params![chat, limit as i64], |r| {
+        let mut q=db.prepare("SELECT r.target,r.actor,r.emoji,coalesce(m.delivery,r.delivery) FROM reactions r LEFT JOIN messages m ON r.actor='#self' AND m.chat_id=r.chat_id AND m.sender='#self' AND m.wire_id=r.event_wire WHERE r.chat_id=?1 AND r.target IN (SELECT wire_id FROM messages WHERE chat_id=?1 AND visible=1 AND deleted=0 AND (stamp,id)<=(?3,?4) ORDER BY stamp DESC,id DESC LIMIT ?2) AND (SELECT count(*) FROM messages original WHERE original.chat_id=r.chat_id AND original.wire_id=r.target AND original.visible=1)=1")?;
+        for row in q.query_map(params![chat, limit as i64, boundary.0, boundary.1], |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, String>(1)?,

@@ -1,4 +1,6 @@
 export { AudioPlayback } from "audio.slint";
+import { MessageSearch, MessageSearchHit } from "message-search.slint";
+export { MessageSearchHit }
 import { ListView, ScrollView } from "std-widgets.slint";
 import { Theme, Metrics } from "theme.slint";
 import {
@@ -218,6 +220,7 @@ export component AppWindow inherits Window {
     in property <bool> read-needs-clear;
     changed read-needs-clear => { if root.read-needs-clear { root.read-visible(); } }
     out property <int> read-visible-message: !root.demo-mode && root.live-chat-view
+        && !root.message-search-open && !root.browsing-history && root.navigation-request==root.navigation-shown
         && root.read-window-active && !root.read-window-occluded && !root.minimized
         && !root.settings-open && !root.new-chat-open && root.account-dialog==0
         && root.photo-viewer-id==0 && root.message-dialog==0 && !root.attachment-modal && !root.microphone-dialog
@@ -248,7 +251,7 @@ export component AppWindow inherits Window {
     callback request-avatars();
     changed avatar-first => { root.request-avatars(); }
     changed avatar-count => { root.request-avatars(); }
-    changed selected-id => { if root.message-dialog==8 {root.close-message-info();} root.selection-control(0); if root.voice-phase>0 && root.voice-phase!=5 {root.voice-control(1);} root.attachment-menu=false; root.message-dialog=0; root.audio-control(0,3,0); root.photo-viewer-id = 0; root.request-avatars(); }
+    changed selected-id => { root.message-search-open=false;root.message-search-query="";root.browsing-history=false;root.highlighted-message=0; if root.message-dialog==8 {root.close-message-info();} root.selection-control(0); if root.voice-phase>0 && root.voice-phase!=5 {root.voice-control(1);} root.attachment-menu=false; root.message-dialog=0; root.audio-control(0,3,0); root.photo-viewer-id = 0; root.request-avatars(); }
     in property <string> chat-presence;
     in property <bool> chat-online;
     out property <int> presence-chat: !root.demo-mode && root.live-chat-view
@@ -315,6 +318,22 @@ export component AppWindow inherits Window {
     private property <length> conversation-left: root.narrow ? 0px : root.show-sidebar ? root.sidebar-width : 60px;
     callback select-chat(int);
     callback search-chats(string);
+    in-out property <bool> message-search-open;
+    in-out property <string> message-search-query;
+    in property <[MessageSearchHit]> message-search-hits;
+    in property <string> message-search-status;
+    in-out property <bool> message-search-busy;
+    in-out property <int> message-search-request;
+    in-out property <int> navigation-request;
+    in property <int> navigation-shown;
+    in-out property <bool> browsing-history;
+    in-out property <int> highlighted-message;
+    callback search-messages(string);
+    callback navigate-message(int,bool);
+    public function close-message-search() {
+        root.message-search-open=false;root.message-search-query="";root.search-messages("");
+    }
+
     callback filter-unread(bool);
     callback send-message(int, string);
     callback load-older(int,int) -> bool;
@@ -864,8 +883,9 @@ export component AppWindow inherits Window {
 
                                     IconButton {
                                         icon: @image-url("icons/search.svg");
-                                        label: @tr("Search in conversation — not implemented yet");
-                                        enabled: false;
+                                        label: @tr("Search saved messages in conversation");
+                                        enabled: root.selected-id>0 && !root.selection-active;
+                                        activated => {if root.message-search-open {root.close-message-search();} else {root.message-search-open=true;root.search-messages("");}}
                                     }
 
                                     IconButton {
@@ -921,6 +941,18 @@ export component AppWindow inherits Window {
                                 }
                             }
 
+                            if root.message-search-open: MessageSearch {
+                                height:min(260px,max(140px,root.height * 0.32));
+                                hits:root.message-search-hits;status:root.message-search-status;busy:root.message-search-busy;
+                                search(query)=>{root.message-search-query=query;root.search-messages(query);}
+                                choose(id)=>{root.navigate-message(id,false);}
+                                close=>{root.close-message-search();}
+                            }
+                            if root.browsing-history: Rectangle {
+                                height:34px;background:Theme.panel;
+                                Text {x:12px;width:parent.width - 24px;height:parent.height;text:@tr("Back to previous view");color:Theme.accent;vertical-alignment:center;}
+                                TouchArea {mouse-cursor:pointer;accessible-role:button;accessible-label:@tr("Back to previous view");accessible-action-default=>{root.navigate-message(0,false);}clicked=>{root.navigate-message(0,false);}}
+                            }
                             timeline := ScrollView {
                                 accessible-role: list;
                                 accessible-orientation: vertical;
@@ -930,6 +962,7 @@ export component AppWindow inherits Window {
                                     y: row.top * 1px;
                                     width: timeline.visible-width;
                                     message: row.message;
+                                    highlighted:row.message.id==root.highlighted-message;
                                     first: row.first;
                                     last: row.last;
                                     day-label: row.day-label;
@@ -945,7 +978,7 @@ export component AppWindow inherits Window {
                                     viewport-bottom: -timeline.content-y - row.top * 1px + timeline.visible-height;
                                     message-action(id,action,x,y) => {root.message-action(id,action,x,y);}
                                     audio-control(id,action,value) => {root.audio-control(id,action,value);}
-                                    activate(id,index) => { if index == -5 { root.activate-photo(id); } else { root.activate-message(id,index); } }
+                                    activate(id,index) => { if index == -7 {root.navigate-message(id,true);} else if index == -5 { root.activate-photo(id); } else { root.activate-message(id,index); } }
                                 }
                             }
 

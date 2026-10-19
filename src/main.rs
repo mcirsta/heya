@@ -24,6 +24,7 @@ mod macos_audio;
 mod media_process;
 mod message_actions;
 mod message_content;
+mod message_navigation;
 mod message_thumbnails;
 mod message_time;
 mod messaging;
@@ -48,6 +49,7 @@ mod presentation_hover_tests;
 #[cfg(test)]
 mod presentation_menu_tests;
 mod presentation_message_controls;
+mod presentation_navigation;
 mod presentation_photos;
 mod presentation_preferences;
 mod presentation_presence;

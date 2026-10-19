@@ -42,8 +42,13 @@ later deliberate Linux/device/account checks remain required. This is not a
 completed release gate or a claim of official-client parity. Broader account
 privacy editing remains on the phone for this slice.
 
-Search and quote navigation share message-identity lookup and bounded archive
-paging; finish that navigation path before adding more text-selection behavior.
+The second slice adds conversation-local, Unicode-aware literal search over the
+encrypted archive, bounded to the newest 100 matches, plus quote/result navigation
+through a 100-message window and a return-position anchor. Search excludes hidden,
+deleted and expired messages and refreshes after archive changes. Both platforms
+share the worker and UI code; local macOS synthetic tests and Linux CI cover the
+implementation. Deliberate live-account checks and later Linux desktop validation
+remain open.
 Clipboard/drop handling shares the existing attachment flow rather than creating
 a second sending pipeline.
 

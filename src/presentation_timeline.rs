@@ -137,6 +137,7 @@ struct State {
     bottom: bool,
     group: bool,
     transcript: Arc<str>,
+    return_anchor: Option<(i32, f64, bool)>,
     images: HashMap<i32, (Arc<crate::photos::Pixels>, slint::Image)>,
     today: chrono::NaiveDate,
     photos: HashMap<i32, PhotoImage>,
@@ -280,6 +281,9 @@ impl State {
         self.source = source;
         self.heights = Heights::new(values);
         self.group = group;
+        if reset {
+            self.return_anchor = None;
+        }
         self.bottom |= reset;
         self.restore((anchor_index, if reset { 0. } else { old_anchor.1 }));
         changed
@@ -965,6 +969,74 @@ pub(super) fn append(ui: &AppWindow, message: domain::Message, transcript: Arc<s
         model.notify.reset();
         model.layout(ui, false);
     });
+}
+
+/// Save one identity anchor, rather than accumulating a navigation stack.
+pub(crate) fn save_position(ui: &AppWindow) {
+    with(ui, |model| {
+        model.read_scroll(ui);
+        let mut state = model.state.borrow_mut();
+        let (index, within) = state.anchor();
+        state.return_anchor = state.source.get(index).map(|m| {
+            (
+                m.id,
+                within - state.cache[index].prefix.unwrap_or(0.),
+                state.bottom,
+            )
+        });
+    });
+}
+pub(crate) fn navigate(ui: &AppWindow, message: i32, returning: bool) -> bool {
+    let found = Cell::new(false);
+    with(ui, |model| {
+        let mut state = model.state.borrow_mut();
+        let target = if returning {
+            state.return_anchor.take()
+        } else {
+            Some((message, 0., false))
+        };
+        if let Some((id, within, bottom)) = target
+            && let Some(index) = state.source.iter().position(|m| m.id == id)
+        {
+            // Measure the destination before restoring an offset inside its
+            // bubble. A window boundary can add/remove a date chip above it.
+            state.bottom = false;
+            state.restore((index, 0.));
+            drop(state);
+            model.layout(ui, false);
+            state = model.state.borrow_mut();
+            if let Some(index) = state.source.iter().position(|m| m.id == id) {
+                let prefix = if returning {
+                    state.cache[index].prefix.unwrap_or(0.)
+                } else {
+                    0.
+                };
+                state.bottom = bottom;
+                state.restore((index, (within + prefix).max(0.)));
+                found.set(true);
+            }
+        } else if returning {
+            // Expired/deleted anchors have no exact position to restore.
+            state.bottom = true;
+            state.restore((0, 0.));
+        }
+        drop(state);
+        model.layout(ui, false);
+    });
+    found.get()
+}
+
+#[cfg(test)]
+pub(crate) fn position(ui: &AppWindow) -> (i32, f64) {
+    let position = Cell::new((0, 0.));
+    with(ui, |model| {
+        let s = model.state.borrow();
+        let (i, within) = s.anchor();
+        if let Some(m) = s.source.get(i) {
+            position.set((m.id, within - s.cache[i].prefix.unwrap_or(0.)));
+        }
+    });
+    position.get()
 }
 
 #[cfg(test)]

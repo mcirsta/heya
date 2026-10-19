@@ -184,6 +184,7 @@ export component MessageBubble inherits Rectangle {
             Rectangle {x:0px;y:0px;width:3px;height:parent.height;background:Theme.accent;}
             Text {x:8px;y:4px;width:parent.width - 16px;height:16px;text:root.message.quote-sender;color:Theme.accent;font-size:12px;font-weight:600;overflow:elide;}
             Text {x:8px;y:23px;width:parent.width - 16px;height:16px;text:root.message.quote-text;color:Theme.secondary;font-size:12px;overflow:elide;}
+            TouchArea {enabled:root.actions-enabled;mouse-cursor:pointer;accessible-role:button;accessible-label:@tr("Go to quoted message");accessible-action-default=>{root.activate(-7);}clicked=>{root.activate(-7);}}
         }
 
         if root.has-preview: preview := PreviewCard {
