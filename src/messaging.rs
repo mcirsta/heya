@@ -210,7 +210,8 @@ pub async fn run_with_preferences(
                                 Ok((target,end))=>{
                                     if window.is_none() {return_limit=limit;}
                                     window=Some(end); limit=100;
-                                    phone_pending=None;phone_context=None;
+                                    phone_pending=None;
+                                    if let Some((chat,request,_))=phone_context.take(){history=Some(crate::domain::HistoryReply{chat,request,success:false});}
                                     jump=crate::message_navigation::Jump {request,message:target,browsing:true,returning:false};
                                     Ok(())
                                 }

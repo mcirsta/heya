@@ -96,6 +96,27 @@ async fn phone_requests_coalesce_without_blocking_drafts_navigation_or_shutdown(
         .await
         .unwrap();
     commands
+        .send(Command::Navigation(
+            crate::message_navigation::Command::Navigate {
+                chat: 1,
+                message: 1,
+                quote: false,
+                request: 1,
+                revision: 1,
+            },
+        ))
+        .await
+        .unwrap();
+    let cancelled_page = until(&mut views, |s| {
+        s.jump.request == 1 && s.history.is_some_and(|h| h.request == 1)
+    })
+    .await;
+    assert!(!cancelled_page.phone.loading);
+    assert!(
+        !cancelled_page.history.unwrap().success,
+        "navigation must release the timeline's pending history request"
+    );
+    commands
         .send(Command::Select {
             id: second,
             previous: 1,
