@@ -30,6 +30,10 @@ fn receipts_disabled(
     }
 }
 
+fn may_notify(chat: &whatsapp_rust::wacore_binary::Jid, disabled: bool) -> bool {
+    chat.is_group() || (!disabled && (chat.is_pn() || chat.is_lid()))
+}
+
 #[async_trait::async_trait]
 impl Transport for WhatsApp {
     async fn send(&self, job: &ReceiptJob) -> bool {
@@ -70,8 +74,13 @@ impl Transport for WhatsApp {
         let Some(disabled) = receipts_disabled(&settings) else {
             return false;
         };
-        // The SDK routes disabled DM receipts to read-self/played-self and keeps
-        // group behavior. Refresh its existing gate through the public API.
+        // Gate disabled DMs here too: SDK initialization refreshes its mutable
+        // cache concurrently, so that cache must not be our only privacy guard.
+        // Private unread state still synchronizes through the separate worker.
+        if !may_notify(&chat, disabled) {
+            return true;
+        }
+        // Refresh the SDK's existing gate through its public API as well.
         self.0
             .persistence_manager()
             .process_command(

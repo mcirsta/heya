@@ -30,9 +30,11 @@ Schema 15 adds an encrypted per-message receipt queue. One background sender
 batches up to 256 IDs with the same chat, participant and receipt kind. Before
 each batch it fetches account privacy through the pinned SDK's public API. A
 failed fetch or unknown value leaves the batch pending; it never defaults to
-permission to notify the sender. The SDK's existing privacy gate routes disabled
-direct-message receipts to `read-self`/`played-self`, while group behavior is
-preserved. Heya's local off switch suppresses both paths. This is the pinned
+permission to notify the sender. Known-disabled direct-message receipts are
+consumed without transmission; private unread synchronization continues through
+its separate worker. This explicit guard does not rely solely on the SDK's
+concurrently refreshed privacy cache. Group receipt behavior is preserved;
+Heya's local off switch suppresses group receipts too. This follows the pinned
 SDK's policy, not a claim of verified behavior in every official client.
 
 Offline work waits for reconnect. Failure/timeout backs off for 30 seconds;
@@ -52,8 +54,8 @@ Linux CI does not establish Linux desktop/device compatibility.
 The SDK's played-receipt privacy routing needs a deliberate account check:
 WhatsApp's [read-receipt help](https://faq.whatsapp.com/665923838265756/)
 describes voice-play exceptions, while the pinned SDK explicitly routes disabled
-DM played receipts to `played-self`. This slice keeps that more restrictive SDK
-behavior and does not override account privacy to force a public played receipt.
+DM played receipts to `played-self`. This slice conservatively suppresses those
+DM played receipts and does not override account privacy to force a public one.
 
 ## Private linked-device unread synchronization
 

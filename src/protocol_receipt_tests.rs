@@ -62,6 +62,19 @@ fn unknown_privacy_never_defaults_to_public_receipts() {
     }
 }
 
+#[test]
+fn account_privacy_blocks_both_dm_addressing_modes_and_preserves_group_rules() {
+    for (jid, allowed_when_disabled) in [
+        ("15550000001@s.whatsapp.net", false),
+        ("10000000001@lid", false),
+        ("123456789-123@g.us", true),
+    ] {
+        let jid = jid.parse().unwrap();
+        assert!(may_notify(&jid, false));
+        assert_eq!(may_notify(&jid, true), allowed_when_disabled);
+    }
+}
+
 #[tokio::test]
 async fn offline_failures_retry_durably_and_shutdown_cancels_an_inflight_receipt() {
     let (_temp, db) = fixture();
