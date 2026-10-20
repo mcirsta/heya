@@ -494,7 +494,7 @@ async fn schema_seven_upgrade_repairs_action_metadata_without_discarding_media_c
         // encrypted media bytes; changes to the actual envelope must purge them.
         c.execute("INSERT INTO message_audio(message_id,original) VALUES(?1,X'010203')",[id])?;
         c.execute_batch("DROP TABLE reply_drafts; DROP TABLE reactions; DROP TRIGGER discard_changed_document_preview; DROP TABLE document_previews; DROP TABLE outgoing_reads; DROP INDEX messages_action_wire;
-            UPDATE metadata SET value='3' WHERE key='content_decoder_revision'; DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; ALTER TABLE mutations DROP COLUMN raw; DROP TABLE outgoing_receipts; PRAGMA user_version=7;")?;
+            UPDATE metadata SET value='3' WHERE key='content_decoder_revision'; DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; ALTER TABLE mutations DROP COLUMN raw; DROP TABLE outgoing_receipts; DROP TABLE chat_settings; PRAGMA user_version=7;")?;
         Ok(())
     }).unwrap();
     drop(db);
@@ -517,7 +517,7 @@ async fn schema_seven_upgrade_repairs_action_metadata_without_discarding_media_c
     db.blocking(move |c| {
         assert_eq!(
             c.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))?,
-            15
+            16
         );
         assert_eq!(
             c.query_row(

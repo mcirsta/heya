@@ -169,6 +169,7 @@ fn requested(requests: &watch::Receiver<Request>) -> bool {
 }
 
 pub struct LiveServices {
+    pub chat_sources: watch::Sender<crate::chat_management::Sources>,
     pub preferences: watch::Receiver<crate::preferences::Preferences>,
     pub avatar_demand: watch::Receiver<Vec<i32>>,
     pub photo_demand: watch::Receiver<crate::photos::Demand>,
@@ -188,11 +189,13 @@ async fn connect(
     services: &LiveServices,
 ) -> Result<(), Failure> {
     let audio_sources = &services.audio_sources;
+    let chat_changes = Arc::new(std::sync::atomic::AtomicBool::new(false));
     struct ClearMediaSources(
         watch::Sender<crate::audio::Sources>,
         watch::Sender<crate::downloads::Sources>,
         watch::Sender<crate::attachments::Sources>,
         watch::Sender<crate::phone_history::Sources>,
+        watch::Sender<crate::chat_management::Sources>,
     );
     impl Drop for ClearMediaSources {
         fn drop(&mut self) {
@@ -200,6 +203,7 @@ async fn connect(
             self.1.send_replace(None);
             self.2.send_replace(None);
             self.3.send_replace(None);
+            self.4.send_replace(None);
         }
     }
     let _clear_sources = ClearMediaSources(
@@ -207,6 +211,7 @@ async fn connect(
         services.download_sources.clone(),
         services.upload_sources.clone(),
         services.history_sources.clone(),
+        services.chat_sources.clone(),
     );
     updates.send_replace(Snapshot::new(Phase::Opening));
     let store = open_store(files).await;
@@ -226,6 +231,10 @@ async fn connect(
     let presence_events = crate::protocol_presence::Events::default();
     let rebuild_contacts = archive.begin_contacts().await.map_err(archive_failure)?;
     let rebuild_reads = archive.begin_reads().await.map_err(archive_failure)?;
+    let rebuild_chats = archive
+        .begin_chat_settings()
+        .await
+        .map_err(archive_failure)?;
     let bot = Bot::builder()
         .with_backend(store)
         .with_device_props(whatsapp_rust::wacore::store::DevicePropsOverride::new().with_os("Heya"))
@@ -262,6 +271,7 @@ async fn connect(
                 &services.download_sources,
                 &services.upload_sources,
                 &services.history_sources,
+                &services.chat_sources,
             )
             .await
         })
@@ -284,6 +294,7 @@ async fn connect(
                 &services.download_sources,
                 &services.upload_sources,
                 &services.history_sources,
+                &services.chat_sources,
             )
             .await
         })
@@ -302,7 +313,7 @@ async fn connect(
         contact_events.clone(),
         online.clone(),
         contacts_stopped,
-        rebuild_contacts || rebuild_reads,
+        rebuild_contacts || rebuild_reads || rebuild_chats,
     ));
     let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let mut outbox = tokio::spawn(crate::protocol_outbox::run(
@@ -396,6 +407,7 @@ async fn connect(
                         online_tx.send_replace(phase == Phase::Connected);
                         audio_sources.send_replace((phase==Phase::Connected).then(||Arc::new(crate::protocol_audio::Audio(bot.client())) as Arc<dyn crate::audio::Source>));
                         services.history_sources.send_replace((phase==Phase::Connected).then(||Arc::new(crate::protocol_history::History(bot.client())) as Arc<dyn crate::phone_history::Source>));
+                        services.chat_sources.send_replace((phase==Phase::Connected).then(||Arc::new(crate::protocol_chat_management::Chats(bot.client(),chat_changes.clone())) as Arc<dyn crate::chat_management::Source>));
                         services.upload_sources.send_replace((phase==Phase::Connected).then(||Arc::new(crate::protocol_uploads::Uploads(bot.client())) as Arc<dyn crate::attachments::Uploader>));
                         services.download_sources.send_replace((phase==Phase::Connected).then(||Arc::new(crate::protocol_downloads::Downloads(bot.client())) as Arc<dyn crate::downloads::Source>));
                         qr = None;
@@ -528,6 +540,7 @@ async fn connect(
             &services.download_sources,
             &services.upload_sources,
             &services.history_sources,
+            &services.chat_sources,
         )
         .await?;
         if contact_result?
@@ -543,6 +556,12 @@ async fn connect(
                 .await
                 .map_err(archive_failure)?;
             archive.finish_contacts().await.map_err(archive_failure)?;
+            if !chat_changes.load(std::sync::atomic::Ordering::Acquire) {
+                archive
+                    .finish_chat_settings()
+                    .await
+                    .map_err(archive_failure)?;
+            }
             // A receipt queued during teardown was not materialized. Keep the
             // dirty marker so the next connection replays authoritative state.
             if messages.is_empty() && terminal != Some(Failure::Archive) {
@@ -589,6 +608,7 @@ async fn finish_shutdown(
     download_sources: &watch::Sender<crate::downloads::Sources>,
     upload_sources: &watch::Sender<crate::attachments::Sources>,
     history_sources: &watch::Sender<crate::phone_history::Sources>,
+    chat_sources: &watch::Sender<crate::chat_management::Sources>,
 ) -> Result<(), Failure> {
     use whatsapp_rust::client::DrainOutcome;
     // A watch channel retains its last value even after the audio task exits.
@@ -599,6 +619,7 @@ async fn finish_shutdown(
     download_sources.send_replace(None);
     upload_sources.send_replace(None);
     history_sources.send_replace(None);
+    chat_sources.send_replace(None);
     let saved = report.device.is_ok()
         && report.inbound == DrainOutcome::Completed
         && report.outbound == DrainOutcome::Completed
@@ -1055,6 +1076,7 @@ mod tests {
                 &watch::channel(None).0,
                 &watch::channel(None).0,
                 &watch::channel(None).0,
+                &watch::channel(None).0,
             )
             .await
         })
@@ -1161,6 +1183,7 @@ mod tests {
                 &download_sources,
                 &watch::channel(None).0,
                 &watch::channel(None).0,
+                &watch::channel(None).0,
             )
             .await
         })
@@ -1203,6 +1226,7 @@ mod tests {
                 thumbnail_demand: watch::channel(Vec::new()).1,
                 audio_sources: watch::channel(None).0,
                 history_sources: watch::channel(None).0,
+                chat_sources: watch::channel(None).0,
                 download_sources: watch::channel(None).0,
                 upload_sources: watch::channel(None).0,
                 presence: crate::presence::Channels {

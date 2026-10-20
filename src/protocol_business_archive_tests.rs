@@ -170,7 +170,7 @@ async fn archive_repair_is_restartable_preserves_state_and_never_resurrects_cont
                 assert_eq!(text, "[Unsupported message]", "{id}");
             }
             for (id, expected) in [
-                ("revoked", "[Message deleted]"),
+                ("revoked", "This message was deleted"),
                 ("expired", "[Disappearing message expired]"),
             ] {
                 let (text, raw): (String, Vec<u8>) = db.query_row(

@@ -6,6 +6,9 @@ mod business_tests;
 #[path = "message_content_tests.rs"]
 mod content_tests;
 #[cfg(test)]
+#[path = "protocol_delete_tests.rs"]
+mod delete_tests;
+#[cfg(test)]
 #[path = "message_edit_tests.rs"]
 mod edit_tests;
 #[cfg(test)]
@@ -190,6 +193,68 @@ fn live_batch(messages: &[InboundMessage]) -> Batch {
     batch
 }
 
+// The encrypted envelope identifies the conversation and author. A direct
+// message's inner key is sender-relative: remote_jid may name our account.
+// Group participant ownership is checked after PN/LID canonicalization in storage.
+fn mutation(
+    chat: &Jid,
+    sender: &Jid,
+    outgoing: bool,
+    timestamp: i64,
+    protocol: &wa::message::ProtocolMessage,
+) -> Option<Change> {
+    let key = protocol.key.as_option()?;
+    let id = key.id.as_ref().filter(|id| !id.is_empty())?;
+    if let Some(remote) = &key.remote_jid {
+        let remote: Jid = remote.parse().ok()?;
+        if chat.is_group() {
+            if address(&remote) != address(chat) {
+                return None;
+            }
+        } else if !(remote.is_pn() || remote.is_lid()) {
+            return None;
+        }
+    }
+    let author = if outgoing {
+        "#self".into()
+    } else {
+        address(sender)
+    };
+    let sender = if !chat.is_group() || key.from_me == Some(true) {
+        author
+    } else {
+        key.participant
+            .as_deref()
+            .map(str::parse::<Jid>)
+            .transpose()
+            .ok()?
+            .map(|jid| address(&jid))
+            .unwrap_or(author)
+    };
+    use wa::message::protocol_message::Type;
+    let (text, raw, version) = if protocol.r#type == Some(Type::REVOKE) {
+        (None, Vec::new(), timestamp.saturating_mul(1000))
+    } else if protocol.r#type == Some(Type::MESSAGE_EDIT) {
+        let edited = protocol.edited_message.as_option()?;
+        (
+            Some(crate::protocol_edits::text(edited)?),
+            codec::message_to_vec(edited),
+            protocol
+                .timestamp_ms
+                .unwrap_or(timestamp.saturating_mul(1000)),
+        )
+    } else {
+        return None;
+    };
+    Some(Change {
+        id: id.clone(),
+        sender,
+        text,
+        raw,
+        version,
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn record(
     chat: &Jid,
@@ -214,57 +279,7 @@ fn record(
         text = notice.description().into();
     } else if let Some(protocol) = message.protocol_message.as_option() {
         visible = false;
-        if let Some(key) = protocol.key.as_option() {
-            let target_sender = if key.from_me == Some(true) {
-                if outgoing {
-                    "#self".into()
-                } else {
-                    address(sender)
-                }
-            } else {
-                key.participant
-                    .as_deref()
-                    .and_then(|j| j.parse::<Jid>().ok())
-                    .map(|j| address(&j))
-                    .unwrap_or_else(|| address(sender))
-            };
-            let author = if outgoing {
-                "#self".into()
-            } else {
-                address(sender)
-            };
-            let same_chat = key.remote_jid.as_deref().is_none_or(|j| {
-                j.parse::<Jid>()
-                    .ok()
-                    .is_some_and(|j| address(&j) == address(chat))
-            });
-            if same_chat
-                && target_sender == author
-                && let Some(id) = &key.id
-            {
-                use wa::message::protocol_message::Type;
-                if protocol.r#type == Some(Type::REVOKE) {
-                    change = Some(Change {
-                        id: id.clone(),
-                        sender: target_sender,
-                        text: None,
-                        raw: Vec::new(),
-                        version: timestamp,
-                    });
-                } else if protocol.r#type == Some(Type::MESSAGE_EDIT)
-                    && let Some(edited) = protocol.edited_message.as_option()
-                    && let Some(text) = crate::protocol_edits::text(edited)
-                {
-                    change = Some(Change {
-                        id: id.clone(),
-                        sender: target_sender,
-                        text: Some(text),
-                        raw: codec::message_to_vec(edited),
-                        version: protocol.timestamp_ms.unwrap_or(timestamp * 1000),
-                    });
-                }
-            }
-        }
+        change = mutation(chat, sender, outgoing, timestamp, protocol);
     } else if message.reaction_message.is_set() || message.sender_key_distribution_message.is_set()
     {
         visible = false;
@@ -310,6 +325,18 @@ fn record(
 
 /// Decode saved envelopes with the same rules as new live/history messages.
 pub fn repair_text(archive: &Archive) -> archive::Result<()> {
+    archive.repair_deletions(|raw, chat, sender, outgoing, stamp| {
+        let message = codec::message_decode(raw).ok()?;
+        let protocol = message.get_base_message().protocol_message.as_option()?;
+        let change = mutation(
+            &chat.parse().ok()?,
+            &sender.parse().ok()?,
+            outgoing,
+            stamp,
+            protocol,
+        )?;
+        change.text.is_none().then_some(change)
+    })?;
     archive.repair_unsupported_text(1, |raw| {
         let message = codec::message_decode(raw).ok()?;
         crate::protocol_business::text(&message)
@@ -569,6 +596,31 @@ fn import_chunk(
             read_only: conversation.read_only,
             ephemeral: conversation.ephemeral_expiration,
         });
+        for (setting, value) in [
+            (
+                crate::chat_management::Setting::Mute,
+                conversation
+                    .mute_end_time
+                    .map(crate::chat_management::history_mute),
+            ),
+            (
+                crate::chat_management::Setting::Archive,
+                conversation.archived.map(i64::from),
+            ),
+            (
+                crate::chat_management::Setting::Lock,
+                conversation.locked.map(i64::from),
+            ),
+        ] {
+            if let Some(value) = value {
+                batch.settings.push(crate::chat_management::Update {
+                    jid: address(&chat),
+                    setting,
+                    value,
+                    stamp: None,
+                });
+            }
+        }
         for item in &conversation.messages {
             if stop.load(Ordering::Acquire) {
                 return Ok(());

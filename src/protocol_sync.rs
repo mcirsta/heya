@@ -19,6 +19,7 @@ use whatsapp_rust::{
 
 #[derive(Default)]
 struct Pending {
+    chats: BTreeMap<(String, crate::chat_management::Setting), crate::chat_management::Update>,
     names: BTreeMap<String, Contact>,
     reads: BTreeMap<String, ReadUpdate>,
     aliases: BTreeMap<String, String>,
@@ -60,6 +61,9 @@ impl AppState {
                 .read_updates(pending.reads.into_values().collect())
                 .await?;
         }
+        archive
+            .save_chat_settings(pending.chats.into_values().collect())
+            .await?;
         Ok(())
     }
 }
@@ -73,9 +77,31 @@ impl EventHandler for AppState {
             EventKind::ContactUpdate,
             EventKind::ContactRemoved,
             EventKind::MarkChatAsReadUpdate,
+            EventKind::MuteUpdate,
+            EventKind::ArchiveUpdate,
+            EventKind::LockChatUpdate,
         ])
     }
     fn handle_event(&self, event: Arc<Event>) {
+        if let Some(next) = chat_update(&event) {
+            let mut pending = self.0.pending.lock().expect("app-state mailbox poisoned");
+            let key = (next.jid.clone(), next.setting);
+            if pending.failed {
+                return;
+            }
+            if pending.chats.len() >= 100_000 && !pending.chats.contains_key(&key) {
+                pending.failed = true;
+            } else if pending
+                .chats
+                .get(&key)
+                .is_none_or(|old| next.supersedes(old))
+            {
+                pending.chats.insert(key, next);
+            }
+            drop(pending);
+            self.0.changed.notify_one();
+            return;
+        }
         if let Event::MarkChatAsReadUpdate(update) = event.as_ref() {
             if !(update.jid.is_pn() || update.jid.is_lid() || update.jid.is_group()) {
                 return;
@@ -208,6 +234,48 @@ impl EventHandler for AppState {
     }
 }
 
+fn chat_update(event: &Event) -> Option<crate::chat_management::Update> {
+    use crate::chat_management::{Setting, Update};
+    let (jid, setting, value, stamp) = match event {
+        Event::MuteUpdate(u) => (
+            &u.jid,
+            Setting::Mute,
+            if u.action.muted? {
+                u.action.mute_end_timestamp.unwrap_or(-1)
+            } else {
+                0
+            },
+            u.action_timestamp,
+        ),
+        Event::ArchiveUpdate(u) => (
+            &u.jid,
+            Setting::Archive,
+            i64::from(u.action.archived?),
+            u.action_timestamp,
+        ),
+        Event::LockChatUpdate(u) => (
+            &u.jid,
+            Setting::Lock,
+            i64::from(u.action.locked?),
+            u.action_timestamp,
+        ),
+        _ => return None,
+    };
+    if !(jid.is_pn() || jid.is_lid() || jid.is_group()) || value < -1 {
+        return None;
+    }
+    Some(Update {
+        jid: address(jid),
+        setting,
+        value,
+        stamp: stamp.map(|t| t.timestamp_millis()),
+    })
+}
+
+#[cfg(test)]
+#[path = "protocol_chat_settings_tests.rs"]
+mod chat_settings_tests;
+
 pub async fn run(
     archive: Archive,
     client: Arc<Client>,
@@ -259,11 +327,12 @@ pub async fn run(
             let result = tokio::select! {
                 biased;
                 _ = stop.changed() => return Ok(false), // dirty mark survives cancellation
-                result = client.resync_app_state([WAPatchName::CriticalUnblockLow, WAPatchName::RegularLow], AppStateResyncMode::Snapshot) => result,
+                result = client.resync_app_state([WAPatchName::CriticalUnblockLow, WAPatchName::RegularLow, WAPatchName::RegularHigh], AppStateResyncMode::Snapshot) => result,
             };
             let complete = result.as_ref().is_ok_and(|r| {
                 r.synced.contains(&WAPatchName::CriticalUnblockLow)
                     && r.synced.contains(&WAPatchName::RegularLow)
+                    && r.synced.contains(&WAPatchName::RegularHigh)
                     && r.all_synced()
             });
             fatal = result.as_ref().is_ok_and(|r| !r.fatal.is_empty());

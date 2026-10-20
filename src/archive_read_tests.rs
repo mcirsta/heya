@@ -31,6 +31,81 @@ fn read(through: i64) -> ReadUpdate {
 }
 
 #[tokio::test]
+async fn taskbar_counts_chats_before_filters_and_tracks_manual_marks_and_reads() {
+    let (_temp, db) = fixture();
+    for i in 1..=17 {
+        incoming(&db, &format!("message-{i}"), i * 10).await;
+    }
+    let mut other = record("other");
+    other.chat = "15550000002@s.whatsapp.net".into();
+    other.sender = other.chat.clone();
+    let mut outgoing = record("outgoing");
+    outgoing.chat = "15550000003@s.whatsapp.net".into();
+    outgoing.outgoing = true;
+    db.ingest(Batch {
+        messages: vec![other, outgoing],
+        chats: vec![ChatMeta {
+            jid: PN.into(),
+            name: "Alpha".into(),
+            ..Default::default()
+        }],
+        live: true,
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    let view = db.view(0, 100, "Alpha".into(), false, false).await.unwrap();
+    assert_eq!(view.chats.len(), 1);
+    assert_eq!(view.chats[0].unread, 17);
+    assert_eq!(view.unread_chats, 2, "17 messages in one chat count once");
+    db.read_updates(vec![ReadUpdate {
+        message: None,
+        jid: "15550000003@s.whatsapp.net".into(),
+        through: None,
+        marked: true,
+        version: Some(1),
+    }])
+    .await
+    .unwrap();
+    let hidden = db
+        .view(0, 100, "no matching chats".into(), true, false)
+        .await
+        .unwrap();
+    assert!(hidden.chats.is_empty());
+    assert_eq!(
+        hidden.unread_chats, 3,
+        "search/unread filters never change the badge"
+    );
+    let after_read = db
+        .view(view.chats[0].id, 100, String::new(), false, true)
+        .await
+        .unwrap();
+    assert_eq!(after_read.unread_chats, 2);
+    db.read_updates(vec![
+        ReadUpdate {
+            message: None,
+            jid: "15550000003@s.whatsapp.net".into(),
+            through: None,
+            marked: false,
+            version: Some(2),
+        },
+        ReadUpdate {
+            jid: "15550000002@s.whatsapp.net".into(),
+            ..read(1_700_000_000)
+        },
+    ])
+    .await
+    .unwrap();
+    assert_eq!(
+        db.view(0, 100, String::new(), false, false)
+            .await
+            .unwrap()
+            .unread_chats,
+        0
+    );
+}
+
+#[tokio::test]
 async fn phone_read_repairs_seventeen_stale_messages_without_clearing_new_arrivals() {
     let (_temp, db) = fixture();
     for i in 1..=17 {
@@ -283,4 +358,157 @@ async fn schema_three_upgrade_and_reopen_preserve_drafts_and_request_read_recove
         db.begin_reads().await.unwrap(),
         "unclean session must replay app state"
     );
+}
+
+#[tokio::test]
+async fn deleted_tail_can_be_read_without_a_sender_receipt() {
+    for jid in [PN, "15550000001-42@g.us"] {
+        let (_temp, db) = fixture();
+        let mut original = record("deleted-tail");
+        original.chat = jid.into();
+        original.timestamp = 100;
+        let mut revoke = original.clone();
+        revoke.id = "delete-event".into();
+        revoke.timestamp = 200;
+        revoke.visible = false;
+        revoke.change = Some(Change {
+            id: original.id.clone(),
+            sender: original.sender.clone(),
+            text: None,
+            version: 200,
+            raw: Vec::new(),
+        });
+        db.ingest(Batch {
+            messages: vec![original, revoke],
+            live: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let chat = summary(&db).await.id;
+        let view = db
+            .view(chat, 100, String::new(), false, false)
+            .await
+            .unwrap()
+            .conversation
+            .unwrap();
+        assert_eq!(view.chat.unread, 1);
+        let tail = view.messages.last().unwrap();
+        assert_eq!(tail.text, "This message was deleted");
+        db.mark_visible_read_with_receipts(chat, tail.id, true)
+            .await
+            .unwrap();
+        assert_eq!(
+            summary(&db).await.unread,
+            0,
+            "viewing a deleted tail must clear its unread badge"
+        );
+        let sync = db.next_read_sync().await.unwrap().unwrap();
+        assert_eq!(
+            sync.through, 100,
+            "read the observed message, not the later deletion event"
+        );
+        let key = sync.message.unwrap();
+        assert_eq!(key.wire, "deleted-tail");
+        assert_eq!(key.sender, PN);
+        assert!(!key.outgoing);
+        assert!(
+            db.next_receipt().await.unwrap().is_none(),
+            "a deleted message must not emit a sender-facing receipt"
+        );
+        assert!(
+            db.view(0, 100, String::new(), true, false)
+                .await
+                .unwrap()
+                .chats
+                .is_empty()
+        );
+    }
+}
+
+#[tokio::test]
+async fn deleted_tail_read_preserves_newer_same_second_arrivals() {
+    let (_temp, db) = fixture();
+    incoming(&db, "earlier", 90).await;
+    incoming(&db, "deleted-tail", 100).await;
+    let chat = summary(&db).await.id;
+    let mut revoke = record("delete-event");
+    revoke.timestamp = 200;
+    revoke.visible = false;
+    revoke.change = Some(Change {
+        id: "deleted-tail".into(),
+        sender: PN.into(),
+        text: None,
+        version: 200,
+        raw: Vec::new(),
+    });
+    db.ingest(Batch {
+        messages: vec![revoke],
+        live: true,
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    let view = db
+        .view(chat, 100, String::new(), false, false)
+        .await
+        .unwrap()
+        .conversation
+        .unwrap();
+    let observed = view.messages.last().unwrap().id;
+    incoming(&db, "not-yet-seen", 100).await;
+    db.mark_visible_read_with_receipts(chat, observed, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        summary(&db).await.unread,
+        1,
+        "clear only the observed range, including its deletion placeholder"
+    );
+    let sync = db.next_read_sync().await.unwrap().unwrap();
+    assert_eq!(sync.message.unwrap().wire, "deleted-tail");
+    let receipt = db.next_receipt().await.unwrap().unwrap();
+    assert_eq!(
+        receipt
+            .messages
+            .iter()
+            .map(|(_, wire)| wire.as_str())
+            .collect::<Vec<_>>(),
+        vec!["earlier"]
+    );
+}
+
+#[tokio::test]
+async fn deleted_tail_from_expiry_is_a_readable_placeholder() {
+    let (_temp, db) = fixture();
+    let mut message = record("expired-tail");
+    message.timestamp = 100;
+    message.expires = Some(chrono::Utc::now().timestamp() - 1);
+    db.ingest(Batch {
+        messages: vec![message],
+        live: true,
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    let chat = summary(&db).await.id;
+    let view = db
+        .view(chat, 100, String::new(), false, false)
+        .await
+        .unwrap()
+        .conversation
+        .unwrap();
+    assert_eq!(view.chat.unread, 1);
+    let tail = view.messages.last().unwrap();
+    assert_eq!(tail.text, "[Disappearing message expired]");
+    db.mark_visible_read_with_receipts(chat, tail.id, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        summary(&db).await.unread,
+        0,
+        "a visible expiry placeholder must not trap the unread badge"
+    );
+    assert_eq!(db.next_read_sync().await.unwrap().unwrap().through, 100);
+    assert!(db.next_receipt().await.unwrap().is_none());
 }

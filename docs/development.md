@@ -8,6 +8,268 @@ synthetic chats. See the
 [README](../README.md) for controls and the [roadmap](roadmap.md) for the remaining
 M0 integration checks.
 
+## Search and chat-management integration — 20 October 2026
+
+The pending changes were integrated with the incoming local-search and quote
+navigation commits through `ef646a6`. One archive view path now accepts both the
+history-window boundary and the archived-folder filter. Folder changes discard
+the old search/window state; losing the selected conversation through a synced
+lock or archive change clears the pending navigation and phone-history state.
+Search and quote lookup honor the existing locked-chat check.
+
+A combined synthetic worker regression browses an archived chat's old messages,
+switches folders, reopens at the latest window with its draft intact, then applies
+a synced lock and verifies that search results disappear and direct lookup fails.
+The early durable-save reply still leaves the displayed navigation state alone.
+
+The integrated Linux release build passed 248 application tests plus the
+protocol-store integration test. The audio-disabled application build passed
+230 tests with `--no-default-features --bin heya`; three tests are intentionally
+skipped in each configuration. Both use `--release --locked` and
+`--config 'profile.release.build-override.debug-assertions=true'` for the Slint
+test metadata. Strict all-target Clippy passed in both configurations.
+The private offscreen startup check passed window creation,
+first redraw and complete shutdown. The tested default-feature binary was
+installed atomically without restarting the owner's window. These synthetic
+checks do not establish live-account or native macOS compatibility.
+
+## Incoming deletion key routing — 20 October 2026
+
+A read-only inspection confirmed a retained, rejected incoming revoke envelope:
+its key named the receiving account, while the authenticated conversation named
+the sender. The original was present, but no mutation had been recorded. The
+adapter incorrectly required those two perspectives to have identical chat JIDs.
+No account content, identifiers or credentials are part of the regression data.
+
+Direct-message mutations now use the authenticated envelope's conversation and
+author; the inner recipient-relative JID cannot redirect them to another chat.
+Group keys still require the same group, and participant ownership is checked
+after PN/LID canonicalization. Incoming changes and acknowledged local controls
+share one archive mutation writer. This also fixes recipient-relative edits.
+No protocol-library patch, retry queue, polling or new background task is added.
+
+Mutation projection uses one indexed left join to include missing originals.
+A revoke without its original creates one visible tombstone under the original
+wire identity, with no invented unread message. Later history restores only its
+original position/author metadata; deleted text and media never return. The
+chat and sidebar use **This message was deleted**. Delete-for-me tombstones
+continue to hide messages instead of creating a deleted-message bubble.
+Revoking an earlier message preserves its original position; a later message
+retains the contact-list preview. Ordinary messages keep `INSERT OR IGNORE`;
+only duplicate delivery/history can update a deleted placeholder's position and
+author metadata. This avoids a wider returning upsert on every incoming message.
+
+A revision-marked startup repair processes retained invisible envelopes in
+batches of 100, through the same writer/projection. It repairs accepted early
+revokes and older label wording too. Successful repair discards the redundant
+saved envelope atomically with applying the deletion; interruption is safe to
+resume. The archive's existing startup worker owns this work before publication.
+The pass does not run on the Slint event loop and needs no schema migration.
+
+Validation: the optimized default-feature suite passed 245 tests (three
+intentional skips), and strict all-target Clippy passed. Synthetic regressions
+exercise live/history routing, wrapped revokes, PN/LID ownership, foreign group
+keys, early/duplicate revokes, late photo history, reopening, hidden messages and
+idempotent repair. The private offscreen startup check passed window creation,
+first redraw and full shutdown. The owner's archive was inspected read-only;
+no automated account message was sent. The tested binary was installed
+atomically, with matching hashes, for the next normal restart.
+
+The full archive-to-UI benchmark used `HEYA_BENCHMARK_ARCHIVE=1
+HEYA_TEST_RENDERER=winit-skia-opengl scripts/ui-offscreen.sh --ui-benchmark`,
+500 synthetic chats and 10,000 loaded messages on private Xvfb/Mesa software
+rendering. The baseline was the installed build before this deletion fix.
+No build or test suite ran alongside either measurement. Times below are
+median / p95 milliseconds:
+
+| Path | Before | After |
+| --- | ---: | ---: |
+| Incoming at 100, ingest to render callback completion | 27.70 / 38.41 | 31.75 / 42.96 |
+| Incoming at 10,000, ingest to render callback completion | 54.02 / 92.71 | 55.54 / 64.34 |
+| Unrelated updates at 10,000, ingest to render callback completion | 41.02 / 46.60 | 43.31 / 47.58 |
+| Navigation, command to render callback completion | 44.79 / 49.82 | 42.00 / 50.30 |
+| Incoming at 10,000, SQLCipher view/projection | 12.11 / 17.48 | 13.14 / 17.04 |
+| Incoming at 10,000, UI apply | 6.39 / 10.49 | 6.57 / 8.02 |
+| Incoming at 10,000, ingest commit | 8.79 / 15.63 | 12.08 / 16.02 |
+
+An initial wider returning upsert increased the commit median to 14.59 ms;
+the final version restores ordinary insertion and handles placeholder repair
+only on duplicate delivery. Cache reuse remained 0.04 / 0.05 ms. These runs
+show comparable typical render latency, not proof of zero overhead or a speedup:
+commit time varied, and both runs had isolated software-rendering/timer stalls
+(276 / 305 ms maximum ingest-to-render at 100 messages). They do not measure a
+deletion burst, network delivery, GPU completion or compositor presentation.
+
+## Chat-state synchronization and controls — 20 October 2026
+
+Mute, archive and lock settings now participate in sidebar projection and badge
+counting. The sidebar has a context/hover menu and an Archived folder. Lock hides
+the chat; unlocking remains on the phone, as selected for this increment.
+The implementation uses the public SDK app-state API without a library patch.
+See [scope, lifecycle and validation](chat-management.md).
+
+The optimized full archive-to-UI benchmark used a private Xvfb display with
+`winit-skia-opengl` (Mesa software rendering), 500 chats and 10,000 loaded
+messages. The baseline was the installed build before this increment; the
+comparison build adds the three indexed settings joins and sidebar controls.
+An additional run seeded 1,500 settings flags, including 250 active mutes.
+Representative repeated-run p95 timings, in milliseconds:
+
+| Path | Before | After, empty settings | After, populated settings |
+| --- | ---: | ---: | ---: |
+| Incoming at 100 messages, ingest to render callback completion | 36.85 | 40.55 | 39.03 |
+| Incoming at 10,000 messages, ingest to render callback completion | 65.72 | 68.22 | 69.05 |
+| Unrelated chat updates at 10,000, ingest to render callback completion | 47.76 | 47.26 | 48.34 |
+| Navigation, command to render callback completion | 52.09 | 52.30 | 51.59 |
+| Incoming at 10,000, SQLCipher view/projection only | 16.07 | 18.87 | 20.23 |
+| Incoming at 10,000, UI apply only | 8.17 | 8.85 | 9.64 |
+
+Commands use `HEYA_BENCHMARK_ARCHIVE=1 HEYA_TEST_RENDERER=winit-skia-opengl
+scripts/ui-offscreen.sh --ui-benchmark`; select the baseline with
+`HEYA_TEST_BINARY`, and add `HEYA_BENCHMARK_CHAT_SETTINGS=1` for the populated
+run. No compilation or test suite ran during these measurements. Initial runs
+had much more rendering jitter (up to 224 ms p95 for incoming messages at
+10,000), so the repeated comparison is a regression indicator, not a precise
+overhead estimate or a native GPU/compositor claim. Unrelated updates continue
+to reuse the timeline/transcript cache; p95 reuse stayed below 0.06 ms. The
+settings joins use the table's `(jid, kind)` primary-key index. No further cache,
+worker or per-message control was added for this feature.
+
+The release suites passed 241 tests with GStreamer and 223 without it, with
+three intentional skips in each configuration. Strict all-target Clippy passed
+in both configurations. They use `--release --locked`
+and `--config 'profile.release.build-override.debug-assertions=true'` for Slint's
+test metadata. Synthetic coverage includes schema migration/reopening, stale
+and missing action fields, PN/LID merging, mute expiry, folder/badge exclusions,
+lock guards, draft retention, UI containment/input, cancellation and SDK source
+release on shutdown. The offscreen startup check passed native window creation,
+first redraw and full shutdown. A synthetic native framebuffer check verified
+both right-click and the hover chevron opening the popup without selecting or
+reading the target chat; demo actions remain disabled. The tested default build
+was installed atomically and its hash checked before building without audio.
+No live-account state was changed, and native macOS/account interoperability
+remains unverified.
+
+## Taskbar unread-chat badge — 20 October 2026
+
+Reviewed the pinned ZapFast revision
+[`c73ce57522d28eff4da1a5cc9e3b6de0f27b0de0`](https://github.com/crmne/zapfast/tree/c73ce57522d28eff4da1a5cc9e3b6de0f27b0de0),
+specifically `Account::unread_chat_count`, `App::sync_badge`, and
+`src/notify/badge{,_macos}.rs`. Its count is unread **chats**, including manual
+unread marks; its Linux integration broadcasts the Unity Launcher `Update`
+signal. Heya implements that public protocol independently, with its own desktop
+ID and lifecycle. No ZapFast application implementation was copied.
+
+The archive view counts its existing listed-chat summaries before search/unread
+filtering. This adds no database query, content decoding or UI-thread scan.
+The initial badge did not synchronize archive/mute/lock metadata; the subsequent
+chat-management increment above adds those exclusions. Existing read handling, including the
+deleted-message boundary fix, is the badge's source of truth.
+
+Linux publishes `application://org.heya.Heya.desktop`, an int64 `count`, and
+`count-visible`; zero hides the badge. The displayed value is capped at 9999.
+The live snapshot watch coalesces bursts and suppresses unchanged counts. Save
+replies and failed view builds preserve the last count. A single asynchronous
+session-bus connection lives on Heya's existing Tokio runtime; no badge thread,
+polling loop or unbounded queue is created. Each bus operation has a two-second
+bound. Shutdown clears the badge and closes its connection. A missing or lost
+bus disables the badge for that run without affecting messaging.
+
+The existing zbus 5 dependency now enables Tokio explicitly. Its async calls for
+launcher updates and file portals use the application runtime; the separate
+zbus 4 dependency used by Secret Service is unchanged. On macOS, a coalesced
+main-thread callback updates `NSApp.dockTile.badgeLabel` through the existing
+Apple bridge, skipping repeated counts. Demo and benchmark attachment paths do
+not start either badge adapter.
+
+Synthetic SQLCipher tests exercise unread-chat counting, 17 messages counting as
+one chat, outgoing messages, manual marks, read clearing and filtered lists.
+Private D-Bus tests exercise actual signal types, desktop identity, burst
+coalescing, repeated-count suppression, reply/error snapshots, zero visibility,
+clamping, connection release on shutdown and bus loss. They never access the
+owner's session bus or taskbar. These establish the wire contract and lifecycle;
+actual launcher rendering and the macOS bridge still need native verification.
+
+Validation passed 231 tests with GStreamer and 213 without it, with three
+intentional skips in each configuration. Strict all-target Clippy passed in both
+configurations. Both used `--release --locked` and
+`--config 'profile.release.build-override.debug-assertions=true'` for the Slint
+test metadata. The default-feature optimized build
+was installed atomically and its executable hash verified before building the
+audio-disabled variant. `scripts/ui-offscreen.sh --startup-check` also passed
+native window creation, first redraw and complete shutdown with synthetic data.
+This smoke check uses software rendering and a private X server, not the owner's
+desktop or account; it establishes neither compositor performance nor taskbar
+badge rendering.
+
+## Long-message send investigation — 20 October 2026
+
+The worker now publishes its save reply as soon as the encrypted outbox commit
+finishes, before building the next conversation view. The composer handles a
+reply without touching chat models, navigation, message actions or timeline
+layout. The same reply remains in the subsequent full snapshots so the existing
+latest-value handoff cannot lose it. Only the matching saved draft is cleared;
+newer edits and failed submissions stay in the editor.
+
+The existing pending/request/draft-revision checks own submission gating. The
+extra worker deduplication and draft look-ahead queue from the initial diagnostic
+patch were removed. Native Enter repeats are ignored. While saving, the existing
+shortcut hint and accessible button label show the status; no temporary banner
+changes the conversation's position. No worker, channel, timer, retry map or
+persistent schema was added.
+
+Messages over 4 KiB use the maximum bubble width, avoiding a full unwrapped
+sizing pass in addition to the wrapped body layout. Displayed, selected, copied
+and stored text stays complete. This deliberately favors bounded sizing over
+shrink-to-fit widths for unusually long messages made of short lines.
+
+Build and run the synthetic native checks offscreen:
+
+```sh
+cargo test --release --locked --config 'profile.release.build-override.debug-assertions=true'
+HEYA_BENCHMARK_ARCHIVE=1 HEYA_BENCHMARK_LONG_DRAFT=1 HEYA_TRACE_SEND=1 HEYA_TEST_RENDERER=winit-skia-opengl scripts/ui-offscreen.sh --ui-benchmark
+```
+
+The benchmark uses a disposable SQLCipher archive with 500 chats and 10,000
+loaded messages. It dispatches Enter twice for 8–64 KiB Unicode/multiline drafts,
+checks exactly one archived copy, and measures save confirmation separately from
+application of the full conversation view. The UI samples end after Slint
+callbacks; they do not measure network delivery, GPU or compositor presentation.
+Headless tests cover delayed/failed replies, retained newer edits, stale replies,
+queue saturation, navigation during a save, focus and narrow layouts. Validation
+passed 225 tests with GStreamer and 207 without it, with three intentional skips
+in each configuration. Strict Clippy passed for all targets in both configurations.
+
+One previous diagnostic-build run and two refactored runs used the optimized
+configuration above with private Xvfb/Mesa OpenGL and no concurrent Heya
+compiler/test jobs. Both builds already had the long-message sizing shortcut.
+Times below are milliseconds, from Enter dispatch through the UI callback check:
+
+| Draft bytes | Previous UI reply | Refactored UI reply, runs 1 / 2 | Refactored full view, runs 1 / 2 |
+| --- | ---: | ---: | ---: |
+| 8,160 | 53.34 | 50.12 / 58.62 | 50.12 / 58.62 |
+| 32,742 | 134.06 | 153.48 / 144.32 | 153.48 / 144.32 |
+| 65,535 | 288.00 | 274.29 / 117.96 | 274.29 / 286.70 |
+
+All nine sends stored exactly one complete copy; shutdown finished in 9–13 ms.
+These are individual synthetic samples, not percentiles. The largest UI
+application callback remained about 155–160 ms versus 155 ms before, so this
+refactor does not establish faster long-message rendering. The earlier reply
+can be applied independently (118 ms versus 287 ms in one sample); latest-value
+coalescing may still apply it together with the full view when both are ready.
+Numeric tracing put the archive commit itself at 1–4 ms after the worker started
+the send. Replacing/focusing the 32 KiB Unicode draft still took roughly 600 ms
+before Enter; this remains a separate input/layout limitation.
+
+The original intermittent account delay has not been reproduced. Whole-draft
+replacement/focusing with very long Unicode text is a separate remaining cost;
+this refactor does not claim to eliminate it.
+
+For a recurrence, `HEYA_TRACE_SEND=1 heya` logs fixed send stages, local request
+counters and elapsed milliseconds to stderr: input attempt, archive start/result
+and UI reply. It records no draft text, account identifiers or protocol message
+IDs. The trace is off by default and retains no message history.
+
 ## Archive-to-UI optimization — 19 October 2026
 
 Measured two baseline runs at `1dacd34` and two final runs of the changed build,

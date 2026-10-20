@@ -6,6 +6,7 @@ impl Archive {
     pub async fn search_messages(&self, chat: i32, query: String, request: i32) -> Result<Search> {
         self.call(move |db| {
             let chat = local_chat(db, chat)?;
+            chat_settings::unlocked(db, chat)?;
             let needle = query.trim().to_lowercase();
             let mut result = Search {
                 chat,
@@ -53,6 +54,7 @@ impl Archive {
     ) -> Result<(i32, (i64, i32))> {
         self.call(move |db| {
             let chat = local_chat(db, chat)?;
+            chat_settings::unlocked(db, chat)?;
             let target = if quote {
                 let raw: Vec<u8> = db.query_row("SELECT raw FROM messages WHERE id=?1 AND chat_id=?2 AND visible=1 AND deleted=0 AND (expires IS NULL OR expires>unixepoch())", params![message,chat], |r|r.get(0)).optional()?.ok_or(Error::Invalid)?;
                 let (wire, sender, remote) = crate::protocol_actions::quoted_key(&raw).ok_or(Error::Invalid)?;
@@ -187,7 +189,7 @@ mod tests {
         .await;
         let (target, end) = db.navigation_target(1, 120, false).await.unwrap();
         let view = db
-            .view_window(1, 100, (String::new(), false, false), Some(end))
+            .view_window(1, 100, (String::new(), false, false), Some(end), false)
             .await
             .unwrap();
         assert!(!view.phone_more);
@@ -205,7 +207,7 @@ mod tests {
         )
         .await;
         let next = db
-            .view_window(1, 100, (String::new(), false, false), Some(end))
+            .view_window(1, 100, (String::new(), false, false), Some(end), false)
             .await
             .unwrap()
             .conversation

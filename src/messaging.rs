@@ -5,12 +5,40 @@ mod navigation_tests;
 #[cfg(test)]
 #[path = "messaging_phone_tests.rs"]
 mod phone_tests;
+#[cfg(test)]
+#[path = "messaging_send_tests.rs"]
+mod send_tests;
 use crate::archive::{Archive, Error, View};
 use std::sync::Arc;
 use tokio::sync::{mpsc, watch};
 
+/// Opt-in fixed stages and local request numbers only; never account/message data.
+pub(crate) fn trace_send(stage: &str, request: i32) {
+    if std::env::var_os("HEYA_TRACE_SEND").is_some() {
+        static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+        eprintln!(
+            "Heya send: stage={stage} request={request} elapsed_ms={}",
+            START
+                .get_or_init(std::time::Instant::now)
+                .elapsed()
+                .as_millis()
+        );
+    }
+}
+
 pub enum Command {
     Navigation(crate::message_navigation::Command),
+    ManageChat {
+        chat: i32,
+        action: crate::chat_management::Action,
+    },
+    Folder {
+        archived: bool,
+        previous: i32,
+        draft: String,
+        draft_version: i32,
+        revision: i32,
+    },
     FetchPhone {
         chat: i32,
         revision: i32,
@@ -61,11 +89,13 @@ pub struct SendReply {
 pub struct Snapshot {
     pub search: crate::message_navigation::Search,
     pub jump: crate::message_navigation::Jump,
+    pub chat_busy: bool,
     pub history: Option<crate::domain::HistoryReply>,
     pub phone: crate::phone_history::Status,
     pub operation: Option<crate::message_actions::OperationReply>,
     pub destinations: Arc<[crate::message_actions::Destination]>,
     pub revision: i32,
+    // None with an empty notice carries only a save reply; preserve the UI view.
     pub view: Option<Arc<View>>,
     pub reply: Option<SendReply>,
     pub notice: String,
@@ -75,6 +105,7 @@ impl Snapshot {
         Self {
             search: Default::default(),
             jump: Default::default(),
+            chat_busy: false,
             history: None,
             phone: Default::default(),
             operation: None,
@@ -113,16 +144,37 @@ pub async fn run_with_history(
 }
 
 pub async fn run_with_preferences(
+    archives: watch::Receiver<Option<Archive>>,
+    commands: mpsc::Receiver<Command>,
+    updates: watch::Sender<Snapshot>,
+    phone_sources: watch::Receiver<crate::phone_history::Sources>,
+    preferences: watch::Receiver<crate::preferences::Preferences>,
+) {
+    run_with_chat_sources(
+        archives,
+        commands,
+        updates,
+        phone_sources,
+        preferences,
+        watch::channel(None).1,
+    )
+    .await;
+}
+
+pub async fn run_with_chat_sources(
     mut archives: watch::Receiver<Option<Archive>>,
     mut commands: mpsc::Receiver<Command>,
     updates: watch::Sender<Snapshot>,
     mut phone_sources: watch::Receiver<crate::phone_history::Sources>,
     mut preferences: watch::Receiver<crate::preferences::Preferences>,
+    chat_sources: watch::Receiver<crate::chat_management::Sources>,
 ) {
     let mut archive: Option<Archive> = None;
     let mut changed: Option<watch::Receiver<u64>> = None;
     let (mut selected, mut revision, mut limit) = (0, 0, 100usize);
     let (mut query, mut unread) = (String::new(), false);
+    let mut archived = false;
+    let mut chat_pending: Option<crate::chat_management::Pending> = None;
     let mut reply = None;
     let mut operation = None;
     let mut info_target = None;
@@ -145,6 +197,10 @@ pub async fn run_with_preferences(
         let mut notice = String::new();
         let mut page = None;
         tokio::select! {
+            result=async {match &mut chat_pending {Some(pending)=>pending.await,None=>std::future::pending().await}}=>{
+                chat_pending=None;
+                notice=match result {Ok(text)=>text.into(),Err(error)=>error.message().into()};
+            }
             event=preferences.changed(), if preferences_open => {
                 preferences_open=event.is_ok();
                 let enabled=preferences.borrow_and_update().send_receipts;
@@ -219,6 +275,22 @@ pub async fn run_with_preferences(
                             }
                         }
                     }
+                    Command::ManageChat {chat,action}=>{
+                        if chat_pending.is_some() {continue;}
+                        chat_pending=Some(crate::chat_management::request(db.clone(),chat_sources.clone(),chat,action));
+                        Ok(())
+                    }
+                    Command::Folder {archived:folder,previous,draft,draft_version,revision:next}=>{
+                        revision=next;
+                        if let Err(error)=save_draft(db,previous,draft,draft_version,&sent_draft).await {
+                            updates.send_replace(Snapshot {chat_busy:chat_pending.is_some(),revision,notice:error.to_string(),..Snapshot::empty()});
+                            continue;
+                        }
+                        archived=folder;selected=0;revision=next;query.clear();unread=false;limit=100;
+                        phone_pending=None;phone_context=None;info_target=None;
+                        window=None;search=Default::default();jump=Default::default();history_boundary=None;
+                        Ok(())
+                    }
                     Command::Action(crate::message_actions::Command::CloseInfo)=>{info_target=None;continue;}
                     Command::Action(crate::message_actions::Command::Info {chat,message,request})=>{info_target=Some((chat,message,request));Ok(())}
                     Command::Action(crate::message_actions::Command::Edit {chat,message,expected,text,request})=>{
@@ -264,7 +336,7 @@ pub async fn run_with_preferences(
                         let saved = save_draft(db,previous,draft,draft_version,&sent_draft).await;
                         if let Err(error)=saved {
                             revision=next;
-                            updates.send_replace(Snapshot{search:search.clone(),jump,history,phone:Default::default(),operation:operation.clone(),destinations:destinations.clone(),revision,view:None,reply:reply.clone(),notice:error.to_string()});
+                            updates.send_replace(Snapshot{chat_busy:chat_pending.is_some(),search:search.clone(),jump,history,phone:Default::default(),operation:operation.clone(),destinations:destinations.clone(),revision,view:None,reply:reply.clone(),notice:error.to_string()});
                             continue;
                         }
                         selected=id;revision=next;limit=100;window=None;
@@ -310,15 +382,22 @@ pub async fn run_with_preferences(
                         Ok(())
                     }
                     Command::Send {chat,text,request,draft_version} => {
+                        trace_send("archive_begin",request);
                         let result = match fresh_id() { Ok(id)=>db.queue(chat,id,text.clone()).await,Err(error)=>Err(error) };
                         if result.is_ok() { sent_draft=Some((chat,text.clone(),draft_version)); }
-                        reply=Some(SendReply {request,chat,text,saved:result.is_ok()});result
+                        trace_send(if result.is_ok() {"archive_saved"} else {"archive_failed"},request);
+                        reply=Some(SendReply {request,chat,text,saved:result.is_ok()});
+                        // Confirm the durable save before building the next view.
+                        // Keep the reply in later snapshots too, so UI coalescing
+                        // cannot lose it. No view means the current UI stays put.
+                        updates.send_replace(Snapshot {chat_busy:chat_pending.is_some(),revision,reply:reply.clone(),..Snapshot::empty()});
+                        result
                     }
                     Command::NewChat { phone: value, previous, draft, draft_version, revision: next } => {
                         revision=next;phone_pending=None;
                 if let Some((chat,request,_))=phone_context.take(){history=Some(crate::domain::HistoryReply{chat,request,success:false});}
                         if let Err(error) = save_draft(db,previous,draft,draft_version,&sent_draft).await {
-                            updates.send_replace(Snapshot {search:search.clone(),jump,history,phone:Default::default(),operation:operation.clone(),destinations:destinations.clone(),revision,view:None,reply:reply.clone(),notice:error.to_string()});
+                            updates.send_replace(Snapshot {chat_busy:chat_pending.is_some(),search:search.clone(),jump,history,phone:Default::default(),operation:operation.clone(),destinations:destinations.clone(),revision,view:None,reply:reply.clone(),notice:error.to_string()});
                             continue;
                         }
                         match crate::protocol_messages::new_chat(&value) {
@@ -367,6 +446,7 @@ pub async fn run_with_preferences(
                     page.map_or(limit, |(_, _, target)| target),
                     (query.clone(), unread, false),
                     window,
+                    archived,
                 )
                 .await
             {
@@ -375,6 +455,22 @@ pub async fn run_with_preferences(
                         selected = conversation.chat.id;
                         history_boundary =
                             Some((selected, conversation.older_count > 0, view.phone_more));
+                    } else if selected != 0 {
+                        selected = 0;
+                        window = None;
+                        search = Default::default();
+                        jump = Default::default();
+                        history_boundary = None;
+                        info_target = None;
+                        page = None;
+                        phone_pending = None;
+                        if let Some((chat, request, _)) = phone_context.take() {
+                            history = Some(crate::domain::HistoryReply {
+                                chat,
+                                request,
+                                success: false,
+                            });
+                        }
                     }
                     if let Some((chat, request, target)) = page {
                         limit = target;
@@ -404,6 +500,7 @@ pub async fn run_with_preferences(
                     updates.send_replace(Snapshot {
                         search: search.clone(),
                         jump,
+                        chat_busy: chat_pending.is_some(),
                         phone,
                         history,
                         operation: operation.clone(),
@@ -425,6 +522,7 @@ pub async fn run_with_preferences(
                     updates.send_replace(Snapshot {
                         search: search.clone(),
                         jump,
+                        chat_busy: chat_pending.is_some(),
                         phone: Default::default(),
                         history,
                         operation: operation.clone(),

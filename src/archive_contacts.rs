@@ -105,7 +105,7 @@ impl Archive {
         self.call(move |db| {
             let chat = local_chat(db, selected)?;
             let jid: Option<String> = db.query_row(
-                "SELECT jid FROM chats WHERE id=?1 AND is_group=0 AND read_only=0 AND jid<>coalesce((SELECT value FROM metadata WHERE key='identity'),'')",
+                "SELECT jid FROM chats WHERE id=?1 AND is_group=0 AND read_only=0 AND jid<>coalesce((SELECT value FROM metadata WHERE key='identity'),'') AND NOT EXISTS(SELECT 1 FROM chat_settings s WHERE s.jid=chats.jid AND s.kind=2 AND s.value=1)",
                 [chat], |r| r.get(0),
             ).optional()?;
             let Some(jid) = jid.filter(|jid| jid.ends_with("@s.whatsapp.net") || jid.ends_with("@lid")) else { return Ok(None); };

@@ -265,7 +265,7 @@ async fn saved_pin_notices_repair_in_batches_without_changing_identity_or_remove
     assert!(
         view.messages
             .iter()
-            .any(|m| m.text == "[Message deleted]" && m.content.notice.is_none())
+            .any(|m| m.text == "This message was deleted" && m.content.notice.is_none())
     );
     assert!(
         view.messages

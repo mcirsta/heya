@@ -1,6 +1,7 @@
 import { Theme, Metrics } from "theme.slint";
 
 export component IconButton inherits Rectangle {
+    out property <bool> hovered:area.has-hover;
     in property <image> icon;
     in property <string> label;
     in property <bool> filled: false;

@@ -12,6 +12,13 @@
 #include <stdio.h>
 #include <sys/sysctl.h>
 
+void heya_dock_badge(uint32_t count) {
+    NSCAssert([NSThread isMainThread], @"AppKit requires the main thread");
+    @autoreleasepool {
+        NSApp.dockTile.badgeLabel = count ? [NSString stringWithFormat:@"%u", count] : nil;
+    }
+}
+
 void heya_startup_system_info(char *output, size_t capacity) {
     @autoreleasepool {
         NSOperatingSystemVersion os = NSProcessInfo.processInfo.operatingSystemVersion;

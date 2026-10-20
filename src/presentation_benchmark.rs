@@ -101,6 +101,10 @@ pub fn start(
     if std::env::var_os("HEYA_BENCHMARK_ARCHIVE").is_some() {
         return archive_pipeline::start(ui, runtime);
     }
+    let long_draft = std::env::var_os("HEYA_BENCHMARK_LONG_DRAFT").is_some();
+    if long_draft {
+        println!("Composer stress: 8–64 KiB synthetic multiline drafts; no account or network");
+    }
     let wallpaper = std::env::var_os("HEYA_BENCHMARK_NO_WALLPAPER").is_none();
     ui.global::<crate::Theme>().set_show_wallpaper(wallpaper);
     println!(
@@ -228,9 +232,14 @@ pub fn start(
             time: "14 Oct 12:00".into(),
             unread: index as usize % 5,
             marked_unread: false,
+            muted: false,
+            archived: false,
         })
         .collect();
     let view = View {
+        unread_chats: 0,
+        archived_count: 0,
+        archived_view: false,
         chats,
         conversation: Some(conversation),
         can_send: false,
@@ -242,6 +251,7 @@ pub fn start(
         jump: Default::default(),
         history: None,
         phone: Default::default(),
+        chat_busy: false,
         operation: None,
         destinations: Arc::from([]),
         revision: 0,
@@ -517,7 +527,7 @@ pub fn start(
         } else if current_phase == 8 {
             ui.set_draft(
                 "Synthetic composer line\n"
-                    .repeat((path_tick as usize / 4) % 8 + 1)
+                    .repeat(((path_tick as usize / 4) % 8 + 1) * if long_draft { 340 } else { 1 })
                     .into(),
             );
         }

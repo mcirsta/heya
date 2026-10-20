@@ -233,7 +233,7 @@ async fn schema_thirteen_upgrade_preserves_chats_and_drafts_and_expires_only_due
     db.draft(1, "Preserve synthetic draft 👩🏽‍💻".into())
         .await
         .unwrap();
-    db.blocking(|c|{c.execute_batch("DROP TABLE history_pages;DROP TABLE history_requests;DROP INDEX messages_expiring;DROP INDEX messages_visible_timeline;DROP TABLE outgoing_receipts; PRAGMA user_version=13;UPDATE messages SET expires=1 WHERE wire_id='due';")?;Ok(())}).unwrap();
+    db.blocking(|c|{c.execute_batch("DROP TABLE history_pages;DROP TABLE history_requests;DROP INDEX messages_expiring;DROP INDEX messages_visible_timeline;DROP TABLE outgoing_receipts; DROP TABLE chat_settings; PRAGMA user_version=13;UPDATE messages SET expires=1 WHERE wire_id='due';")?;Ok(())}).unwrap();
     drop(db);
     let db = Archive::open(files, KEY).unwrap();
     let view = db.view(1, 100, String::new(), false, false).await.unwrap();

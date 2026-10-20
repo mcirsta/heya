@@ -122,3 +122,50 @@ impl Archive {
         }
     }
 }
+
+impl Archive {
+    /// Reprocess delete envelopes rejected by the old sender-relative key check.
+    /// Uses the normal mutation writer/projection on the startup archive worker.
+    pub fn repair_deletions(
+        &self,
+        decode: impl Fn(&[u8], &str, &str, bool, i64) -> Option<Change>,
+    ) -> Result<()> {
+        if self.blocking(|db| Ok(db.query_row("SELECT EXISTS(SELECT 1 FROM metadata WHERE key='delete_decoder_revision' AND value='1')",[],|r|r.get::<_,bool>(0))?))? {
+            return Ok(());
+        }
+        let mut after = 0_i64;
+        loop {
+            let last=self.blocking(|db| {
+                let tx=db.transaction()?;
+                let rows=tx.prepare("SELECT id,chat_id,source_chat,source_sender,sender,outgoing,stamp,raw FROM messages WHERE id>?1 AND visible=0 AND deleted=0 AND length(raw)>0 ORDER BY id LIMIT 100")?
+                    .query_map([after],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i32>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,bool>(5)?,r.get::<_,i64>(6)?,r.get::<_,Vec<u8>>(7)?)))?
+                    .collect::<std::result::Result<Vec<_>,_>>()?;
+                let mut changed=std::collections::BTreeSet::new();
+                for (id,chat,source,sender,author,outgoing,stamp,raw) in &rows {
+                    if let Some(change)=decode(raw,source,sender,*outgoing,*stamp)
+                        && change.text.is_none()
+                        && edits::record(&tx,*chat,&canonical(&tx,author)?,&change)? {
+                            tx.execute("UPDATE messages SET raw=X'' WHERE id=?1",[id])?;
+                            changed.insert(*chat);
+                    }
+                }
+                for chat in changed { edits::apply(&tx,Some(chat))?; }
+                if rows.is_empty() {
+                    // Previously accepted early revokes also need a tombstone.
+                    edits::apply(&tx,None)?;
+                    tx.execute("UPDATE messages SET body=?1 WHERE deleted=1 AND body='[Message deleted]'",[domain::DELETED_MESSAGE])?;
+                    tx.execute("INSERT OR REPLACE INTO metadata(key,value) VALUES('delete_decoder_revision','1')",[])?;
+                }
+                tx.commit()?;
+                Ok(rows.last().map(|row|row.0))
+            })?;
+            if let Some(id) = last {
+                after = id;
+            } else {
+                break;
+            }
+        }
+        self.changed();
+        Ok(())
+    }
+}

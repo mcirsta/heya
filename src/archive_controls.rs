@@ -130,8 +130,18 @@ pub(super) fn accepted(db: &Connection, chat: i32, event: &str, status: &str) ->
     if control.kind == ControlKind::Hide {
         return Ok(());
     }
-    let body = (control.kind == ControlKind::Edit).then_some(control.text);
-    db.execute("INSERT INTO mutations(chat_id,sender,wire_id,body,version,deleted) VALUES(?1,'#self',?2,?3,?4,?5) ON CONFLICT(chat_id,sender,wire_id) DO UPDATE SET body=CASE WHEN mutations.deleted=1 THEN NULL ELSE excluded.body END,raw=X'',version=max(mutations.version,excluded.version),deleted=max(mutations.deleted,excluded.deleted) WHERE excluded.deleted=1 OR excluded.version>mutations.version",params![chat,control.wire,body,control.version,control.kind==ControlKind::Revoke])?;
+    edits::record(
+        db,
+        chat,
+        "#self",
+        &Change {
+            id: control.wire.clone(),
+            sender: "#self".into(),
+            text: (control.kind == ControlKind::Edit).then_some(control.text),
+            raw: Vec::new(),
+            version: control.version,
+        },
+    )?;
     apply_mutations(db, chat)?;
     hide_if_needed(db, chat, "#self", &control.wire)?;
     db.execute(

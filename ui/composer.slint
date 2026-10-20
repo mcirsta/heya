@@ -30,6 +30,7 @@ export component Composer inherits Rectangle {
     public function focus-editor() {editor.focus();}
     in property <bool> enabled: true;
     in property <bool> can-send: true;
+    in property <bool> saving;
     out property <length> field-height: pill.height;
     private property <length> line-height: line-probe.preferred-height;
     private property <length> band: max(Metrics.composer-control, round((root.line-height + 14px) / 1px) * 1px);
@@ -133,7 +134,7 @@ export component Composer inherits Rectangle {
                     }
                     key-pressed(event) => {
                         if event.text == Key.Return && !event.modifiers.shift && !event.modifiers.alt && (event.modifiers.control || (root.enter-sends && !event.modifiers.meta)) {
-                            if root.enabled && root.can-send { root.send(); }
+                            if root.enabled && root.can-send && !event.repeat { root.send(); }
                             return accept;
                         }
                         return reject;
@@ -148,7 +149,7 @@ export component Composer inherits Rectangle {
                 height: root.band;
                 icon-size: root.band * 0.46;
                 icon: root.draft.is-empty ? @image-url("icons/mic.svg") : @image-url("icons/send.svg");
-                label: root.draft.is-empty ? @tr("Record a voice message") : @tr("Send message");
+                label: root.saving ? @tr("Saving message…") : root.draft.is-empty ? @tr("Record a voice message") : @tr("Send message");
                 muted-background: root.draft.is-empty;
                 filled: true;
                 enabled: root.enabled && root.voice-phase==0 && root.can-send && (!root.draft.is-empty || (root.voice-supported && root.attachment-enabled));
@@ -176,7 +177,7 @@ export component Composer inherits Rectangle {
                 hint-label := Text {
                     horizontal-stretch: 1;
                     height: 25px;
-                    text: root.enter-sends ? @tr("Enter sends · Shift+Enter for a new line") : Theme.primary-modifier + @tr("Enter sends · Enter for a new line");
+                    text: root.saving ? @tr("Saving message…") : root.enter-sends ? @tr("Enter sends · Shift+Enter for a new line") : Theme.primary-modifier + @tr("Enter sends · Enter for a new line");
                     color: Theme.dim;
                     font-size: 11px;
                     vertical-alignment: center;

@@ -307,7 +307,10 @@ async fn edit_failure_expiry_and_remote_revocation_never_replace_or_restore_cont
     db.delivery(PN.into(), "edit-event".into(), "accepted")
         .await
         .unwrap();
-    assert_eq!(view(&db, chat).await.messages[0].text, "[Message deleted]");
+    assert_eq!(
+        view(&db, chat).await.messages[0].text,
+        "This message was deleted"
+    );
     let mut old = own("old");
     old.timestamp -= action::EDIT_WINDOW + 1;
     let body = old.text.clone();
@@ -359,7 +362,7 @@ async fn confirmed_revoke_purges_media_and_history_replay_cannot_resurrect_the_m
     .unwrap();
     let after = view(&db, chat).await;
     assert_eq!(after.messages.len(), 1);
-    assert_eq!(after.messages[0].text, "[Message deleted]");
+    assert_eq!(after.messages[0].text, "This message was deleted");
     db.call(move |c| {
         assert_eq!(
             c.query_row(

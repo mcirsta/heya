@@ -3,6 +3,7 @@
 pub type ChatId = i32;
 pub type MessageId = i32;
 pub const PAGE_SIZE: usize = 100;
+pub const DELETED_MESSAGE: &str = "This message was deleted";
 
 // Bound sidebar shaping and copying independently of the full message body.
 // Slint still elides this summary to the available width.
@@ -165,6 +166,8 @@ pub struct ChatSummary {
     pub time: String,
     pub unread: usize,
     pub marked_unread: bool,
+    pub muted: bool,
+    pub archived: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -223,6 +226,8 @@ impl Chat {
             time: last.map_or_else(String::new, |m| m.time.clone()),
             unread: self.unread,
             marked_unread: false,
+            muted: false,
+            archived: false,
         }
     }
 }
@@ -437,7 +442,7 @@ impl DemoState {
                 let saved = if let Some(source) = source
                     && source.outgoing
                 {
-                    source.text = "[Message deleted]".into();
+                    source.text = DELETED_MESSAGE.into();
                     let metadata = source.content.metadata.clone();
                     source.content = std::sync::Arc::new(crate::message_content::Content {
                         metadata,

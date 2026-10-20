@@ -7,6 +7,7 @@ mod tests;
 
 pub(super) fn source(db: &Connection, chat: i32, id: i32) -> Result<Source> {
     let chat = local_chat(db, chat)?;
+    chat_settings::unlocked(db, chat)?;
     // Use the effective edited envelope for quotes/forwards; media downloads
     // retain the immutable transfer reference in messages.raw.
     let value = db.query_row(
@@ -184,7 +185,7 @@ pub(super) fn merge(
 impl Archive {
     pub async fn destinations(&self) -> Result<Vec<crate::message_actions::Destination>> {
         self.call(|db|{
-            let mut q=db.prepare("SELECT c.id,coalesce(nullif(n.saved_name,''),nullif(c.name,''),nullif(n.profile_name,''),c.jid) FROM chats c LEFT JOIN contacts n ON n.jid=c.jid WHERE c.listed=1 AND c.read_only=0 ORDER BY 2")?;
+            let mut q=db.prepare("SELECT c.id,coalesce(nullif(n.saved_name,''),nullif(c.name,''),nullif(n.profile_name,''),c.jid) FROM chats c LEFT JOIN contacts n ON n.jid=c.jid WHERE c.listed=1 AND c.read_only=0 AND NOT EXISTS(SELECT 1 FROM chat_settings s WHERE s.jid=c.jid AND s.kind=2 AND s.value=1) ORDER BY 2")?;
             Ok(q.query_map([],|r|Ok(crate::message_actions::Destination{id:r.get(0)?,title:r.get(1)?}))?.collect::<std::result::Result<Vec<_>,_>>()?)
         }).await
     }
@@ -242,6 +243,7 @@ pub(super) fn queue(
     clear_draft: bool,
 ) -> Result<()> {
     let destination = local_chat(db, destination)?;
+    chat_settings::unlocked(db, destination)?;
     let (read_only, ephemeral): (bool, u32) = db.query_row(
         "SELECT read_only,ephemeral FROM chats WHERE id=?1",
         [destination],

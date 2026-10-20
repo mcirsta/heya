@@ -4,8 +4,14 @@ pub(crate) mod benchmark;
 #[path = "presentation_chat_list.rs"]
 pub(crate) mod chat_list;
 #[cfg(test)]
+#[path = "presentation_chat_management_tests.rs"]
+mod chat_management_tests;
+#[cfg(test)]
 #[path = "presentation_notice_tests.rs"]
 mod notice_tests;
+#[cfg(test)]
+#[path = "presentation_send_tests.rs"]
+mod send_tests;
 #[path = "presentation_timeline.rs"]
 pub(crate) mod timeline;
 use crate::{
@@ -43,6 +49,8 @@ fn chat_row(chat: &domain::ChatSummary) -> ChatRow {
         time: chat.time.as_str().into(),
         unread: chat.unread.min(i32::MAX as usize) as i32,
         marked_unread: chat.marked_unread,
+        muted: chat.muted,
+        archived: chat.archived,
         avatar: slint::Image::default(),
     }
 }
@@ -65,6 +73,7 @@ fn message_row(message: &domain::Message, previous: Option<&domain::Message>) ->
             .to_owned(),
     };
     MessageRow {
+        long_text: text.len() > 4096,
         large_emoji: crate::presentation_text::large_emoji(&text),
         wire_id: message.content.metadata.wire.as_str().into(),
         sent_at: message.content.metadata.stamp.to_string().into(),
@@ -990,12 +999,16 @@ mod tests {
             jump: Default::default(),
             history: None,
             phone: Default::default(),
+            chat_busy: false,
             operation: None,
             destinations: Arc::from([]),
             revision: 0,
             reply: None,
             notice: String::new(),
             view: Some(std::sync::Arc::new(View {
+                unread_chats: 0,
+                archived_count: 0,
+                archived_view: false,
                 chats: state.sidebar().into(),
                 conversation: Some(conversation),
                 can_send: true,
@@ -1097,6 +1110,7 @@ mod tests {
                 view: None,
                 history: None,
                 phone: Default::default(),
+                chat_busy: false,
                 reply: None,
                 notice: "Synthetic archive write failure".into(),
             },
@@ -1138,6 +1152,8 @@ mod tests {
         i_slint_backend_testing::init_integration_test_with_system_time();
         let runtime = Runtime::new().unwrap();
         let live_ui = check_live_message_handoff();
+        send_tests::check_ui();
+        super::chat_management_tests::check_ui();
         crate::presentation_avatars::check_ui();
         crate::presentation_preferences::check_ui(&runtime);
         crate::presentation_content::check_ui();

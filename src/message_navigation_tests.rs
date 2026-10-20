@@ -171,3 +171,140 @@ async fn search_refreshes_and_navigation_retains_drafts_without_marking_hidden_l
     drop(commands);
     worker.await.unwrap();
 }
+
+#[tokio::test]
+async fn folders_reset_navigation_and_a_synced_lock_clears_search_results() {
+    use crate::archive::tests::PN;
+    use crate::chat_management::{Setting, Update};
+    let (_temp, db) = fixture();
+    db.ingest(Batch {
+        messages: (0..160)
+            .map(|i| {
+                let mut r = record(&format!("folder-{i}"));
+                r.timestamp += i;
+                r
+            })
+            .collect(),
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    db.save_chat_settings(vec![Update {
+        jid: PN.into(),
+        setting: Setting::Archive,
+        value: 1,
+        stamp: Some(1),
+    }])
+    .await
+    .unwrap();
+    let (archives, rx) = watch::channel(None);
+    let (commands, receiver) = mpsc::channel(16);
+    let (updates, mut views) = watch::channel(Snapshot::empty());
+    let worker = tokio::spawn(run(rx, receiver, updates));
+    archives.send_replace(Some(db.clone()));
+    until(&mut views, |s| s.view.is_some()).await;
+    commands
+        .send(Command::Folder {
+            archived: true,
+            previous: 0,
+            draft: String::new(),
+            draft_version: 0,
+            revision: 1,
+        })
+        .await
+        .unwrap();
+    until(&mut views, |s| s.revision == 1).await;
+    commands
+        .send(Command::Select {
+            id: 1,
+            previous: 0,
+            draft: String::new(),
+            draft_version: 0,
+            revision: 2,
+        })
+        .await
+        .unwrap();
+    until(&mut views, |s| s.revision == 2).await;
+    commands
+        .send(Command::Navigation(Nav::Navigate {
+            chat: 1,
+            message: 10,
+            quote: false,
+            request: 1,
+            revision: 2,
+        }))
+        .await
+        .unwrap();
+    let s = until(&mut views, |s| s.jump.request == 1).await;
+    let view = s.view.unwrap();
+    assert!(view.archived_view);
+    assert!(s.jump.browsing);
+    assert_eq!(view.conversation.as_ref().unwrap().messages.len(), 60);
+    commands
+        .send(Command::Folder {
+            archived: false,
+            previous: 1,
+            draft: "Keep the archived draft".into(),
+            draft_version: 1,
+            revision: 3,
+        })
+        .await
+        .unwrap();
+    let s = until(&mut views, |s| s.revision == 3).await;
+    assert!(!s.jump.browsing);
+    assert!(s.view.unwrap().conversation.is_none());
+    commands
+        .send(Command::Folder {
+            archived: true,
+            previous: 0,
+            draft: String::new(),
+            draft_version: 0,
+            revision: 4,
+        })
+        .await
+        .unwrap();
+    until(&mut views, |s| s.revision == 4).await;
+    commands
+        .send(Command::Select {
+            id: 1,
+            previous: 0,
+            draft: String::new(),
+            draft_version: 0,
+            revision: 5,
+        })
+        .await
+        .unwrap();
+    let s = until(&mut views, |s| s.revision == 5).await;
+    let c = s.view.unwrap().conversation.clone().unwrap();
+    assert_eq!(c.messages[0].id, 61, "reopen at the latest window");
+    assert_eq!(c.draft, "Keep the archived draft");
+    commands
+        .send(Command::Navigation(Nav::Search {
+            chat: 1,
+            query: "folder-1".into(),
+            request: 1,
+            revision: 5,
+        }))
+        .await
+        .unwrap();
+    let s = until(&mut views, |s| s.search.request == 1).await;
+    assert!(!s.search.hits.is_empty());
+    db.save_chat_settings(vec![Update {
+        jid: PN.into(),
+        setting: Setting::Lock,
+        value: 1,
+        stamp: Some(2),
+    }])
+    .await
+    .unwrap();
+    let s = until(&mut views, |s| {
+        s.view.as_ref().is_some_and(|v| v.conversation.is_none())
+    })
+    .await;
+    assert!(s.search.hits.is_empty());
+    assert!(!s.jump.browsing);
+    assert!(db.search_messages(1, "folder".into(), 2).await.is_err());
+    assert!(db.navigation_target(1, 10, false).await.is_err());
+    drop(commands);
+    worker.await.unwrap();
+}

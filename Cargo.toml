@@ -43,7 +43,9 @@ libc = "0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "3.6", features = ["sync-secret-service", "crypto-rust"] }
-zbus = "=5.19.0"
+# Use the application's runtime, including for the long-lived launcher badge.
+# The default async-io backend otherwise starts a connection executor thread.
+zbus = { version = "=5.19.0", default-features = false, features = ["tokio"] }
 gstreamer = { version = "0.25", optional = true }
 gstreamer-app = { version = "0.25", optional = true }
 

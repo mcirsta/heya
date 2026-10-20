@@ -80,6 +80,13 @@ including arrivals in the same second. Schema 9 adds `outgoing_reads`, one posit
 per chat, plus an index for pending jobs. Previously cleared badges aren't
 broadcast during migration: revisiting a conversation creates the first update.
 
+Visible deletion and expiry placeholders are valid observed read positions.
+Viewing one at the latest end of the chat clears unread messages through that
+exact original row, including the placeholder. Later arrivals, even within the
+same second, stay unread. Private synchronization keeps the original message
+key and timestamp; the invisible deletion event does not advance the boundary.
+Sender-facing receipts still exclude deleted, expired and hidden content.
+
 One supervised background worker waits for a verified connected session, then
 sends one update at a time. Failures/timeouts back off for 30 seconds without
 archive bursts bypassing the delay. The queue survives shutdown/restart. A stale
@@ -91,8 +98,9 @@ local badge is already zero. Queued/failed messages do not advance the remote
 range. This uses the existing ACK/receipt path, with no extra visibility state,
 service, timer or schema. The server ACK supplies the actual send time for offline
 queued messages. The range includes the message key, author and from-me flag when
-that original identity remains unambiguous; expired/deleted bodies retain their
-original timestamp-only fallback. Repeated ACKs/revisits deduplicate by position,
+that original identity remains unambiguous, including retained deletion/expiry
+placeholders. If the stored identity is unavailable, the range keeps its original
+bounded timestamp fallback. Repeated ACKs/revisits deduplicate by position,
 and late acknowledgments cannot clear newer incoming messages or a newer manual
 unread mark. Old outgoing history is not broadcast during import.
 SDK app-state ranges use message timestamps in seconds, matching the
@@ -119,6 +127,27 @@ that has unread messages in the phone/ZapFast, and view its latest messages whil
 Heya has focus. Check the badge in the other client. Repeat after reading offline
 and reconnecting. Leave Heya unfocused for another incoming message to check that
 it remains unread until the conversation is actively viewed.
+
+## Deleted read-boundary regression — 2026-10-20
+
+Before changing application code, three SQLCipher regressions failed against the
+existing implementation: viewing a deleted final message left unread at 1;
+viewing an expiry placeholder also left it at 1; and reading through a deleted
+row with a newer same-second arrival left 3 unread instead of 1. The timeline
+reported the visible placeholder, but the archive rejected it as a read boundary.
+
+The correction removes payload deletion/expiry exclusions from the two visible
+read-position queries. Hidden rows, chat identity, exact `(stamp,id)` boundaries,
+and the confirmed-send requirement for outgoing positions stay enforced.
+Sender-facing receipt eligibility is unchanged. Tests also cover direct/group
+chats, the original message key/timestamp rather than the later revoke event,
+and the headless active-window read gate for an unavailable deleted bubble.
+The optimized default suite passed 228 tests; the audio-disabled suite passed
+210. Both configurations retained three intentional skips and passed strict
+all-target Clippy with warnings denied. The UI check uses Slint's headless
+backend and never opens a desktop window. Automated checks use synthetic
+archives and do not establish live propagation
+to other WhatsApp clients.
 
 ## Validation recorded 2026-10-16
 

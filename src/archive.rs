@@ -15,6 +15,8 @@ mod contacts;
 pub use contacts::Contact;
 #[path = "archive_avatars.rs"]
 mod avatars;
+#[path = "archive_chat_settings.rs"]
+mod chat_settings;
 pub use avatars::AvatarEntry;
 #[path = "archive_reads.rs"]
 mod reads;
@@ -111,6 +113,7 @@ pub struct ChatMeta {
 }
 #[derive(Default)]
 pub struct Batch {
+    pub settings: Vec<crate::chat_management::Update>,
     pub messages: Vec<Record>,
     pub chats: Vec<ChatMeta>,
     pub aliases: Vec<(String, String)>,
@@ -126,9 +129,13 @@ pub struct Outgoing {
     pub raw: Vec<u8>,
     pub control: Option<crate::message_actions::Control>,
 }
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct View {
     pub chats: Arc<[domain::ChatSummary]>,
+    /// Unread listed chats before search/filtering, including manual unread marks.
+    pub unread_chats: u32,
+    pub archived_count: usize,
+    pub archived_view: bool,
     pub conversation: Option<domain::Conversation>,
     pub can_send: bool,
     pub history_failed: bool,
@@ -163,7 +170,7 @@ impl Archive {
         db.busy_timeout(Duration::from_secs(5))?;
         db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA secure_delete=ON; PRAGMA temp_store=MEMORY;")?;
         let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if version > 15 {
+        if version > 16 {
             return Err(Error::Database);
         }
         if version == 0 {
@@ -258,6 +265,12 @@ impl Archive {
             let tx = db.transaction()?;
             tx.execute_batch(include_str!("archive_receipts.sql"))?;
             tx.pragma_update(None, "user_version", 15)?;
+            tx.commit()?;
+        }
+        if version < 16 {
+            let tx = db.transaction()?;
+            tx.execute_batch(include_str!("archive_chat_settings.sql"))?;
+            tx.pragma_update(None, "user_version", 16)?;
             tx.commit()?;
         }
         // Never resend something that may have reached the network before a crash.
@@ -378,6 +391,9 @@ impl Archive {
             for (lid, pn) in batch.aliases {
                 merge_alias(&tx, &lid, &pn)?;
             }
+            for update in batch.settings {
+                chat_settings::save(&tx, update)?;
+            }
             for (jid, name) in batch.profiles {
                 contacts::profile(&tx, &jid, &name)?;
             }
@@ -437,6 +453,7 @@ impl Archive {
         self.call(move |db| {
             let tx = db.transaction()?;
             let chat = local_chat(&tx,chat)?;
+            chat_settings::unlocked(&tx,chat)?;
             if Self::queue_reply(&tx,chat,id.clone(),text.clone())? {tx.commit()?;return Ok(());}
             let (read_only, ephemeral): (bool, u32) = tx.query_row(
                 "SELECT read_only,ephemeral FROM chats WHERE id=?1", [chat], |r| Ok((r.get(0)?,r.get(1)?)))?;
@@ -572,7 +589,21 @@ impl Archive {
         unread: bool,
         mark_read: bool,
     ) -> Result<View> {
-        self.view_window(selected, limit, (query, unread, mark_read), None)
+        self.view_window(selected, limit, (query, unread, mark_read), None, false)
+            .await
+    }
+
+    #[cfg(test)]
+    pub async fn view_in(
+        &self,
+        selected: i32,
+        limit: usize,
+        query: String,
+        unread: bool,
+        mark_read: bool,
+        archived: bool,
+    ) -> Result<View> {
+        self.view_window(selected, limit, (query, unread, mark_read), None, archived)
             .await
     }
 
@@ -582,6 +613,7 @@ impl Archive {
         limit: usize,
         filters: (String, bool, bool),
         end: Option<(i64, i32)>,
+        archived: bool,
     ) -> Result<View> {
         let (query, unread, mark_read) = filters;
         let probe = self.measurements();
@@ -591,6 +623,7 @@ impl Archive {
             expire(db)?;
             let selected=local_chat(db,selected)?;
             if mark_read {
+                chat_settings::unlocked(db,selected)?;
                 let tx = db.transaction()?;
                 reads::local_read(&tx, selected)?;
                 tx.commit()?;
@@ -600,7 +633,7 @@ impl Archive {
                 [], |r| Ok((r.get(0)?,r.get(1)?)),
             ).optional()?;
             let mut stmt = db.prepare(include_str!("archive_sidebar.sql"))?;
-            let rows = stmt.query_map([(domain::SUMMARY_CHARS + 1) as i64], |r| {
+            let rows = stmt.query_map(params![(domain::SUMMARY_CHARS + 1) as i64,chrono::Utc::now().timestamp_millis()], |r| {
                 let name: String = r.get(2)?;
                 let jid: String = r.get(1)?;
                 let title = if let Some((identity, profile)) = &owner && identity == &jid {
@@ -631,11 +664,15 @@ impl Archive {
                     time: time(r.get(5)?),
                     unread: r.get::<_, u32>(3)? as usize,
                     marked_unread: r.get(6)?,
+                    muted: r.get(15)?,
+                    archived: r.get(16)?,
                 })
             })?.collect::<std::result::Result<Vec<_>,_>>()?;
-            let summary = rows.iter().find(|c| c.id == selected).cloned();
+            let summary = rows.iter().find(|c| c.id == selected && c.archived==archived).cloned();
+            let archived_count=rows.iter().filter(|c|c.archived).count();
+            let unread_chats = rows.iter().filter(|c| !c.archived && !c.muted && (c.unread > 0 || c.marked_unread)).count().try_into().unwrap_or(u32::MAX);
             let query = query.trim().to_lowercase();
-            let chats = rows.into_iter().filter(|c| (!unread || c.unread > 0 || c.marked_unread) && c.title.to_lowercase().contains(&query)).collect();
+            let chats = rows.into_iter().filter(|c| c.archived==archived && (!unread || c.unread > 0 || c.marked_unread) && c.title.to_lowercase().contains(&query)).collect();
             let mut can_send = false;
             let conversation = if let Some(summary) = summary {
                 let (group,draft,read_only): (bool,String,bool) = db.query_row("SELECT is_group,draft,read_only FROM chats WHERE id=?1", [selected], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
@@ -650,7 +687,7 @@ impl Archive {
                 None
             };
             let history_failed = db.query_row("SELECT EXISTS(SELECT 1 FROM history_chunks WHERE state='failed')", [], |r| r.get(0))?;
-            let result=View {chats,conversation,can_send,history_failed,phone_more:end.is_none() && history::more(db,selected)?};
+            let result=View {chats,unread_chats,archived_count,archived_view:archived,conversation,can_send,history_failed,phone_more:end.is_none() && history::more(db,selected)?};
             if let (Some(probe),Some(started))=(probe,started) {probe.record(crate::performance::Metric::ViewBuild,started.elapsed());}
             Ok(result)
         }).await
@@ -726,12 +763,37 @@ fn insert_record(tx: &Transaction<'_>, r: Record, live: bool) -> Result<()> {
     } else {
         canonical(tx, &r.sender)?
     };
-    if let Some(change) = r.change {
-        let target_sender = canonical(tx, &change.sender)?;
-        tx.execute("INSERT INTO mutations(chat_id,sender,wire_id,body,version,deleted,raw) VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(chat_id,sender,wire_id) DO UPDATE SET body=CASE WHEN mutations.deleted=1 THEN NULL ELSE excluded.body END,raw=CASE WHEN mutations.deleted=1 OR excluded.deleted=1 THEN X'' ELSE excluded.raw END,version=max(mutations.version,excluded.version),deleted=max(mutations.deleted,excluded.deleted) WHERE excluded.deleted=1 OR excluded.version>mutations.version", params![chat,target_sender,change.id,change.text,change.version,change.text.is_none(),change.raw])?;
+    if let Some(change) = &r.change {
+        edits::record(tx, chat, &sender, change)?;
     }
     let inserted = tx.execute("INSERT OR IGNORE INTO messages(chat_id,sender,wire_id,stamp,outgoing,sender_name,body,raw,visible,expires,delivery,source_chat,source_sender,content,thumbnail) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)", params![chat,sender,r.id,r.timestamp,r.outgoing,r.sender_name,r.text,r.raw,r.visible,r.expires,if r.outgoing {"accepted"} else {""},r.chat,r.sender,encode_content(&r.content)?,r.thumbnail])?;
     let inserted_row = tx.last_insert_rowid();
+    // Only duplicate history can fill in a revoke placeholder's original
+    // position/author. Ordinary incoming messages keep the simple insert path;
+    // deleted text/media and unread state are never restored.
+    if inserted == 0 && r.visible {
+        let repaired = tx
+            .query_row(
+                "UPDATE messages SET stamp=?4,sender_name=?5,source_chat=?6,source_sender=?7
+            WHERE chat_id=?1 AND sender=?2 AND wire_id=?3 AND deleted=1
+              AND (stamp<>?4 OR sender_name<>?5 OR source_chat<>?6 OR source_sender<>?7)
+            RETURNING id",
+                params![
+                    chat,
+                    sender,
+                    r.id,
+                    r.timestamp,
+                    r.sender_name,
+                    r.chat,
+                    r.sender
+                ],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?;
+        if let Some(row) = repaired {
+            reads::inserted(tx, chat, row, false)?;
+        }
+    }
     if let Some(value) = &r.content.reaction {
         actions::reaction(
             tx,
@@ -799,6 +861,7 @@ fn merge_alias(tx: &Transaction<'_>, lid: &str, pn: &str) -> Result<()> {
         params![lid, pn],
     )?;
     contacts::merge(tx, lid, pn)?;
+    chat_settings::merge(tx, lid, pn)?;
     avatars::merge(tx, lid, pn)?;
     actions::merge(tx, "actor", &lid, &pn)?;
     controls::merge(tx, "sender", &lid, &pn)?;

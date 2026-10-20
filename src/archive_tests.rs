@@ -359,7 +359,7 @@ async fn photo_sidebar_uses_metadata_and_current_group_sender_without_changing_c
     db.ingest(batch(vec![revoked])).await.unwrap();
     assert_eq!(
         conversation(&db, group, 100).await.chat.preview,
-        "[Message deleted]"
+        "This message was deleted"
     );
     let mut literal = photo;
     literal.id = "literal-text".into();
@@ -380,7 +380,9 @@ async fn photo_sidebar_uses_metadata_and_current_group_sender_without_changing_c
                 include_str!("archive_sidebar.sql")
             ))?;
             Ok(statement
-                .query_map([257], |r| r.get::<_, String>(3))?
+                .query_map(params![257, chrono::Utc::now().timestamp_millis()], |r| {
+                    r.get::<_, String>(3)
+                })?
                 .collect::<std::result::Result<Vec<_>, _>>()?)
         })
         .unwrap();
@@ -605,7 +607,7 @@ async fn aliases_merge_tombstones_drafts_and_late_group_edits_without_resurrecti
     let view = conversation(&db, lid, 100).await;
     assert_eq!(view.chat.id, pn);
     assert_eq!(view.messages.len(), 1);
-    assert_eq!(view.messages[0].text, "[Message deleted]");
+    assert_eq!(view.messages[0].text, "This message was deleted");
     assert!(view.draft.contains("PN draft") && view.draft.contains("LID draft"));
     db.draft(lid, "new draft through old selection".into())
         .await

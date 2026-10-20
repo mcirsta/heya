@@ -198,6 +198,7 @@ pub fn attach(
         preferences.clone(),
     );
     let (history_sources, history_source_rx) = watch::channel(None);
+    let (chat_sources, chat_source_rx) = watch::channel(None);
     let (audio_sources, audio_source_rx) = watch::channel(None);
     let audio_task = crate::presentation_audio::attach(
         ui,
@@ -226,6 +227,7 @@ pub fn attach(
     let (avatar_updates, avatar_snapshots) = watch::channel(crate::avatars::Snapshot::default());
     let (commands, command_rx) = mpsc::channel(256);
     let (views, view_rx) = watch::channel(messaging::Snapshot::empty());
+    let badge = crate::taskbar_badge::run(ui.as_weak(), view_rx.clone());
     bind_messages(ui, commands);
     let weak = ui.as_weak();
     let message_weak = weak.clone();
@@ -260,6 +262,7 @@ pub fn attach(
                 updates,
                 archives,
                 protocol::LiveServices {
+                    chat_sources,
                     preferences: preferences.clone(),
                     avatar_demand: avatar_demand.clone(),
                     photo_demand: photo_fetch_demand,
@@ -285,12 +288,13 @@ pub fn attach(
                 photo_snapshots,
                 crate::presentation_photos::publish
             ),
-            messaging::run_with_preferences(
+            messaging::run_with_chat_sources(
                 archive_rx,
                 command_rx,
                 views,
                 history_source_rx,
-                preferences.clone()
+                preferences.clone(),
+                chat_source_rx
             ),
             audio_task,
             downloads,
@@ -309,7 +313,8 @@ pub fn attach(
             ),
             avatar_presentation,
             presentation,
-            message_presentation
+            message_presentation,
+            badge
         );
     })
 }
@@ -324,6 +329,50 @@ pub(crate) fn enqueue(ui: &AppWindow, commands: &mpsc::Sender<Command>, command:
 }
 
 pub(crate) fn bind_messages(ui: &AppWindow, commands: mpsc::Sender<Command>) {
+    ui.on_manage_chat({
+        let weak = ui.as_weak();
+        let tx = commands.clone();
+        move |chat, action| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let Some(action) = crate::chat_management::Action::from_menu(action) else {
+                return;
+            };
+            if ui.get_connection_state() != 5 || ui.get_chat_management_busy() {
+                return;
+            }
+            if enqueue(&ui, &tx, Command::ManageChat { chat, action }) {
+                ui.set_chat_management_busy(true);
+                ui.set_notice("Updating chat…".into());
+            }
+        }
+    });
+    ui.on_change_chat_folder({
+        let weak = ui.as_weak();
+        let tx = commands.clone();
+        move |archived| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let revision = ui.get_live_revision() + 1;
+            if enqueue(
+                &ui,
+                &tx,
+                Command::Folder {
+                    archived,
+                    previous: ui.get_selected_id(),
+                    draft: ui.get_draft().into(),
+                    draft_version: ui.get_draft_revision(),
+                    revision,
+                },
+            ) {
+                ui.set_live_revision(revision);
+                ui.set_query("".into());
+                ui.set_unread_only(false);
+            }
+        }
+    });
     let timer = std::rc::Rc::new(slint::Timer::default());
     ui.on_read_visible({
         let weak = ui.as_weak();
@@ -493,6 +542,7 @@ pub(crate) fn bind_messages(ui: &AppWindow, commands: mpsc::Sender<Command>) {
         let weak = ui.as_weak();
         move |chat, text| {
             if let Some(ui) = weak.upgrade() {
+                messaging::trace_send("attempt", ui.get_send_request_id().wrapping_add(1));
                 if ui.get_connection_state() != 5
                     || ui.get_action_pending()
                     || !ui.get_live_can_send()
@@ -523,11 +573,12 @@ pub(crate) fn bind_messages(ui: &AppWindow, commands: mpsc::Sender<Command>) {
 }
 
 pub(crate) fn publish_messages(ui: &AppWindow, snapshot: &messaging::Snapshot) {
-    crate::presentation_actions::publish(ui, snapshot.operation.as_ref(), &snapshot.destinations);
+    ui.set_chat_management_busy(snapshot.chat_busy);
     if let Some(reply) = &snapshot.reply
         && reply.request == ui.get_send_request_id()
         && ui.get_send_pending()
     {
+        messaging::trace_send("ui_reply", reply.request);
         ui.set_send_pending(false);
         if reply.saved
             && reply.chat == ui.get_selected_id()
@@ -540,6 +591,11 @@ pub(crate) fn publish_messages(ui: &AppWindow, snapshot: &messaging::Snapshot) {
             ui.set_notice("The message could not be saved. Your draft has been kept.".into());
         }
     }
+    // A save reply must not refresh models, reset navigation or trigger layout.
+    if snapshot.view.is_none() && snapshot.notice.is_empty() {
+        return;
+    }
+    crate::presentation_actions::publish(ui, snapshot.operation.as_ref(), &snapshot.destinations);
     if !snapshot.notice.is_empty() {
         ui.set_notice(snapshot.notice.clone().into());
     }
@@ -569,8 +625,10 @@ pub(crate) fn publish_messages(ui: &AppWindow, snapshot: &messaging::Snapshot) {
         ui.set_live_chat_view(true);
     }
     ui.set_live_can_send(view.can_send);
+    ui.set_archived_only(view.archived_view);
+    ui.set_archived_count(view.archived_count.min(i32::MAX as usize) as i32);
     presentation::sidebar(ui, view.chats.clone());
-    if view.history_failed {
+    if view.history_failed && snapshot.notice.is_empty() && !snapshot.chat_busy {
         ui.set_notice(
             "Some history could not be imported. The encrypted chunks are retained for recovery."
                 .into(),
@@ -582,6 +640,14 @@ pub(crate) fn publish_messages(ui: &AppWindow, snapshot: &messaging::Snapshot) {
             || ui.get_selected_id() != conversation.chat.id;
         presentation::conversation(ui, conversation, restore);
     } else {
+        // Do not depend on deferred selected-id change handlers to hide private
+        // content when an arriving lock removes the open conversation.
+        ui.set_photo_viewer_id(0);
+        ui.set_message_dialog(0);
+        ui.set_attachment_menu(false);
+        ui.set_reply_id(0);
+        ui.set_reply_sender("".into());
+        ui.set_reply_text("".into());
         ui.set_read_tail(0);
         ui.set_selected_id(0);
         ui.set_chat_title("Select a conversation".into());

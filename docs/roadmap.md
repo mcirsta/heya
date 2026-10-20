@@ -32,6 +32,12 @@ one bounded feature, its failure paths and validation before starting the next.
 | 7 | Chat management | Implement manual read/unread, pin/archive/mute, then favorites and the remaining filters. Persist real state and synchronize supported actions; do not present placeholder filters as working. |
 | 8 | Additional cards and advanced interaction | Polls, contact and location cards, cross-message drag selection and remaining advanced message-control variants follow the everyday messaging work above. Scope and validate each separately. |
 
+The first chat-management increment synchronizes mute/archive/lock state and
+adds mute durations, unmute, archive/unarchive and Lock controls. Locked chats
+remain hidden until unlocked on the phone. Pinning, favorites, manual read/unread
+controls and local unlock authentication remain separate work. See
+[chat management](chat-management.md) for validation and interoperability limits.
+
 The first slice now implements **sender-facing read and voice played receipts**
 through the pinned SDK's public APIs, with a local privacy switch and account
 privacy fetch before transmission. A separate encrypted queue records visible

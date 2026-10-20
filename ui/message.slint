@@ -24,6 +24,7 @@ export struct MessageRow {
     sender: string,
     sender-initials: string,
     text: string,
+    long-text: bool,
     large-emoji: bool,
     time: string,
     outgoing: bool,
@@ -78,7 +79,7 @@ export component MessageBubble inherits Rectangle {
     private property <length> footer-width: stamp.preferred-width;
     // Single-line messages share a baseline with the footer. Wrapped text keeps
     // a separate footer until the text renderer exposes last-line metrics.
-    private property <bool> inline-time: (root.message.has-audio && root.footer-width + 100px <= root.max-bubble) || (!root.message.has-audio && !root.message.has-photo && !root.message.has-document && natural.preferred-width + root.footer-width + 28px <= root.max-bubble && natural.preferred-height <= line-probe.preferred-height + 1px);
+    private property <bool> inline-time: (root.message.has-audio && root.footer-width + 100px <= root.max-bubble) || (!root.message.long-text && !root.message.has-audio && !root.message.has-photo && !root.message.has-document && natural.preferred-width + root.footer-width + 28px <= root.max-bubble && natural.preferred-height <= line-probe.preferred-height + 1px);
     private property <length> photo-cap: max(1px,min(320px,root.max-bubble - 12px));
     private property <float> photo-scale: min(1,min(root.photo-cap / 1px / max(1,root.message.photo-width), 440 / max(1,root.message.photo-height)));
     private property <length> photo-width: max(min(120px,root.photo-cap),root.message.photo-width * root.photo-scale * 1px);
@@ -103,7 +104,7 @@ export component MessageBubble inherits Rectangle {
     bubble := Rectangle {
         x: root.message.outgoing ? parent.width - self.width - Metrics.gutter : Metrics.gutter + root.avatar-space;
         y: 0px;
-        width: root.message.has-document ? min(root.max-bubble,352px) : root.message.has-audio ? min(root.max-bubble,340px) : root.message.has-photo ? min(root.max-bubble,max(root.photo-width + 12px,root.footer-width + 20px)) : min(root.max-bubble, max(root.has-preview || root.has-actions || root.quote-height > 0px ? 320px : 0px, max(root.footer-width, max(root.show-sender ? sender.preferred-width : 0px, natural.preferred-width + (root.inline-time ? root.footer-width + 8px : 0px))) + 20px));
+        width: root.message.has-document ? min(root.max-bubble,352px) : root.message.has-audio ? min(root.max-bubble,340px) : root.message.has-photo ? min(root.max-bubble,max(root.photo-width + 12px,root.footer-width + 20px)) : root.message.long-text ? root.max-bubble : min(root.max-bubble, max(root.has-preview || root.has-actions || root.quote-height > 0px ? 320px : 0px, max(root.footer-width, max(root.show-sender ? sender.preferred-width : 0px, natural.preferred-width + (root.inline-time ? root.footer-width + 8px : 0px))) + 20px));
         // Compact macOS fonts must still contain the 26px menu target with 2px margins.
         height: max(Theme.macos ? 30px : 0px, (root.message.has-audio ? 48px : root.photo-only || root.document-only ? 0px : body.preferred-height) + root.sender-height + root.metadata-height + root.preview-height + root.photo-space + root.document-space + 11px + (root.inline-time || root.photo-only ? 0px : stamp.height + 4px) + actions.height);
         background: root.fill;
@@ -165,7 +166,9 @@ export component MessageBubble inherits Rectangle {
 
         natural := Text {
             visible: false;
-            text: root.message.text;
+            // Long messages already use the allowed width. Do not shape their
+            // full text a second time just to discover an unwrapped width.
+            text: root.message.long-text ? "" : root.message.text;
             font-size: root.body-size;
         }
 

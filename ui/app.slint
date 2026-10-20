@@ -17,6 +17,7 @@ import { MicrophoneDialog } from "voice.slint";
 import { MessageOperationDialog, ForwardDestination } from "message-actions.slint";
 import { EmojiPicker, EmojiChoice, EmojiGridRow, EmojiCategory } from "emoji-picker.slint";
 import { MessageMenu, MessageMenuEntry } from "message-menu.slint";
+import { ChatMenu } from "chat-menu.slint";
 import { MessageDetails, MessageInfoRow, SelectionBar } from "message-details.slint";
 export { MessageInfoRow }
 import { AttachmentMenu, AttachmentReview, AttachmentItem } from "attachments.slint";
@@ -49,6 +50,8 @@ export struct ChatRow {
     time: string,
     unread: int,
     marked-unread: bool,
+    muted:bool,
+    archived:bool,
     avatar: image,
 }
 
@@ -63,6 +66,19 @@ export component AppWindow inherits Window {
     default-font-size: 14px;
     background: Theme.panel;
     in property <bool> demo-mode: true;
+    in-out property <bool> chat-management-busy;
+    in-out property <bool> archived-only;
+    in property <int> archived-count;
+    callback manage-chat(int,int);
+    callback change-chat-folder(bool);
+    private property <int> chat-menu-id;
+    private property <bool> chat-menu-muted;
+    private property <bool> chat-menu-archived;
+    private property <length> chat-menu-x;
+    private property <length> chat-menu-y;
+    public function open-chat-menu(chat:ChatRow,x:length,y:length) {
+        if root.message-dialog!=0 {root.close-message-actions();}root.attachment-menu=false;root.chat-menu-id=chat.id;root.chat-menu-muted=chat.muted;root.chat-menu-archived=chat.archived;root.chat-menu-x=x;root.chat-menu-y=y;
+    }
     in-out property <bool> attachment-menu;
     in-out property <length> attachment-x;
     in-out property <length> attachment-y;
@@ -593,6 +609,12 @@ export component AppWindow inherits Window {
                         if root.query != "": Rectangle {
                             height: 8px;
                         }
+                        if root.archived-only || root.archived-count>0:SoftButton {
+                            height:32px;
+                            text:root.archived-only ? @tr("‹ Chats") : @tr("Archived") + (root.archived-count>0 ? " (" + root.archived-count + ")" : "");
+                            enabled:!root.demo-mode;
+                            activated=>{root.change-chat-folder(!root.archived-only);}
+                        }
                         chat-list := ListView {
                             private property <int> first: max(0, floor(-self.content-y / Metrics.row));
                             private property <int> count: ceil(self.visible-height / Metrics.row) + 1;
@@ -632,7 +654,7 @@ export component AppWindow inherits Window {
                                         overflow: elide;
                                         text: chat.time;
                                         font-size: 11.5px;
-                                        color: (chat.unread > 0 || chat.marked-unread) ? Theme.accent : Theme.dim;
+                                        color: !chat.muted && (chat.unread > 0 || chat.marked-unread) ? Theme.accent : Theme.dim;
                                     }
 
                                     chat-title := Text {
@@ -653,9 +675,9 @@ export component AppWindow inherits Window {
                                         height: 18px;
                                         max-lines: 1;
                                         wrap: no-wrap;
-                                        x: 76px;
+                                        x: chat.muted ? 94px : 76px;
                                         y: 38px;
-                                        width: max(0px, parent.width - self.x - 14px - ((chat.unread > 0 || chat.marked-unread) ? badge.width + 6px : 0px));
+                                        width: max(0px, parent.width - self.x - 42px - ((chat.unread > 0 || chat.marked-unread) ? badge.width + 6px : 0px));
                                         text: chat.preview;
                                         color: (chat.unread > 0 || chat.marked-unread) ? Theme.secondary : Theme.dim;
                                         font-size: 13px;
@@ -669,7 +691,7 @@ export component AppWindow inherits Window {
                                         width: chat.unread == 0 ? 10px : max(20px, count.preferred-width + 12px);
                                         height: chat.unread == 0 ? 10px : 20px;
                                         border-radius: 10px;
-                                        background: Theme.accent;
+                                        background: chat.muted ? Theme.secondary : Theme.accent;
                                         count := Text {
                                             text: chat.unread == 0 ? "" : chat.unread > 99 ? "99+" : chat.unread;
                                             color: Theme.on-accent;
@@ -679,6 +701,7 @@ export component AppWindow inherits Window {
                                             vertical-alignment: center;
                                         }
                                     }
+                                    if chat.muted:Image {x:76px;y:40px;width:14px;height:14px;source:@image-url("icons/muted.svg");colorize:Theme.dim;}
                                 }
 
                                 accessible-role: button;
@@ -686,6 +709,7 @@ export component AppWindow inherits Window {
                                 accessible-action-default => { root.select-chat(chat.id); root.show-conversation = true; }
                                 row-focus := FocusScope {
                                     key-pressed(event) => {
+                                        if event.text==Key.F10 && event.modifiers.shift {root.open-chat-menu(chat,chat-row.absolute-position.x + 80px,chat-row.absolute-position.y + 32px);return accept;}
                                         if event.text == Key.Return || event.text == " " { root.select-chat(chat.id); root.show-conversation = true; return accept; }
                                         return reject;
                                     }
@@ -703,13 +727,20 @@ export component AppWindow inherits Window {
 
                                 hit := TouchArea {
                                     mouse-cursor: pointer;
+                                    pointer-event(event)=>{if event.kind==PointerEventKind.down && event.button==PointerEventButton.right {root.open-chat-menu(chat,self.absolute-position.x+self.mouse-x,self.absolute-position.y+self.mouse-y);}}
                                     clicked => { row-focus.focus(); root.select-chat(chat.id); root.show-conversation = true; }
+                                }
+                                chat-options:=IconButton {
+                                    visible:hit.has-hover || row-focus.has-focus || self.hovered;
+                                    x:parent.width - 40px - ((chat.unread>0 || chat.marked-unread) ? badge.width + 6px : 0px);
+                                    y:34px;width:24px;height:24px;icon-size:16px;icon:@image-url("icons/chevron-down.svg");label:@tr("Chat options");
+                                    activated=>{root.open-chat-menu(chat,self.absolute-position.x,self.absolute-position.y+self.height);}
                                 }
                             }
                         }
 
                         if root.chats.length == 0: Text {
-                            text: @tr("No chats match your search");
+                            text: root.archived-only ? @tr("No archived chats match your search") : @tr("No chats match your search");
                             color: Theme.secondary;
                             horizontal-alignment: center;
                             height: 70px;
@@ -747,8 +778,10 @@ export component AppWindow inherits Window {
                             tint: chat.tint;
                             unread: chat.unread;
                             marked-unread: chat.marked-unread;
+                            muted:chat.muted;
                             selected: chat.id == root.selected-id;
                             activated => { root.select-chat(chat.id); root.show-conversation = true; }
+                            options(x,y)=>{root.open-chat-menu(chat,x,y);}
                         }
                     }
                 }
@@ -999,6 +1032,7 @@ export component AppWindow inherits Window {
                                 hint-dismissed => { root.preference-changed("show_shortcut_hint",0); }
                                 enabled: !root.selection-active && !root.microphone-dialog && !root.settings-open && !root.new-chat-open && root.account-dialog == 0 && (root.demo-mode || (root.selected-id > 0 && root.live-revision == root.live-shown-revision));
                                 can-send: !root.action-pending && (root.demo-mode || (root.connection-state == 5 && root.live-can-send && !root.send-pending));
+                                saving: root.send-pending;
                                 send => { root.send-message(root.selected-id,root.draft); }
                                 edited(text) => { root.draft-edited(text); }
                             }
@@ -1227,6 +1261,15 @@ export component AppWindow inherits Window {
         }
         if root.microphone-dialog: MicrophoneDialog {
             close => { root.close-microphone-dialog(); }
+        }
+        if root.chat-menu-id>0:ChatMenu {
+            width:root.width;height:root.height;
+            muted:root.chat-menu-muted;archived:root.chat-menu-archived;
+            enabled:!root.demo-mode && root.connection-state==5;
+            busy:root.chat-management-busy;
+            anchor-x:root.chat-menu-x;anchor-y:root.chat-menu-y;
+            close=>{root.chat-menu-id=0;app-focus.focus();}
+            choose(action)=>{let chat=root.chat-menu-id;root.chat-menu-id=0;root.manage-chat(chat,action);app-focus.focus();}
         }
     }
 }

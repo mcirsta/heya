@@ -5,6 +5,7 @@ impl Archive {
     pub async fn attachment_destination(&self, chat: i32) -> Result<Destination> {
         self.call(move|db|{
             let chat=local_chat(db,chat)?;
+            chat_settings::unlocked(db,chat)?;
             let (title,readonly):(String,bool)=db.query_row("SELECT coalesce(nullif(c.name,''),nullif(n.saved_name,''),nullif(n.profile_name,''),c.jid),c.read_only FROM chats c LEFT JOIN contacts n ON n.jid=c.jid WHERE c.id=?1",[chat],|r|Ok((r.get(0)?,r.get(1)?)))?;
             if readonly{return Err(Error::Invalid);}
             let reply:Option<i32>=db.query_row("SELECT message_id FROM reply_drafts WHERE chat_id=?1",[chat],|r|r.get(0)).optional()?;
@@ -38,6 +39,7 @@ impl Archive {
         }
         self.call(move|db|{
             let tx=db.transaction()?;let chat=local_chat(&tx,chat)?;
+            chat_settings::unlocked(&tx,chat)?;
             let (readonly,ephemeral):(bool,u32)=tx.query_row("SELECT read_only,ephemeral FROM chats WHERE id=?1",[chat],|r|Ok((r.get(0)?,r.get(1)?)))?;
             if readonly || prepared.raw.is_empty() || id.len()>128 {return Err(Error::Invalid);}
             if let Some(reply)=reply {let _=actions::source(&tx,chat,reply)?;}

@@ -91,6 +91,9 @@ After connecting, choose a received chat or enter a phone number with its countr
 code using the **New chat** header button. Enter sends by default; Shift+Enter
 inserts a newline. **Ctrl+Enter** or the send button queues text for that conversation. The composer clears only after the message
 is saved to the encrypted outbox. Drafts persist independently for each chat.
+The save confirmation reaches the composer before the conversation view is rebuilt.
+While saving, the send button is disabled and the shortcut hint shows the status;
+holding Enter does not resubmit text.
 With an empty composer, the microphone starts a voice message. Pause/resume or
 Stop to review, then play, discard or Send. Recording is bounded to 30 minutes
 and 20 MiB; review data is discarded on close. See [voice messages](docs/voice-messages.md)
@@ -174,6 +177,28 @@ a current source build; previously published alpha.3 downloads are unchanged. Sy
 not establish live receipt interoperability. Confirmed sends also advance the private read range on your other
 devices, even when Heya's local unread badge is already zero. Queued/failed sends
 leave it unchanged. See [read synchronization](docs/read-sync.md) for behavior and validation.
+
+The Linux taskbar badge shows the number of unread chats, including chats manually
+marked unread, and hides at zero. Search and sidebar filters do not affect it.
+It uses the installed `org.heya.Heya.desktop` launcher and the Unity Launcher API
+supported by Plasma and compatible docks. macOS uses its native Dock badge.
+Muted, archived and locked chats are excluded. Demos and automated UI benchmarks
+do not change the desktop badge.
+
+Right-click a chat, use Shift+F10, or hover its row and choose the chevron for
+**Mute for 8 hours / 1 week / always**, **Unmute**, **Archive / Unarchive**, and
+**Lock chat**. Muting retains the chat's real unread count and displays a mute
+indicator. **Archived** opens a separate list; **‹ Chats** returns to the normal
+list. Folder changes save the current draft. Changing account state requires a
+connection and is applied after confirmation, with no automatic retries for an
+unconfirmed result. Incoming changes from other clients are synchronized too.
+
+Locked chats are hidden from lists, search and forwarding destinations; an open
+chat closes when its lock arrives. Heya only offers Lock: unlock the chat in
+WhatsApp on your phone to show it again. It does not implement WhatsApp's secret
+code or a separate local authentication flow. Offline use retains the last
+synchronized state. See [chat management](docs/chat-management.md) for scope and
+validation limits.
 
 Conversations separate local calendar days with Today, Yesterday, weekday or full-date
 chips. Same-day sender runs use canonical participant identities, so two people
@@ -354,7 +379,10 @@ cannot be reconstructed. This does not add outgoing media-caption editing.
 Edits and sender deletion use the existing durable outbox and apply locally on
 server acknowledgement. Unconfirmed operations are labelled and are not blindly
 resent. Delete for me hides locally and queues idempotent linked-device app-state
-sync; history replay cannot restore hidden content. Receipt details show only
+sync; history replay cannot restore hidden content. Incoming sender deletions
+show **This message was deleted** in the bubble and last-message preview, even
+when the original never reached Heya. Startup repairs previously saved delete
+events rejected by the older recipient-key check. Receipt details show only
 actual supplied times; historical recipient evidence may be unavailable. The
 SDK's validation can reject unsupported edit contexts, including community
 announcement edits requiring an original message secret. These failures retain

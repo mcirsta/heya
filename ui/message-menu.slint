@@ -7,7 +7,7 @@ export struct MessageMenuEntry { action: int, label: string, enabled: bool, reas
 // MenuFlyout.xaml supplies 250px width, 10px padding, 18px corners, 40px rows,
 // 15px labels and 16px icons. The detached reaction strip follows the reference
 // screenshot; it is not claimed to be defined by that native XAML.
-component MenuControl inherits Rectangle {
+export component MenuControl inherits Rectangle {
     in property <bool> enabled: true;
     in property <bool> selected;
     in property <string> label;

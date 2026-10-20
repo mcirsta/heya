@@ -70,8 +70,11 @@ impl Archive {
         let changed = self.call(move |db| {
             let tx = db.transaction()?;
             let chat = local_chat(&tx, chat)?;
+            // A visible deletion/expiry placeholder is still an observed row.
+            chat_settings::unlocked(&tx,chat)?;
+            // Payload availability only controls sender-facing receipts below.
             let boundary: Option<i64> = tx.query_row(
-                "SELECT stamp FROM messages WHERE chat_id=?1 AND id=?2 AND visible=1 AND deleted=0 AND (expires IS NULL OR expires>unixepoch())",
+                "SELECT stamp FROM messages WHERE chat_id=?1 AND id=?2 AND visible=1",
                 params![chat,message], |r| r.get(0),
             ).optional()?;
             let Some(stamp) = boundary else { return Ok(false); };
@@ -80,7 +83,7 @@ impl Archive {
             // A queued/failed local message has not reached our other devices.
             // Sync preceding observed messages now; sent() handles the later ACK.
             let position: Option<(i64,i64,String)> = tx.query_row(
-                "SELECT id,stamp,wire_id FROM messages WHERE chat_id=?1 AND visible=1 AND deleted=0 AND (expires IS NULL OR expires>unixepoch()) AND stamp>0 AND (stamp,id)<=(?2,?3) AND (outgoing=0 OR delivery IN ('accepted','delivered','read')) ORDER BY stamp DESC,id DESC LIMIT 1",
+                "SELECT id,stamp,wire_id FROM messages WHERE chat_id=?1 AND visible=1 AND stamp>0 AND (stamp,id)<=(?2,?3) AND (outgoing=0 OR delivery IN ('accepted','delivered','read')) ORDER BY stamp DESC,id DESC LIMIT 1",
                 params![chat,stamp,message], |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)),
             ).optional()?;
             let marked = tx.query_row("SELECT marked_unread FROM chats WHERE id=?1", [chat], |r|r.get(0))?;
@@ -366,7 +369,7 @@ mod tests {
             .unwrap();
         let files = db.0._files.clone();
         db.blocking(|c| {
-            c.execute_batch("DROP TABLE outgoing_reads; DROP TRIGGER discard_changed_document_preview; DROP TABLE document_previews; DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; ALTER TABLE mutations DROP COLUMN raw; DROP TABLE outgoing_receipts; PRAGMA user_version=8;")?;
+            c.execute_batch("DROP TABLE outgoing_reads; DROP TRIGGER discard_changed_document_preview; DROP TABLE document_previews; DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; ALTER TABLE mutations DROP COLUMN raw; DROP TABLE outgoing_receipts; DROP TABLE chat_settings; PRAGMA user_version=8;")?;
             Ok(())
         })
         .unwrap();

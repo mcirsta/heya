@@ -9,8 +9,10 @@ export component CompactChat inherits Rectangle {
     in property <image> picture;
     in property <int> unread;
     in property <bool> marked-unread;
+    in property <bool> muted;
     in property <bool> selected;
     callback activated();
+    callback options(length,length);
     height: 52px;
     accessible-role: button;
     accessible-label: root.title + (root.unread > 0 ? ", " + root.unread + " unread" : root.marked-unread ? ", marked unread" : "");
@@ -51,7 +53,7 @@ export component CompactChat inherits Rectangle {
         width: root.unread == 0 ? 10px : max(20px, count.preferred-width + 12px);
         height: root.unread == 0 ? 10px : 20px;
         border-radius: 10px;
-        background: Theme.accent;
+        background: root.muted ? Theme.secondary : Theme.accent;
         count := Text {
             text: root.unread == 0 ? "" : root.unread > 99 ? "99+" : root.unread;
             color: Theme.on-accent;
@@ -64,6 +66,7 @@ export component CompactChat inherits Rectangle {
 
     focus := FocusScope {
         key-pressed(event) => {
+            if event.text==Key.F10 && event.modifiers.shift {root.options(root.absolute-position.x + root.width,root.absolute-position.y);return accept;}
             if event.text == Key.Return || event.text == " " { root.activated(); return accept; }
             return reject;
         }
@@ -71,6 +74,7 @@ export component CompactChat inherits Rectangle {
 
     hit := TouchArea {
         mouse-cursor: pointer;
+        pointer-event(event)=>{if event.kind==PointerEventKind.down && event.button==PointerEventButton.right {root.options(self.absolute-position.x+self.mouse-x,self.absolute-position.y+self.mouse-y);}}
         clicked => { focus.focus(); root.activated(); }
     }
 

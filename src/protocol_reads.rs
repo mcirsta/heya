@@ -40,7 +40,7 @@ impl Transport for WhatsApp {
     }
 }
 
-fn read_range(read: &ReadSync) -> Option<whatsapp_rust::SyncActionMessageRange> {
+pub(crate) fn read_range(read: &ReadSync) -> Option<whatsapp_rust::SyncActionMessageRange> {
     let jid = read.jid.parse::<whatsapp_rust::wacore_binary::Jid>().ok()?;
     let reference = if let Some(message) = &read.message {
         let sender = if !message.outgoing && jid.is_group() {

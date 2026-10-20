@@ -1,0 +1,68 @@
+import { Theme } from "theme.slint";
+import { MenuControl } from "message-menu.slint";
+struct Entry {label:string, action:int}
+
+// One open overlay; no menu rows or asynchronous work in closed sidebar rows.
+export component ChatMenu inherits Rectangle {
+    in property <bool> muted;
+    in property <bool> archived;
+    in property <bool> enabled;
+    in property <bool> busy;
+    in property <length> anchor-x;
+    in property <length> anchor-y;
+    callback close();
+    callback choose(int);
+    private property <int> selection;
+    private property <[Entry]> entries:root.muted ? [
+        {label:@tr("Unmute"),action:3},
+        {label:root.archived ? @tr("Unarchive chat") : @tr("Archive chat"),action:root.archived ? 5 : 4},
+        {label:@tr("Lock chat"),action:6},
+    ] : [
+        {label:@tr("Mute for 8 hours"),action:0},
+        {label:@tr("Mute for 1 week"),action:1},
+        {label:@tr("Mute always"),action:2},
+        {label:root.archived ? @tr("Unarchive chat") : @tr("Archive chat"),action:root.archived ? 5 : 4},
+        {label:@tr("Lock chat"),action:6},
+    ];
+    private property <length> menu-height:root.entries.length * 36px + 52px;
+    out property <length> panel-x:clamp(root.anchor-x,8px,max(8px,root.width - panel.width - 8px));
+    out property <length> panel-y:clamp(root.anchor-y,8px,max(8px,root.height - root.menu-height - 8px));
+    out property <length> panel-width:panel.width;
+    out property <length> panel-height:panel.height;
+    FocusScope {
+        init=>{self.focus();}
+        TouchArea {
+            clicked=>{root.close();}
+            scroll-event(event)=>{root.close();return accept;}
+        }
+        key-pressed(event)=>{
+            if event.text==Key.Escape {root.close();return accept;}
+            if event.text==Key.Return || event.text==" " {if root.enabled && !root.busy {root.choose(root.entries[root.selection].action);}return accept;}
+            if event.text==Key.DownArrow {root.selection=min(root.entries.length - 1,root.selection+1);return accept;}
+            if event.text==Key.UpArrow {root.selection=max(0,root.selection - 1);return accept;}
+            if event.text==Key.Home {root.selection=0;return accept;}
+            if event.text==Key.End {root.selection=root.entries.length - 1;return accept;}
+            return accept;
+        }
+        panel:=Rectangle {
+            x:root.panel-x;y:root.panel-y;width:min(250px,root.width - 16px);height:root.menu-height;
+            background:Theme.overlay;border-radius:10px;border-width:1px;border-color:Theme.outline;
+            drop-shadow-offset-y:4px;drop-shadow-blur:14px;drop-shadow-color:Theme.modal-shadow;
+            TouchArea {}
+            for entry[index] in root.entries:MenuControl {
+                x:6px;y:6px+index*36px;width:parent.width - 12px;height:34px;
+                enabled:root.enabled && !root.busy;
+                selected:root.selection==index;
+                label:entry.label;
+                reason:root.busy ? @tr("Updating chat…") : !root.enabled ? @tr("Connect to manage chats") : "";
+                focused=>{root.selection=index;}
+                activated=>{root.choose(entry.action);}
+                Text {x:10px;width:parent.width - 20px;height:parent.height;text:entry.label;color:parent.enabled ? Theme.text : Theme.dim;font-size:14px;vertical-alignment:center;}
+            }
+            Text {
+                x:16px;y:parent.height - 42px;width:parent.width - 32px;height:36px;
+                text:@tr("Unlock locked chats on your phone.");font-size:11px;color:Theme.dim;wrap:word-wrap;vertical-alignment:center;
+            }
+        }
+    }
+}

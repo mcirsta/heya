@@ -73,7 +73,7 @@ mod tests {
         .unwrap();
         let files = db.0._files.clone();
         db.blocking(|c| {
-            c.execute_batch("DROP TRIGGER discard_changed_document_preview; DROP TABLE document_previews; DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; ALTER TABLE mutations DROP COLUMN raw; DROP TABLE outgoing_receipts; PRAGMA user_version=9; UPDATE chats SET draft='Keep synthetic draft';")?;Ok(())
+            c.execute_batch("DROP TRIGGER discard_changed_document_preview; DROP TABLE document_previews; DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; ALTER TABLE mutations DROP COLUMN raw; DROP TABLE outgoing_receipts; DROP TABLE chat_settings; PRAGMA user_version=9; UPDATE chats SET draft='Keep synthetic draft';")?;Ok(())
         }).unwrap();
         drop(db);
         let db = Archive::open(files.clone(), KEY).unwrap();
@@ -81,7 +81,7 @@ mod tests {
             .blocking(|c| {
                 assert_eq!(
                     c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?,
-                    15
+                    16
                 );
                 assert_eq!(
                     c.query_row("SELECT draft FROM chats", [], |r| r.get::<_, String>(0))?,
@@ -118,7 +118,7 @@ mod tests {
         // Version 10 considered any saved image complete, including tiny HD
         // thumbnails. Keep those pixels visible but immediately try an upgrade.
         db.blocking(|c| {
-            c.execute_batch("ALTER TABLE document_previews DROP COLUMN sharp; UPDATE document_previews SET retry_at=unixepoch()+3600; DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; ALTER TABLE mutations DROP COLUMN raw; DROP TABLE outgoing_receipts; PRAGMA user_version=10;")?;
+            c.execute_batch("ALTER TABLE document_previews DROP COLUMN sharp; UPDATE document_previews SET retry_at=unixepoch()+3600; DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; ALTER TABLE mutations DROP COLUMN raw; DROP TABLE outgoing_receipts; DROP TABLE chat_settings; PRAGMA user_version=10;")?;
             Ok(())
         }).unwrap();
         drop(db);

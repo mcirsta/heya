@@ -84,5 +84,20 @@ pub fn check_ui() {
     assert!(
         matches!(commands.try_recv().unwrap(),Command::ReadVisible{message,..} if message==last)
     );
+    // Deleted placeholders remain visible timeline rows and valid read tails.
+    let tail = std::sync::Arc::make_mut(&mut view.messages)
+        .last_mut()
+        .unwrap();
+    tail.text = "This message was deleted".into();
+    std::sync::Arc::make_mut(&mut tail.content).unavailable = true;
+    view.chat.unread = 1;
+    assert!(presentation::conversation(&ui, &view, false));
+    ui.invoke_layout_timeline();
+    assert_eq!(ui.get_read_visible_message(), last);
+    std::thread::sleep(std::time::Duration::from_millis(220));
+    slint::platform::update_timers_and_animations();
+    assert!(
+        matches!(commands.try_recv().unwrap(), Command::ReadVisible{message,..} if message==last)
+    );
     ui.hide().unwrap();
 }

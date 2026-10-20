@@ -278,7 +278,7 @@ async fn migration_recovers_legacy_edited_media_without_claiming_the_lost_captio
     )
     .await;
     db.blocking(|c|{
-        c.execute_batch("ALTER TABLE mutations DROP COLUMN raw; DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; DROP TABLE outgoing_receipts; PRAGMA user_version=12;")?;
+        c.execute_batch("ALTER TABLE mutations DROP COLUMN raw; DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; DROP TABLE outgoing_receipts; DROP TABLE chat_settings; PRAGMA user_version=12;")?;
         c.execute("INSERT INTO mutations(chat_id,sender,wire_id,body,version,deleted) SELECT chat_id,sender,wire_id,'[Unsupported edited message]',20,0 FROM messages WHERE wire_id='legacy'",[])?;
         c.execute("UPDATE messages SET body='[Unsupported edited message]',content='',thumbnail=X'' WHERE wire_id='legacy'",[])?;
         Ok(())
@@ -292,7 +292,7 @@ async fn migration_recovers_legacy_edited_media_without_claiming_the_lost_captio
 }
 
 #[test]
-fn typed_edits_reject_other_authors_view_once_and_mismatched_attachments() {
+fn typed_edits_reject_view_once_and_mismatched_attachments() {
     let original = media(false, Some("Old"), false);
     let mut envelope = wa::Message::default();
     let mut wrapper = wa::message::FutureProofMessage::default();
@@ -307,15 +307,6 @@ fn typed_edits_reject_other_authors_view_once_and_mismatched_attachments() {
         )
         .is_none()
     );
-    // Target a different group participant: the record's author cannot edit it.
-    let mut protocol = wa::message::ProtocolMessage::default();
-    let mut key = wa::MessageKey::default();
-    key.id = Some("original".into());
-    key.participant = Some("15550000002@s.whatsapp.net".into());
-    protocol.key = MessageField::some(key);
-    protocol.r#type = Some(wa::message::protocol_message::Type::MESSAGE_EDIT);
-    protocol.edited_message = MessageField::some(original);
-    let mut message = wa::Message::default();
-    message.protocol_message = MessageField::some(protocol);
-    assert!(base("wrong-author", &message).change.is_none());
+    // Author ownership is checked after PN/LID canonicalization in storage;
+    // protocol_delete_tests exercises accepted aliases and rejected group authors.
 }

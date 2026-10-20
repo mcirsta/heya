@@ -23,6 +23,7 @@ static NEXT: AtomicU64 = AtomicU64::new(1);
 static EMOJI_SUPPORT: OnceLock<HashSet<&'static str>> = OnceLock::new();
 
 unsafe extern "C" {
+    fn heya_dock_badge(count: u32);
     fn heya_startup_system_info(output: *mut c_char, capacity: usize);
     fn heya_emoji_support(catalogue: *const c_char, supported: *mut u8, count: usize);
     fn heya_panel_begin(
@@ -43,6 +44,11 @@ unsafe extern "C" {
         size: *mut usize,
     ) -> i32;
     fn heya_native_free(bytes: *mut c_void);
+}
+
+/// Called only from Slint's main-thread event callback.
+pub fn set_dock_badge(count: u32) {
+    unsafe { heya_dock_badge(count) };
 }
 
 /// Fixed OS/CPU/model fields only; no hostname, username, serial or device UUID.

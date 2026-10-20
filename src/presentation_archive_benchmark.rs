@@ -47,10 +47,19 @@ fn prepare() -> (tempfile::TempDir, Archive) {
     let temp = tempfile::tempdir().unwrap();
     let files = storage::prepare_at(temp.path(), &Vault).unwrap();
     let db = Archive::open(files.clone(), &files.key_sql).unwrap();
+    let settings = std::env::var_os("HEYA_BENCHMARK_CHAT_SETTINGS").is_some();
+    if settings {
+        println!("Archive benchmark chat settings: 1500 indexed flags, 250 muted chats");
+    }
     db.blocking(|c| {
         let tx=c.transaction()?;
         for chat in 1..=500 {
             tx.execute("INSERT INTO chats(id,jid,name) VALUES(?1,?2,?3)",rusqlite::params![chat,format!("{}@s.whatsapp.net",15550000000i64+chat),format!("Synthetic conversation {chat}")])?;
+            if settings {
+                for kind in 0..3 {
+                    tx.execute("INSERT INTO chat_settings(jid,kind,value,stamp) VALUES(?1,?2,?3,1700000000000)",rusqlite::params![format!("{}@s.whatsapp.net",15550000000i64+chat),kind,if kind==0 && chat%2==0 {-1} else {0}])?;
+                }
+            }
         }
         for i in 0..10500 {
             let chat=if i<10000 {1} else {2+(i-10000)%499};
@@ -98,6 +107,105 @@ async fn wait(
     })
     .await
     .map_err(|_| ())?
+}
+
+// Deliberate native checks through the production composer and encrypted outbox.
+// This module is entered only by the explicit synthetic --demo benchmark.
+async fn check_long_sends(
+    window: slint::Weak<AppWindow>,
+    snapshots: &mut watch::Receiver<messaging::Snapshot>,
+    db: &Archive,
+) -> Result<(), ()> {
+    const LINE: &str = "Long synthetic message 👩🏽‍💻 ăâîșț.\n";
+    for size in [8 * 1024, 32 * 1024, 64 * 1024] {
+        let text = LINE.repeat(size / LINE.len());
+        let bytes = text.len();
+        let expected = text.clone();
+        let setup_started = Instant::now();
+        let (answer, result) = tokio::sync::oneshot::channel();
+        window
+            .upgrade_in_event_loop(move |ui| {
+                ui.set_demo_mode(false);
+                ui.set_connection_state(5);
+                ui.set_show_conversation(true);
+                ui.set_draft(text.into());
+                ui.invoke_draft_edited(ui.get_draft());
+                ui.invoke_focus_composer();
+                let entered = Instant::now();
+                for _ in 0..2 {
+                    ui.window()
+                        .dispatch_event(slint::platform::WindowEvent::KeyPressed {
+                            text: slint::platform::Key::Return.into(),
+                        });
+                    ui.window()
+                        .dispatch_event(slint::platform::WindowEvent::KeyReleased {
+                            text: slint::platform::Key::Return.into(),
+                        });
+                }
+                let _ = answer.send(ui.get_send_pending().then_some((
+                    ui.get_send_request_id(),
+                    entered,
+                    ui.get_view_revision(),
+                )));
+            })
+            .map_err(|_| ())?;
+        let (request, started, previous_view) = result.await.map_err(|_| ())?.ok_or(())?;
+        wait(snapshots, |s| {
+            s.reply
+                .as_ref()
+                .is_some_and(|r| r.request == request && r.saved)
+        })
+        .await?;
+        let saved = started.elapsed();
+        let mut reply_applied = None;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let (answer, result) = tokio::sync::oneshot::channel();
+                window
+                    .upgrade_in_event_loop(move |ui| {
+                        let _ = answer.send((
+                            !ui.get_send_pending() && ui.get_draft().is_empty(),
+                            ui.get_view_revision() > previous_view,
+                        ));
+                    })
+                    .map_err(|_| ())?;
+                let (replied, shown) = result.await.map_err(|_| ())?;
+                if replied {
+                    reply_applied.get_or_insert_with(|| started.elapsed());
+                    if shown {
+                        return Ok::<_, ()>(());
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .map_err(|_| ())??;
+        let view_applied = started.elapsed();
+        let applied = reply_applied.ok_or(())?;
+        let total = setup_started.elapsed();
+        let count: i32 = db
+            .call(move |c| {
+                Ok(c.query_row(
+                    "SELECT count(*) FROM messages WHERE sender='#self' AND body=?1",
+                    [expected],
+                    |r| r.get(0),
+                )?)
+            })
+            .await
+            .map_err(|_| ())?;
+        if count != 1 {
+            return Err(());
+        }
+        println!(
+            "Native long send: bytes={bytes}, Enter-to-saved-snapshot={:.2}ms, Enter-to-UI-reply={:.2}ms, Enter-to-UI-view={:.2}ms, composer-setup-to-UI-view={:.2}ms, archived_copies={count}; synthetic account, no network delivery",
+            saved.as_secs_f64() * 1000.,
+            applied.as_secs_f64() * 1000.,
+            view_applied.as_secs_f64() * 1000.,
+            total.as_secs_f64() * 1000.
+        );
+    }
+    Ok(())
 }
 
 pub fn start(
@@ -209,6 +317,8 @@ pub fn start(
     let producer_failure = failure.clone();
     let producer_probe = probe.clone();
     let producer_flow = flow.clone();
+    let send_window = ui.as_weak();
+    let long_sends = std::env::var_os("HEYA_BENCHMARK_LONG_DRAFT").is_some();
     let producer = runtime.spawn(async move {
         let _keep = (temp, archives, sources);
         let run = async {
@@ -300,6 +410,9 @@ pub fn start(
                         .await;
                 }
                 tokio::time::sleep(Duration::from_millis(300)).await;
+            }
+            if long_sends {
+                check_long_sends(send_window, &mut snapshots, &db).await?;
             }
             Ok::<_, ()>(())
         }

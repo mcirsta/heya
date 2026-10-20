@@ -35,6 +35,14 @@ commits the local mutation; transport completion alone is ambiguous. An
 uncertain edit/revoke is not auto-retried. Pending/failure states are displayed.
 Repeated edits use increasing mutation versions; revocation always wins.
 
+Incoming direct-message keys may name the receiving account. The authenticated
+outer envelope owns chat/author routing; group participant ownership is checked
+after alias canonicalization. Both incoming changes and acknowledged local
+controls use the same mutation writer/projection. Missing originals produce one
+visible deleted-message tombstone, and later history only restores its position
+and author metadata. The sidebar and bubble use **This message was deleted**.
+Startup reprocesses retained delete envelopes rejected by the former key check.
+
 Delete for me commits a local wire-key tombstone and clears body/media/quote
 references atomically. Its existing-outbox operation calls the SDK's public
 `chat_actions().delete_message_for_me`, which syncs the owner's linked devices.
