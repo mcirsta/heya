@@ -81,7 +81,7 @@ mod protocol_receipts;
 mod protocol_sync;
 mod protocol_uploads;
 mod service;
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 mod skia_cpu_tests;
 mod startup;
 mod storage;

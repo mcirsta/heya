@@ -146,3 +146,12 @@ Apache-2.0 OR MIT. Its source and both license texts are retained in
 `vendor/parley`. Heya's isolated color-emoji fallback fix is recorded in
 [docs/color-emoji.md](docs/color-emoji.md) and
 `patches/parley-color-emoji.patch`.
+
+## Slint renderer source
+
+`vendor/i-slint-renderer-skia` preserves the upstream Slint 1.18.1 source headers
+and license texts in its `LICENSES/` directory. The isolated Linux text surface
+policy patch and exact crate checksum are recorded in
+[docs/text-rendering.md](docs/text-rendering.md),
+[patches/slint-skia-text-coverage.patch](patches/slint-skia-text-coverage.patch)
+and `prep/upstreams.json`.

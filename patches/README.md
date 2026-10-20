@@ -62,3 +62,12 @@ ordinary digits/#/* remain text unless part of a keycap, and VS15 retains text
 presentation. Source checksum, patch hash, tests and removal/upstreaming notes
 are in [docs/color-emoji.md](../docs/color-emoji.md) and `prep/upstreams.json`.
 This patch is local and has not been submitted upstream.
+
+## Linux text surface policy
+
+[slint-skia-text-coverage.patch](slint-skia-text-coverage.patch) applies only to
+Slint's pinned `i-slint-renderer-skia` 1.18.1. Linux surfaces use unmodified
+grayscale coverage; other platforms keep their original defaults. This adds no
+Skia features or rendering passes. Base checksum, reproduction, isolation and
+validation are in [docs/text-rendering.md](../docs/text-rendering.md); the patch
+hash is in `prep/upstreams.json`. Local only, not submitted upstream.

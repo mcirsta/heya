@@ -37,7 +37,18 @@
       "tag": "v1.18.1",
       "package_version": "1.18.1",
       "role": "UI toolkit and integration examples",
-      "license": "GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR commercial"
+      "license": "GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR commercial",
+      "patches": [
+        {
+          "path": "patches/slint-skia-text-coverage.patch",
+          "sha256": "9bb775e361050bd94350361c9d79a67eab36bb0a727e720c2e7ef11e5639f90f",
+          "crate": "i-slint-renderer-skia",
+          "crate_sha256": "dc9c1cf02385f1d26fc1f423544e52390a8e5c2d89420a8042aa94b4fe109d1f",
+          "vendored_path": "vendor/i-slint-renderer-skia",
+          "status": "local, not submitted",
+          "reason": "Linux glyph coverage: disable surface gamma/contrast correction without changing font metrics or layout"
+        }
+      ]
     },
     "fastframe-visual-assets": {
       "repository": "https://github.com/crmne/fastframe",

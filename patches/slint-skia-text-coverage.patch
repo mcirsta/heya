@@ -1,0 +1,93 @@
+--- a/lib.rs
++++ b/lib.rs
+@@ -65,6 +65,25 @@
+ 
+ use itemrenderer::to_skia_rect;
+ pub use skia_safe;
++
++// Linux desktop text uses unmodified grayscale coverage. Skia's default
++// contrast/gamma correction makes dark text lighter on our sRGB surfaces.
++// Set this once per surface; child/layer surfaces inherit these properties.
++fn text_surface_props() -> Option<skia_safe::SurfaceProps> {
++    #[cfg(target_os = "linux")]
++    {
++        Some(skia_safe::SurfaceProps::new_with_text_properties(
++            Default::default(),
++            Default::default(),
++            0.0,
++            1.0,
++        ))
++    }
++    #[cfg(not(target_os = "linux"))]
++    {
++        None
++    }
++}
+ 
+ /// Returns the color space for Slint colors, decoded image pixels and raster buffers.
+ ///
+@@ -1009,7 +1028,7 @@
+             ),
+             target_buffer.make_mut_bytes(),
+             None,
+-            None,
++            text_surface_props().as_ref(),
+         )
+         .ok_or_else(|| "Error wrapping target buffer for rendering into with Skia".to_string())?;
+ 
+--- a/opengl_surface.rs
++++ b/opengl_surface.rs
+@@ -494,7 +494,7 @@
+             skia_safe::gpu::SurfaceOrigin::BottomLeft,
+             skia_safe::ColorType::RGBA8888,
+             crate::attachment_color_space(crate::TextureEncoding::Unorm),
+-            None,
++            crate::text_surface_props().as_ref(),
+         ) {
+             Some(surface) => Ok(surface),
+             None => {
+--- a/software_surface.rs
++++ b/software_surface.rs
+@@ -204,11 +204,15 @@
+                 // Take the row length from the buffer, as the display does.
+                 let row_bytes = pixels.len() / height.get() as usize;
+                 let row_bytes = (row_bytes >= image_info.min_row_bytes()).then_some(row_bytes);
+-                let mut surface_borrow =
+-                    skia_safe::surfaces::wrap_pixels(&image_info, pixels, row_bytes, None)
+-                        .ok_or_else(|| {
+-                            "Error wrapping target buffer for rendering into with Skia".to_string()
+-                        })?;
++                let mut surface_borrow = skia_safe::surfaces::wrap_pixels(
++                    &image_info,
++                    pixels,
++                    row_bytes,
++                    crate::text_surface_props().as_ref(),
++                )
++                .ok_or_else(|| {
++                    "Error wrapping target buffer for rendering into with Skia".to_string()
++                })?;
+ 
+                 let dirty_region = callback(surface_borrow.canvas(), None, age);
+ 
+--- a/wgpu_29_surface/vulkan.rs
++++ b/wgpu_29_surface/vulkan.rs
+@@ -74,7 +74,7 @@
+             skia_safe::gpu::SurfaceOrigin::TopLeft,
+             color_type,
+             color_space,
+-            None,
++            crate::text_surface_props().as_ref(),
+         )
+     }
+ }
+--- a/wgpu_30_surface/vulkan.rs
++++ b/wgpu_30_surface/vulkan.rs
+@@ -74,7 +74,7 @@
+             skia_safe::gpu::SurfaceOrigin::TopLeft,
+             color_type,
+             color_space,
+-            None,
++            crate::text_surface_props().as_ref(),
+         )
+     }
+ }

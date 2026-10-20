@@ -39,6 +39,8 @@ protocol logic is used.
 
 Typography uses the installed Inter family. The local font lookup resolves Inter
 Regular; weight 500/600/700 is requested explicitly where the reference does so.
+Linux Skia text now uses unmodified grayscale coverage to match the reference's
+apparent ink weight; see [isolation and validation](text-rendering.md).
 The dark outgoing timestamp color is the result of ZapFast's `readable_on`
 calculation for the pinned default palette (`#bcc5cb`), not the panel grey.
 
