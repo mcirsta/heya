@@ -6,6 +6,10 @@ mod audio;
 mod audio_devices;
 mod audio_player;
 mod avatars;
+mod call_audio;
+mod calling;
+#[cfg(test)]
+mod calling_tests;
 mod chat_management;
 mod clipboard;
 mod connection;
@@ -15,6 +19,8 @@ mod downloads;
 mod downloads_file;
 mod downloads_picker;
 mod fixtures;
+#[cfg(all(target_os = "linux", feature = "media-gstreamer"))]
+mod gstreamer_call;
 #[cfg(all(target_os = "linux", feature = "media-gstreamer"))]
 mod gstreamer_memory;
 #[cfg(all(target_os = "linux", feature = "media-gstreamer"))]
@@ -27,6 +33,8 @@ mod local_worker;
 mod macos;
 #[cfg(target_os = "macos")]
 mod macos_audio;
+#[cfg(target_os = "macos")]
+mod macos_call_audio;
 #[cfg(target_os = "macos")]
 mod macos_video;
 mod media_process;
@@ -47,6 +55,7 @@ mod presentation_actions;
 mod presentation_attachments;
 mod presentation_audio;
 mod presentation_avatars;
+mod presentation_calling;
 mod presentation_clipboard;
 mod presentation_content;
 mod presentation_downloads;
@@ -74,6 +83,7 @@ mod protocol_actions;
 mod protocol_audio;
 mod protocol_avatars;
 mod protocol_business;
+mod protocol_calling;
 mod protocol_calls;
 mod protocol_chat_management;
 mod protocol_content;
@@ -206,6 +216,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(target_os = "macos")]
     if std::env::args().nth(1).as_deref() == Some("--heya-pdf-worker") {
         macos::pdf_worker();
+    }
+    if std::env::args().nth(1).as_deref() == Some("--heya-call-audio-worker") {
+        call_audio::child_main();
     }
     // A short-lived media helper must never initialize the UI or account services.
     if std::env::args().nth(1).as_deref() == Some("--heya-media-worker") {

@@ -404,6 +404,7 @@ impl EventHandler for MessageEvents {
             EventKind::DeleteMessageForMeUpdate,
             EventKind::MissedCall,
             EventKind::CallEndedElsewhere,
+            EventKind::IncomingCall,
         ])
     }
     fn handle_event(&self, event: Arc<Event>) {

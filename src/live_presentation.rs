@@ -200,6 +200,13 @@ pub fn attach(
     let (history_sources, history_source_rx) = watch::channel(None);
     let (chat_sources, chat_source_rx) = watch::channel(None);
     let (video_sources, video_source_rx) = watch::channel(None);
+    let (call_sources, call_source_rx) = watch::channel(None);
+    let calling = crate::presentation_calling::attach(
+        ui,
+        archive_rx.clone(),
+        call_source_rx,
+        preferences.clone(),
+    );
     let video_task = crate::presentation_video::attach(
         ui,
         archive_rx.clone(),
@@ -277,6 +284,7 @@ pub fn attach(
                     thumbnail_demand: message_image_demand.clone(),
                     audio_sources,
                     video_sources,
+                    call_sources,
                     history_sources,
                     download_sources,
                     upload_sources,
@@ -307,6 +315,7 @@ pub fn attach(
             ),
             audio_task,
             video_task,
+            calling,
             downloads,
             uploads,
             voice,

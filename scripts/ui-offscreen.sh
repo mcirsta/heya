@@ -3,7 +3,7 @@
 set -euo pipefail
 
 usage() {
-    echo "Usage: $0 {--screenshot|--framebuffer} /tmp/heya.png [--size WIDTHxHEIGHT] [--light|--dark] [--demo-chat ID] [--click XxY (framebuffer only)] [--hover XxY (framebuffer only)] | --ui-benchmark | --video-check | --wheel-check | --close-check | --startup-check | --clipboard-check | --wayland-clipboard-check | --wayland-drop-check | --clipboard-ui-check OUTPUT_PREFIX" >&2
+    echo "Usage: $0 {--screenshot|--framebuffer} /tmp/heya.png [--size WIDTHxHEIGHT] [--light|--dark] [--demo-chat ID] [--click XxY (framebuffer only)] [--hover XxY (framebuffer only)] | --ui-benchmark | --call-audio-check | --video-check | --wheel-check | --close-check | --startup-check | --clipboard-check | --wayland-clipboard-check | --wayland-drop-check | --clipboard-ui-check OUTPUT_PREFIX" >&2
     exit 2
 }
 
@@ -46,7 +46,7 @@ case "${1:-}" in
         [[ $# == 2 && -n "$2" ]] || usage
         heya_args+=("$2")
         ;;
-    --video-check|--ui-benchmark|--wheel-check|--close-check|--startup-check|--clipboard-check|--wayland-clipboard-check|--wayland-drop-check)
+    --call-audio-check|--video-check|--ui-benchmark|--wheel-check|--close-check|--startup-check|--clipboard-check|--wayland-clipboard-check|--wayland-drop-check)
         [[ $# == 1 ]] || usage
         ;;
     *)
@@ -80,6 +80,9 @@ case "$heya_renderer" in
 esac
 
 heya_command=("$heya_binary" --demo "${heya_args[@]}")
+if [[ "${heya_args[0]}" == --call-audio-check ]]; then
+    heya_command=(env HEYA_TEST_CALL_GSTREAMER=1 "$heya_binary" --ignored --exact call_audio::tests::native_gstreamer_duplex_audio --nocapture)
+fi
 if [[ "${heya_args[0]}" == --video-check ]]; then
     heya_command=(bash "$heya_root/scripts/video-check.sh" "$heya_binary" "$heya_root/target/release/heya")
 fi

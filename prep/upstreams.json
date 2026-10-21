@@ -13,6 +13,7 @@
       "package_version": "0.7.0",
       "role": "protocol dependency, consumed unchanged through a Heya adapter where possible",
       "license": "MIT",
+      "calling": "Public voip feature and PCM CallHandle facade; SDK supplies negotiation, encryption, MLOW/Opus and relay transport unchanged. Heya supplies finite platform audio I/O and call presentation.",
       "patches": [
         {
           "path": "patches/document-thumbnail.patch",

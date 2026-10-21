@@ -136,8 +136,10 @@ Saved call events reuse the encrypted timeline and sidebar, with voice,
 video, missed-call, direction and available outcome/duration metadata. Public
 SDK app-state, captured history and call-log envelopes feed the same projection;
 calls never become message unread/receipt/outbox keys. Initial state recovery
-requests call logs previously ignored. Calling itself remains separate work.
-See [call events](call-events.md); live phone interoperability remains unverified.
+requests call logs previously ignored. One-to-one audio calling now has a separate
+controller and finite duplex audio helper; see [audio calling](audio-calling.md).
+See [call events](call-events.md); the owner confirmed a real event in both the
+sidebar and conversation. Actual call interoperability is still unverified.
 
 The first slice now implements Connect/Cancel/Disconnect, QR rotation/expiry,
 encrypted single-session storage with a desktop keyring key, automatic saved
@@ -226,7 +228,7 @@ the account setting checked before sending. Live interoperability remains open.
 Business templates expose supplied text, clickable URL actions and copy-code
 buttons. Received link previews use sender-supplied metadata and on-demand
 embedded thumbnails. Schema 5 stores this metadata in the encrypted archive;
-startup recovers older rows from saved envelopes. Interactive replies, calling,
+startup recovers older rows from saved envelopes. Interactive business call/reply,
 payment/flow actions and carousel cards remain pending.
 
 Incoming pin/unpin events now map to typed, centered system notices in both live

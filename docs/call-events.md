@@ -21,8 +21,8 @@ The unchanged pinned whatsapp-rust public APIs provide three input paths:
 
 Finished missed/answered-elsewhere signalling can create a provisional entry
 before the phone's record arrives. It does not invent an audio/video type.
-The authoritative record fills it in. There is no incoming-call ringing UI or
-support for placing/answering calls in this feature.
+The authoritative record fills it in. Placing/answering calls is implemented
+separately; see [audio calling](audio-calling.md).
 
 Calls share encrypted timeline storage and stable identities. Repeated call IDs
 update an existing row, scoped to its canonical chat and sender. The event uses

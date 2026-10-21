@@ -66,6 +66,10 @@ jobs:
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: Test Linux with GStreamer
         run: cargo test --locked
+      - name: Check silent duplex call audio without devices or an account
+        env:
+          HEYA_TEST_CALL_GSTREAMER: '1'
+        run: cargo test --locked --bin heya -- --ignored --exact call_audio::tests::native_gstreamer_duplex_audio --nocapture
       - name: Lint Linux without audio
         run: cargo clippy --locked --all-targets --no-default-features -- -D warnings
       - name: Test Linux without audio

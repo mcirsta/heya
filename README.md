@@ -61,7 +61,7 @@ cargo run --release --locked
 ```
 
 On Linux, the default `media-gstreamer` feature links the installed GStreamer runtime and
-app library. `--no-default-features` builds the UI/domain without playback or recording.
+app library. `--no-default-features` builds the UI/domain without playback, recording or call audio.
 Use the optimized build for everyday desktop testing. `cargo run --locked`
 is the slower development build.
 The toolkit is pinned to a Slint 1.19.0 development snapshot using
@@ -164,9 +164,17 @@ plain text and updates independently of message rendering. Synthetic lifecycle
 and layout tests cover it; live-account availability still needs verification.
 
 Saved call events appear as voice/video/missed-call cards and contact-list
-previews, including calls synchronized from the phone. This is call history;
-placing and answering calls remain separate work. See [call events](docs/call-events.md)
+previews, including calls synchronized from the phone. See [call events](docs/call-events.md)
 for supported inputs and validation limits.
+
+The phone button in a direct conversation starts a voice call. Incoming voice
+calls have Answer/Decline controls; an active call has mute and hangup controls.
+Linux reuses GStreamer device selection and volume settings; macOS uses native
+AVAudioEngine/Core Audio. The pinned SDK supplies signaling, encryption, codecs
+and media transport through its public calling API. Devices open only when
+placing or answering a call and close when it ends or Heya closes. Group/video
+calling, call waiting and ringtones are outside this first slice. See
+[audio calling](docs/audio-calling.md) for tests and hardware/account validation limits.
 
 Contact, group and account avatars load on demand for visible chats and the open
 conversation. Small thumbnails stay in the encrypted archive for offline use;

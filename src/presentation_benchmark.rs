@@ -312,6 +312,12 @@ pub fn start(
     let downloads = std::env::var_os("HEYA_BENCHMARK_DOWNLOADS").is_some();
     let attachments = std::env::var_os("HEYA_BENCHMARK_ATTACHMENTS").is_some();
     let voice = std::env::var_os("HEYA_BENCHMARK_VOICE").is_some();
+    let call = std::env::var_os("HEYA_BENCHMARK_CALL_UI").is_some();
+    if call {
+        println!(
+            "Call panel benchmark: active panel, cached avatar, 1 Hz duration; no account, transport or audio devices"
+        );
+    }
     if voice {
         println!(
             "Voice benchmark: real synthetic-tone capture/Opus encoding and 10 Hz composer progress; no microphone or send"
@@ -437,6 +443,7 @@ pub fn start(
     let mut current_phase = 0;
     let mut ticks = 0u64;
     let mut maximized = false;
+    let mut call_seconds = u64::MAX;
     println!(
         "UI benchmark: synthetic 500-chat sidebar with {avatar_count} thumbnails / 100 then 10000 loaded messages; 200 snapshots/s during update phases; {}s total. Render CPU excludes compositor presentation. Profile: {}.",
         PHASE_SECONDS * PHASES.len() as u64,
@@ -451,6 +458,20 @@ pub fn start(
             return;
         };
         let now = Instant::now();
+        if call && call_seconds != start.elapsed().as_secs() {
+            call_seconds = start.elapsed().as_secs();
+            crate::presentation_calling::publish(
+                &ui,
+                &crate::calling::Status {
+                    chat: ui.get_selected_id(),
+                    phase: 5,
+                    title: "Alex Morgan".into(),
+                    seconds: call_seconds,
+                    available: true,
+                    ..Default::default()
+                },
+            );
+        }
         let elapsed = now.duration_since(previous_tick);
         previous_tick = now;
         let next_phase = (start.elapsed().as_secs() / PHASE_SECONDS) as usize;

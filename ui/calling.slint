@@ -1,0 +1,140 @@
+import { Theme } from "theme.slint";
+import { IconButton, Avatar } from "components.slint";
+import { SoftButton } from "settings.slint";
+
+export global AudioCall {
+    in-out property <int> chat;
+    in-out property <image> avatar;
+    in-out property <string> offer;
+    in-out property <bool> available;
+    in-out property <int> phase;
+    in-out property <string> title;
+    in-out property <string> initials;
+    in-out property <string> time;
+    in-out property <string> error;
+    in-out property <bool> muted;
+    callback action(int);
+}
+component CallAction inherits Rectangle {
+    in property <bool> enabled: true;
+    in property <string> label;
+    in property <image> icon;
+    in property <color> fill: Theme.surface;
+    in property <color> ink: Theme.text;
+    callback activated;
+    width: 100px;
+    height: 86px;
+    circle := Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: 0px;
+        width: 58px; height: 58px;
+        background: root.enabled ? root.fill : Theme.outline;
+        border-radius: 29px;
+        IconButton {
+            width: parent.width; height: parent.height;
+            icon: root.icon; icon-size: 24px;
+            ink: root.enabled ? root.ink : Theme.dim; label: root.label;
+            enabled: root.enabled;
+            activated => { root.activated(); }
+        }
+    }
+    caption := Text {
+        y: 66px; width: parent.width; height: 20px;
+        text: root.label; color: Theme.secondary;
+        font-size: 12px; horizontal-alignment: center;
+    }
+}
+export component CallPanel inherits Rectangle {
+    in property <bool> microphone-dialog;
+    changed microphone-dialog => { if !root.microphone-dialog { call-focus.focus(); } }
+    in property <bool> recording;
+    callback finish-recording();
+    background: #0006;
+    TouchArea { }
+    call-focus := FocusScope {
+        init => { self.focus(); }
+        key-pressed(event) => {
+            if event.text == Key.Tab { return reject; }
+            if AudioCall.phase == 6 && (event.text == Key.Escape || event.text == Key.Return) { AudioCall.action(5); }
+            return accept;
+        }
+    }
+    panel := Rectangle {
+        x: (root.width - self.width) / 2;
+        y: (root.height - self.height) / 2;
+        width: min(440px, root.width - 40px);
+        height: min(420px, root.height - 40px);
+        background: Theme.panel;
+        border-radius: 20px;
+        drop-shadow-offset-y: 8px;
+        drop-shadow-blur: 32px;
+        drop-shadow-color: Theme.modal-shadow;
+        TouchArea { }
+        Text {
+            x: 24px; y: 22px; width: parent.width - 48px; height: 20px;
+            text: @tr("Voice call"); color: Theme.secondary;
+            font-size: 13px; horizontal-alignment: center;
+        }
+        Avatar {
+            width: 80px; height: 80px;
+            x: (parent.width - self.width) / 2; y: 58px;
+            picture: AudioCall.avatar;initials: AudioCall.initials;tint: #cce8e1;
+        }
+        name := Text {
+            x: 24px; y: 154px; width: parent.width - 48px; height: 50px;
+            text: AudioCall.title; color: Theme.text;
+            font-size: 23px; font-weight: 600; wrap: word-wrap;
+            overflow: elide; horizontal-alignment: center; vertical-alignment: center;
+            accessible-role: text; accessible-label: self.text;
+        }
+        Text {
+            x: 24px; y: 211px; width: parent.width - 48px; height: 24px;
+            text: AudioCall.phase == 1 ? @tr("Incoming voice call") : AudioCall.phase == 2 ? @tr("Preparing audio…") : AudioCall.phase == 3 ? @tr("Calling…") : AudioCall.phase == 4 ? @tr("Connecting…") : AudioCall.phase == 5 ? AudioCall.time : @tr("Call ended");
+            color: Theme.secondary; font-size: 15px;
+            horizontal-alignment: center; vertical-alignment: center;
+            accessible-role: text; accessible-label: self.text;
+        }
+        Text {
+            x: 28px; y: 244px; width: parent.width - 56px;
+            height: max(0px, parent.height - 354px);
+            text: AudioCall.error; color: Theme.secondary;
+            font-size: 12px; wrap: word-wrap;
+            horizontal-alignment: center;
+            accessible-role: text; accessible-label: self.text;
+        }
+        if AudioCall.phase != 6: HorizontalLayout {
+            x: (parent.width - self.width) / 2;
+            y: parent.height - 110px;
+            width: 240px; height: 86px; spacing: 40px;
+            if AudioCall.phase == 1: CallAction {
+                label: @tr("Decline"); icon: @image-url("icons/call-end.svg");
+                fill: #e33f4f; ink: #fff;
+                activated => { AudioCall.action(2); }
+            }
+            if AudioCall.phase == 1: CallAction {
+                enabled: AudioCall.available;
+                label: !AudioCall.available ? @tr("Audio unavailable") : root.recording ? @tr("Finish recording") : @tr("Answer"); icon: @image-url("icons/call-voice.svg");
+                fill: Theme.accent; ink: Theme.on-accent;
+                activated => { if root.recording {root.finish-recording();} else {AudioCall.action(1);} }
+            }
+            if AudioCall.phase != 1: CallAction {
+                enabled: AudioCall.phase != 2;
+                label: AudioCall.muted ? @tr("Unmute") : @tr("Mute");
+                icon: AudioCall.muted ? @image-url("icons/mic-off.svg") : @image-url("icons/mic.svg");
+                fill: AudioCall.muted ? Theme.outline : Theme.surface;
+                activated => { AudioCall.action(4); }
+            }
+            if AudioCall.phase != 1: CallAction {
+                label: @tr("End call"); icon: @image-url("icons/call-end.svg");
+                fill: #e33f4f; ink: #fff;
+                activated => { AudioCall.action(3); }
+            }
+        }
+        if AudioCall.phase == 6: SoftButton {
+            x: (parent.width - self.width) / 2;
+            y: parent.height - 82px; width: 120px; height: 42px;
+            text: @tr("Done");
+            activated => { AudioCall.action(5); }
+        }
+    }
+}

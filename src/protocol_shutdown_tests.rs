@@ -42,6 +42,12 @@ async fn connected_media_sources_release_session_for_repeated_reopen() {
         let (videos, video_rx) =
             watch::channel(Some(Arc::new(crate::protocol_video::Video(client.clone()))
                 as Arc<dyn crate::video::Source>));
+        let (_archive_dir, archive) = crate::archive::tests::fixture();
+        let (calls, call_rx) =
+            watch::channel(Some(Arc::new(crate::protocol_calling::Calling::new(
+                client.clone(),
+                archive,
+            )) as Arc<dyn crate::calling::Network>));
         // A closed audio UI still leaves a value owned by the watch sender.
         // Also cover Disconnect, where the audio UI remains alive.
         let receiver = if close_window {
@@ -65,6 +71,7 @@ async fn connected_media_sources_release_session_for_repeated_reopen() {
                 &LiveServices {
                     audio_sources: sources.clone(),
                     video_sources: videos.clone(),
+                    call_sources: calls.clone(),
                     download_sources: downloads.clone(),
                     upload_sources: uploads.clone(),
                     history_sources: history.clone(),
@@ -77,6 +84,8 @@ async fn connected_media_sources_release_session_for_repeated_reopen() {
         .expect("published audio source must not deadlock SDK store release")
         .unwrap();
         assert!(videos.borrow().is_none());
+        assert!(calls.borrow().is_none());
+        assert!(call_rx.borrow().is_none());
         assert!(video_rx.borrow().is_none());
         assert!(history.borrow().is_none());
         assert!(chats.borrow().is_none());

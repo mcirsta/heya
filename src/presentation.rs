@@ -415,6 +415,23 @@ pub fn attach(
     preferences: tokio::sync::watch::Receiver<crate::preferences::Preferences>,
 ) -> JoinHandle<()> {
     let state = fixtures::demo();
+    // Static, synthetic UI capture only; never attaches an account or a device.
+    if let Some(phase) = std::env::var("HEYA_TEST_CALL_STATE")
+        .ok()
+        .and_then(|s| s.parse::<i32>().ok())
+        .filter(|p| matches!(p, 1..=6))
+    {
+        crate::presentation_calling::publish(
+            ui,
+            &crate::calling::Status {
+                chat: 1,
+                phase,
+                title: "Alex Morgan".into(),
+                seconds: 125,
+                ..Default::default()
+            },
+        );
+    }
     sidebar(ui, state.sidebar());
     conversation(ui, &state.conversation(), true);
     let mut avatars = (*fixtures::avatar_samples([0, 1, 2, 3])).clone();
@@ -1218,6 +1235,7 @@ mod tests {
         super::call_tests::check_ui();
         crate::presentation_photos::check_ui();
         crate::presentation_audio::check_ui();
+        crate::presentation_calling::check_ui();
         crate::presentation_video::check_ui();
         crate::presentation_hover_tests::check_ui();
         crate::presentation_hover_tests::check_action_flows();

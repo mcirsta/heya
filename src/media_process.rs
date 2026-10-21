@@ -244,7 +244,7 @@ async fn read_output(
         }
     }
 }
-fn decode_error(code: u8) -> Error {
+pub(crate) fn decode_error(code: u8) -> Error {
     match code {
         0 => Error::Disabled,
         1 => Error::Codec,
@@ -257,7 +257,7 @@ fn decode_error(code: u8) -> Error {
         _ => Error::Device,
     }
 }
-fn error_code(e: Error) -> u8 {
+pub(crate) fn error_code(e: Error) -> u8 {
     match e {
         Error::Disabled => 0,
         Error::Codec => 1,

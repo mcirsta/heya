@@ -2,6 +2,7 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
         println!("cargo:rerun-if-changed=src/platform/macos.m");
         println!("cargo:rerun-if-changed=src/platform/macos_audio.m");
+        println!("cargo:rerun-if-changed=src/platform/macos_call_audio.m");
         println!("cargo:rerun-if-changed=src/platform/macos_video.m");
         cc_macos();
     }
@@ -21,6 +22,7 @@ fn cc_macos() {
     cc::Build::new()
         .file("src/platform/macos.m")
         .file("src/platform/macos_audio.m")
+        .file("src/platform/macos_call_audio.m")
         .file("src/platform/macos_video.m")
         .flag("-fobjc-arc")
         .flag("-fblocks")
@@ -36,6 +38,7 @@ fn cc_macos() {
         "UniformTypeIdentifiers",
         "AVFoundation",
         "AudioToolbox",
+        "AudioUnit",
         "CoreAudio",
         "CoreVideo",
         "CoreMedia",

@@ -69,7 +69,11 @@ pub fn bind(ui: &AppWindow) -> watch::Receiver<Vec<avatars::Target>> {
         // Prioritize the account/open chat, then the small materialized group
         // window. Never walk all loaded messages or the entire membership list.
         let mut ids = vec![avatars::Target::Chat(0)];
-        if ui.get_selected_id() > 0 {
+        let call = ui.global::<crate::ui::AudioCall>().get_chat();
+        if call > 0 {
+            ids.push(avatars::Target::Chat(call));
+        }
+        if ui.get_selected_id() > 0 && ui.get_selected_id() != call {
             ids.push(avatars::Target::Chat(ui.get_selected_id()));
         }
         if ui.get_chat_is_group() && ui.get_history_active() {
@@ -130,6 +134,15 @@ pub(crate) fn refresh(ui: &AppWindow) {
     let account = model.avatar(0);
     if !same_image(&ui.get_account_avatar(), &account) {
         ui.set_account_avatar(account);
+    }
+    let call = ui.global::<crate::ui::AudioCall>();
+    let image = if call.get_chat() > 0 {
+        model.avatar(call.get_chat())
+    } else {
+        slint::Image::default()
+    };
+    if !same_image(&call.get_avatar(), &image) {
+        call.set_avatar(image);
     }
 }
 

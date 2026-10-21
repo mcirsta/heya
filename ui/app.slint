@@ -1,4 +1,6 @@
 export { AudioPlayback } from "audio.slint";
+import { AudioCall, CallPanel } from "calling.slint";
+export { AudioCall }
 import { MessageSearch, MessageSearchHit } from "message-search.slint";
 export { MessageSearchHit }
 import { ListView, ScrollView } from "std-widgets.slint";
@@ -129,7 +131,7 @@ export component AppWindow inherits Window {
     out property <int> composer-anchor: composer.anchor;
     out property <int> composer-cursor: composer.cursor;
     public pure function can-import() -> bool {
-        return root.selected-id>0 && (root.demo-mode || root.live-can-send) && !root.settings-open && !root.new-chat-open && root.account-dialog==0 && root.photo-viewer-id==0 && !root.video-expanded && root.message-dialog==0 && root.attachment-phase==0 && root.voice-phase==0 && !root.microphone-dialog && !root.selection-active && (!root.narrow || root.show-conversation);
+        return AudioCall.phase == 0 && root.selected-id>0 && (root.demo-mode || root.live-can-send) && !root.settings-open && !root.new-chat-open && root.account-dialog==0 && root.photo-viewer-id==0 && !root.video-expanded && root.message-dialog==0 && root.attachment-phase==0 && root.voice-phase==0 && !root.microphone-dialog && !root.selection-active && (!root.narrow || root.show-conversation);
     }
     callback attachment-control(int,int,string);
 
@@ -215,7 +217,7 @@ export component AppWindow inherits Window {
     public function focus-composer() {
         if !root.settings-open && !root.new-chat-open && root.account-dialog==0
             && root.photo-viewer-id==0 && !root.video-expanded && root.message-dialog==0 && !root.attachment-modal
-            && root.voice-phase==0 && !root.microphone-dialog && !root.selection-active && root.show-conversation {
+            && root.voice-phase==0 && !root.microphone-dialog && !root.selection-active && root.show-conversation && AudioCall.phase == 0 {
             composer.focus-editor();
         }
     }
@@ -445,7 +447,7 @@ export component AppWindow inherits Window {
             return reject;
         }
         FocusScope {
-            enabled: !root.new-chat-open && root.account-dialog == 0 && root.photo-viewer-id == 0 && !root.video-expanded && root.message-dialog==0 && !root.attachment-modal && !root.microphone-dialog;
+            enabled: AudioCall.phase == 0 && !root.new-chat-open && root.account-dialog == 0 && root.photo-viewer-id == 0 && !root.video-expanded && root.message-dialog==0 && !root.attachment-modal && !root.microphone-dialog;
             measure-row := TimelineItem {
                 visible: false;
                 measurement-only: true;
@@ -963,6 +965,13 @@ export component AppWindow inherits Window {
                                     }
 
                                     IconButton {
+                                        icon: @image-url("icons/call-voice.svg");
+                                        label: @tr("Start a voice call");
+                                        enabled: AudioCall.available && root.selected-id > 0 && !root.chat-is-group && root.voice-phase == 0 && AudioCall.phase == 0;
+                                        activated => { AudioCall.action(0); }
+                                    }
+
+                                    IconButton {
                                         icon: @image-url("icons/search.svg");
                                         label: @tr("Search saved messages in conversation");
                                         enabled: root.selected-id>0 && !root.selection-active;
@@ -1081,7 +1090,7 @@ export component AppWindow inherits Window {
                                 enter-sends: root.enter-sends;
                                 show-hint <=> root.show-shortcut-hint;
                                 hint-dismissed => { root.preference-changed("show_shortcut_hint",0); }
-                                enabled: !root.selection-active && !root.microphone-dialog && !root.settings-open && !root.new-chat-open && root.account-dialog == 0 && (root.demo-mode || (root.selected-id > 0 && root.live-revision == root.live-shown-revision));
+                                enabled: AudioCall.phase == 0 && !root.selection-active && !root.microphone-dialog && !root.settings-open && !root.new-chat-open && root.account-dialog == 0 && (root.demo-mode || (root.selected-id > 0 && root.live-revision == root.live-shown-revision));
                                 can-send: !root.action-pending && (root.demo-mode || (root.connection-state == 5 && root.live-can-send && !root.send-pending));
                                 saving: root.send-pending;
                                 send => { root.send-message(root.selected-id,root.draft); }
@@ -1214,13 +1223,13 @@ export component AppWindow inherits Window {
             }
         }
 
-        if root.new-chat-open: NewChatDialog {
+        if root.new-chat-open && AudioCall.phase == 0: NewChatDialog {
             error: root.new-chat-error;
             available: !root.demo-mode && root.archive-ready && root.connection-state == 5;
             close => { root.new-chat-open = false; }
             start(phone) => { root.new-chat(phone); }
         }
-        if root.message-dialog==3: MessageMenu {
+        if root.message-dialog==3 && AudioCall.phase == 0: MessageMenu {
             context:root.action-context-menu;
             reactions:root.menu-reactions;
             width:root.width;height:root.height;
@@ -1232,7 +1241,7 @@ export component AppWindow inherits Window {
             navigate(direction)=>{root.navigate-message-menu(direction);}
             react(emoji)=>{root.react-message(emoji);}
         }
-        if root.message-dialog==1 || root.message-dialog==4: EmojiPicker {
+        if (root.message-dialog==1 || root.message-dialog==4) && AudioCall.phase == 0: EmojiPicker {
             composer:root.message-dialog==4;busy:root.action-pending;
             available:root.message-dialog==4 || root.demo-mode || root.connection-state==5;
             error:root.action-error;summary:root.action-summary;own-emoji:root.message-dialog==4 ? "" : root.action-own-emoji;
@@ -1247,7 +1256,7 @@ export component AppWindow inherits Window {
             category(index)=>{root.jump-emoji-category(index);}
             navigate(step)=>{root.navigate-emoji(step);}
         }
-        if root.message-dialog==2: MessageOperationDialog {
+        if root.message-dialog==2 && AudioCall.phase == 0: MessageOperationDialog {
             busy:root.action-pending;available:root.demo-mode||root.connection-state==5;
             error:root.action-error;summary:root.action-summary;
             destinations:root.action-destinations;
@@ -1255,14 +1264,14 @@ export component AppWindow inherits Window {
             search(query)=>{root.search-message-actions(query);}
             forward(id)=>{root.forward-message(id);}
         }
-        if root.message-dialog>=5 && root.message-dialog<=8:MessageDetails {
+        if root.message-dialog>=5 && root.message-dialog<=8 && AudioCall.phase == 0:MessageDetails {
             mode:root.message-dialog;count:root.control-count;busy:root.action-pending;error:root.action-error;summary:root.action-summary;
             text<=>root.action-edit-text;sent:root.info-sent;wire:root.info-wire;status:root.info-status;receipts:root.info-receipts;
             copy-id=>{root.copy-value(root.info-wire);}
             close=>{root.close-message-actions();root.focus-composer();}
             confirm=>{root.confirm-message-control();}
         }
-        if root.account-dialog != 0: AccountDialog {
+        if root.account-dialog != 0 && AudioCall.phase == 0: AccountDialog {
             unlink: root.account-dialog == 2;
             close => { root.account-dialog = 0; }
             confirm => {
@@ -1271,12 +1280,12 @@ export component AppWindow inherits Window {
                 root.account-dialog = 0;
             }
         }
-        if root.video-expanded: video-viewer := VideoViewer {
+        if root.video-expanded && AudioCall.phase == 0: video-viewer := VideoViewer {
             message-id:VideoPlayback.id;
             closed=>{root.video-expanded=false;root.focus-composer();}
             control(action,value)=>{root.video-control(VideoPlayback.id,action,value);}
         }
-        if root.photo-viewer-id > 0: photo-viewer := PhotoViewer {
+        if root.photo-viewer-id > 0 && AudioCall.phase == 0: photo-viewer := PhotoViewer {
             photo-id: root.photo-viewer-id;
             sender: root.photo-viewer-sender; date: root.photo-viewer-date;
             caption: root.photo-viewer-caption; counter: root.photo-viewer-counter;
@@ -1310,12 +1319,12 @@ export component AppWindow inherits Window {
             background:Theme.surface.transparentize(12%);border-color:Theme.accent;border-width:2px;border-radius:12px;
             Text {text:@tr("Drop photos or files to review before sending");color:Theme.accent;font-size:20px;wrap:word-wrap;horizontal-alignment:center;vertical-alignment:center;}
         }
-        if root.attachment-menu: AttachmentMenu {
+        if root.attachment-menu && AudioCall.phase == 0: AttachmentMenu {
             anchor-x:root.attachment-x;anchor-y:root.attachment-y;
             close=>{root.attachment-menu=false;composer.focus-editor();}
             choose(kind)=>{root.attachment-menu=false;root.pick-attachments(kind);}
         }
-        if root.attachment-phase>0 && root.attachment-review-open: AttachmentReview {
+        if root.attachment-phase>0 && root.attachment-review-open && AudioCall.phase == 0: AttachmentReview {
             phase:root.attachment-phase;recipient:root.attachment-title;items:root.attachment-items;
             selected:root.attachment-selected;caption<=>root.attachment-caption;
             status:root.attachment-status;progress:root.attachment-progress;
@@ -1325,7 +1334,7 @@ export component AppWindow inherits Window {
             select(index)=>{root.attachment-control(2,index,root.attachment-caption);}
             remove=>{root.attachment-control(3,0,root.attachment-caption);}
         }
-        if root.attachment-phase>=4 && !root.attachment-review-open: upload-status := DownloadStatus {
+        if root.attachment-phase>=4 && !root.attachment-review-open && AudioCall.phase == 0: upload-status := DownloadStatus {
             x:root.status-left;y:root.upload-top;height:root.status-height;
             width:root.status-width;
             phase:root.attachment-phase==4 ? 2 : root.attachment-phase==5 ? 3 : 5;
@@ -1337,16 +1346,22 @@ export component AppWindow inherits Window {
             dismiss=>{root.attachment-control(0,0,root.attachment-caption);}
             retry=>{if root.attachment-voice{root.attachment-control(1,0,"");}else{root.attachment-review-open=true;}}
         }
-        if root.download-phase>0: download := DownloadStatus {
+        if root.download-phase>0 && AudioCall.phase == 0: download := DownloadStatus {
             x:root.status-left;y:root.download-top;height:root.status-height;
             width:root.status-width;
             phase:root.download-phase;name:root.download-name;status:root.download-status;fraction:root.download-fraction;
             cancel=>{root.download-control(0);}retry=>{root.download-control(1);}dismiss=>{root.download-control(2);}
         }
+        if AudioCall.phase > 0: call-panel := CallPanel {
+            width: root.width; height: root.height;
+            microphone-dialog: root.microphone-dialog;
+            recording: root.voice-phase > 0 && root.voice-phase != 4;
+            finish-recording => { root.voice-control(3); }
+        }
         if root.microphone-dialog: MicrophoneDialog {
             close => { root.close-microphone-dialog(); }
         }
-        if root.chat-menu-id>0:ChatMenu {
+        if root.chat-menu-id>0 && AudioCall.phase == 0:ChatMenu {
             width:root.width;height:root.height;
             muted:root.chat-menu-muted;archived:root.chat-menu-archived;
             enabled:!root.demo-mode && root.connection-state==5;

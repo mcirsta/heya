@@ -176,6 +176,7 @@ pub struct LiveServices {
     pub thumbnail_demand: watch::Receiver<Vec<i32>>,
     pub audio_sources: watch::Sender<crate::audio::Sources>,
     pub video_sources: watch::Sender<crate::video::Sources>,
+    pub call_sources: watch::Sender<crate::calling::Sources>,
     pub history_sources: watch::Sender<crate::phone_history::Sources>,
     pub download_sources: watch::Sender<crate::downloads::Sources>,
     pub upload_sources: watch::Sender<crate::attachments::Sources>,
@@ -186,6 +187,7 @@ impl LiveServices {
     fn clear_sources(&self) {
         self.audio_sources.send_replace(None);
         self.video_sources.send_replace(None);
+        self.call_sources.send_replace(None);
         self.download_sources.send_replace(None);
         self.upload_sources.send_replace(None);
         self.history_sources.send_replace(None);
@@ -282,6 +284,10 @@ async fn connect(
     }
     let mut bot = bot.spawn();
     let release = bot.client().store_release();
+    let calling = Arc::new(crate::protocol_calling::Calling::new(
+        bot.client(),
+        archive.clone(),
+    ));
     let (online_tx, online) = watch::channel(false);
     let (stop_tx, stop) = watch::channel(false);
     let (contacts_stop, contacts_stopped) = watch::channel(false);
@@ -381,10 +387,12 @@ async fn connect(
                 match observation {
                     Observation::Phase(Phase::Failed(failure)) => { terminal = Some(failure); break; }
                     Observation::Phase(phase) => {
+                        if phase!=Phase::Connected {calling.disconnected();}
                         if phase == Phase::Connected && let Err(error) = protocol_messages::verify_identity(&bot.client(),&archive).await { terminal=Some(archive_failure(error));break; }
                         online_tx.send_replace(phase == Phase::Connected);
                         audio_sources.send_replace((phase==Phase::Connected).then(||Arc::new(crate::protocol_audio::Audio(bot.client())) as Arc<dyn crate::audio::Source>));
                         services.video_sources.send_replace((phase==Phase::Connected).then(||Arc::new(crate::protocol_video::Video(bot.client())) as Arc<dyn crate::video::Source>));
+                        services.call_sources.send_replace((phase==Phase::Connected).then(||calling.clone() as Arc<dyn crate::calling::Network>));
                         services.history_sources.send_replace((phase==Phase::Connected).then(||Arc::new(crate::protocol_history::History(bot.client())) as Arc<dyn crate::phone_history::Source>));
                         services.chat_sources.send_replace((phase==Phase::Connected).then(||Arc::new(crate::protocol_chat_management::Chats(bot.client(),chat_changes.clone())) as Arc<dyn crate::chat_management::Source>));
                         services.upload_sources.send_replace((phase==Phase::Connected).then(||Arc::new(crate::protocol_uploads::Uploads(bot.client())) as Arc<dyn crate::attachments::Uploader>));
@@ -410,6 +418,7 @@ async fn connect(
                 if changed.is_ok() && *overflow.borrow() { terminal=Some(Failure::Archive);break; }
             }
             Some(event) = messages.recv() => {
+                calling.observe(&event).await;
                 if let Err(error) = protocol_messages::event(&archive,&bot.client(),event).await {terminal=Some(archive_failure(error));break;}
             }
             _ = &mut presence => {presence_done=true;terminal=Some(Failure::Archive);break;}
@@ -437,6 +446,9 @@ async fn connect(
         }
     }
     let logging_out = *requests.borrow() == Request::Logout;
+    services.clear_sources();
+    calling.disconnected();
+    drop(calling);
     updates.send_replace(Snapshot::new(Phase::Stopping));
     online_tx.send_replace(false);
     cancelled.store(true, std::sync::atomic::Ordering::Release);
@@ -1184,6 +1196,7 @@ mod tests {
             thumbnail_demand: watch::channel(Vec::new()).1,
             audio_sources: watch::channel(None).0,
             video_sources: watch::channel(None).0,
+            call_sources: watch::channel(None).0,
             history_sources: watch::channel(None).0,
             chat_sources: watch::channel(None).0,
             download_sources: watch::channel(None).0,

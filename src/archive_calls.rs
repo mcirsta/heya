@@ -3,6 +3,20 @@ use super::*;
 use crate::message_content::Notice;
 
 impl Archive {
+    pub async fn call_target(&self, chat: i32) -> Result<crate::calling::Target> {
+        self.call(move|db|{
+            let chat=local_chat(db,chat)?;
+            chat_settings::unlocked(db,chat)?;
+            let (peer,title,readonly):(String,String,bool)=db.query_row("SELECT c.jid,coalesce(nullif(n.saved_name,''),nullif(n.profile_name,''),nullif(c.name,''),c.jid),c.read_only FROM chats c LEFT JOIN contacts n ON n.jid=c.jid WHERE c.id=?1",[chat],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
+            let own:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM metadata WHERE key='identity' AND value=?1)",[&peer],|r|r.get(0))?;
+            if readonly||own||!peer.ends_with("@s.whatsapp.net")&&!peer.ends_with("@lid") {return Err(Error::Invalid);}
+            Ok(crate::calling::Target{chat,peer,title})
+        }).await
+    }
+    pub async fn incoming_call_target(&self, peer: String) -> Result<crate::calling::Target> {
+        let chat = self.create_chat(peer).await?;
+        self.call_target(chat).await
+    }
     pub fn call_account(&self) -> Result<Vec<String>> {
         self.blocking(|db| {
             let mut q=db.prepare("SELECT value FROM metadata WHERE key='identity' UNION SELECT alias FROM aliases WHERE canonical=(SELECT value FROM metadata WHERE key='identity')")?;
