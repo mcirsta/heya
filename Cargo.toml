@@ -20,7 +20,7 @@ slint = { git = "https://github.com/slint-ui/slint", rev = "a5a124bf80961966e875
 # Version-specific input bridges: wheel phases in presentation_scroll and
 # undoable paste commits in presentation_clipboard (missing public APIs).
 i-slint-core = { git = "https://github.com/slint-ui/slint", rev = "a5a124bf80961966e875dc91d8d04271ec5885d8", default-features = false }
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "process", "io-util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "process", "io-util", "fs"] }
 whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "0dc38af07632f48f0cf6c66df285f1643fc22b95", default-features = false, features = ["sqlite-storage", "tokio-transport", "tokio-runtime", "ureq-client", "tokio-native"] }
 rusqlite = "0.40"
 png = "0.18"

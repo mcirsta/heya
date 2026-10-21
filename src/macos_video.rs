@@ -55,7 +55,7 @@ pub fn play(
                 bytes.as_ptr(),
                 bytes.len(),
                 uid.as_ptr(),
-                f32::from(header.settings.output_volume) / 100.,
+                header.settings.output_volume.min(100) as f32 / 100.,
                 i32::from(header.silent),
             )
         })
