@@ -51,7 +51,7 @@ pub fn decode(bytes: &[u8]) -> Option<Pixels> {
 }
 
 pub async fn demo_present(mut demand: watch::Receiver<Vec<i32>>, updates: watch::Sender<Snapshot>) {
-    let Ok((link, document)) = tokio::task::spawn_blocking(|| {
+    let Ok((link, document, video)) = tokio::task::spawn_blocking(|| {
         let link = crate::fixtures::message_image_samples([0])[&0].clone();
         let document = crate::fixtures::document_thumbnail();
         let document = image::imageops::crop_imm(
@@ -69,6 +69,7 @@ pub async fn demo_present(mut demand: watch::Receiver<Vec<i32>>, updates: watch:
                 height: document.height(),
                 rgba: document.into_raw(),
             }),
+            Arc::new(crate::fixtures::video_pixels(0.)),
         )
     })
     .await
@@ -83,8 +84,10 @@ pub async fn demo_present(mut demand: watch::Receiver<Vec<i32>>, updates: watch:
             .map(|id| {
                 (
                     *id,
-                    if *id >= 24000 {
+                    if (24000..25000).contains(id) {
                         document.clone()
+                    } else if *id >= 27000 {
+                        video.clone()
                     } else {
                         link.clone()
                     },

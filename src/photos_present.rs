@@ -26,6 +26,7 @@ pub(super) async fn present_with_decode<F, Fut>(
     let mut changes = archive.as_ref().map(Archive::subscribe);
     let mut known: BTreeMap<i32, (i64, Option<Arc<Pixels>>)> = BTreeMap::new();
     let mut viewer: Option<(i32, i64, Option<Arc<Pixels>>)> = None;
+    let mut thumbs: BTreeMap<i32, (i64, Option<Thumbnail>)> = BTreeMap::new();
     let mut first = true;
     let mut archives_open = true;
     loop {
@@ -35,7 +36,7 @@ pub(super) async fn present_with_decode<F, Fut>(
                     if result.is_err() { archives_open=false; continue; }
                     archive=archives.borrow_and_update().clone();
                     changes=archive.as_ref().map(Archive::subscribe);
-                    known.clear(); viewer=None;
+                    known.clear(); viewer=None; thumbs.clear();
                     updates.send_replace(Default::default());
                 }
                 result = demand.changed() => { if result.is_err() { return; } }
@@ -51,6 +52,20 @@ pub(super) async fn present_with_decode<F, Fut>(
             changes.borrow_and_update();
         }
         let ids = wanted.ids();
+        let gallery = if let Some(id) = wanted.viewer {
+            match db.photo_gallery(wanted.chat, id).await {
+                Ok(g) => g.map(Arc::new),
+                Err(_) => continue,
+            }
+        } else {
+            None
+        };
+        let thumb_ids = gallery
+            .as_ref()
+            .filter(|g| g.members.len() > 1)
+            .map(|g| g.thumbnails().to_vec())
+            .unwrap_or_default();
+        thumbs.retain(|id, _| thumb_ids.contains(id));
         known.retain(|id, _| ids.contains(id));
         if viewer.as_ref().map(|v| v.0) != wanted.viewer {
             viewer = None;
@@ -70,7 +85,15 @@ pub(super) async fn present_with_decode<F, Fut>(
 
         // Reuse all unchanged visible images before decoding anything new. The
         // renderer receives the same pixel identity, so no texture re-upload.
-        let mut result = Snapshot::default();
+        let mut result = Snapshot {
+            checked: wanted.viewer.map(|id| (wanted.chat, id)),
+            gallery,
+            thumbnails: thumbs
+                .iter()
+                .filter_map(|(id, (_, p))| p.as_ref().map(|p| (*id, p.clone())))
+                .collect(),
+            ..Default::default()
+        };
         for row in &rows {
             let image = known
                 .get(&row.id)
@@ -142,6 +165,29 @@ pub(super) async fn present_with_decode<F, Fut>(
                 }
             }
         }
+        // The selected image has priority. Filmstrip work is bounded to seven
+        // 96px cached previews and shares the same decoder/cache worker.
+        if publish(&result) && demand.borrow().viewer == wanted.viewer {
+            let keys = thumbs
+                .iter()
+                .map(|(id, (revision, _))| (*id, *revision))
+                .collect();
+            if let Ok(rows) = db.album_thumbnails(thumb_ids, keys).await {
+                for (id, revision, bytes) in rows {
+                    if demand.borrow().viewer != wanted.viewer {
+                        break;
+                    }
+                    let pixels = decode(bytes, THUMB_EDGE).await.map(Thumbnail::new);
+                    thumbs.insert(id, (revision, pixels.clone()));
+                    if let Some(pixels) = pixels {
+                        result.thumbnails.insert(id, pixels);
+                    }
+                    if !publish(&result) {
+                        break;
+                    }
+                }
+            }
+        }
         // Requery after a mutation before publishing any more pixels. A demand
         // change needs only the new rows; completed overlapping rows are reused.
         first = !archives.has_changed().unwrap_or(false)
@@ -166,6 +212,19 @@ fn publish_current(updates: &watch::Sender<Arc<Snapshot>>, result: &Snapshot, wa
             .as_ref()
             .filter(|(id, _)| wanted.viewer == Some(*id))
             .cloned(),
+        checked: result
+            .checked
+            .filter(|&(chat, id)| wanted.chat == chat && wanted.viewer == Some(id)),
+        gallery: result
+            .gallery
+            .as_ref()
+            .filter(|g| wanted.viewer == Some(g.id) && result.checked == Some((wanted.chat, g.id)))
+            .cloned(),
+        thumbnails: if result.checked == wanted.viewer.map(|id| (wanted.chat, id)) {
+            result.thumbnails.clone()
+        } else {
+            Default::default()
+        },
     };
     updates.send_if_modified(|old| {
         let same_pixels = |a: &Option<Arc<Pixels>>, b: &Option<Arc<Pixels>>| match (a, b) {
@@ -179,6 +238,13 @@ fn publish_current(updates: &watch::Sender<Arc<Snapshot>>, result: &Snapshot, wa
             _ => false,
         };
         if old.rows.len() == result.rows.len()
+            && old.checked == result.checked
+            && old.gallery == result.gallery
+            && old.thumbnails.len() == result.thumbnails.len()
+            && result
+                .thumbnails
+                .iter()
+                .all(|(id, p)| old.thumbnails.get(id).is_some_and(|old| old.key == p.key))
             && same_viewer
             && result.rows.iter().all(|(id, p)| {
                 old.rows

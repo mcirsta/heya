@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Synthetic UI checks on a private virtual X server; never the owner's desktop.
+# Synthetic UI checks on a private virtual display; never the owner's desktop.
 set -euo pipefail
 
 usage() {
-    echo "Usage: $0 {--screenshot|--framebuffer} /tmp/heya.png [--size WIDTHxHEIGHT] [--light|--dark] [--demo-chat ID] [--click XxY (framebuffer only)] [--hover XxY (framebuffer only)] | --ui-benchmark | --wheel-check | --close-check | --startup-check" >&2
+    echo "Usage: $0 {--screenshot|--framebuffer} /tmp/heya.png [--size WIDTHxHEIGHT] [--light|--dark] [--demo-chat ID] [--click XxY (framebuffer only)] [--hover XxY (framebuffer only)] | --ui-benchmark | --video-check | --wheel-check | --close-check | --startup-check | --clipboard-check | --wayland-clipboard-check | --wayland-drop-check | --clipboard-ui-check OUTPUT_PREFIX" >&2
     exit 2
 }
 
@@ -23,7 +23,7 @@ case "${1:-}" in
                     shift 2
                     ;;
                 --demo-chat)
-                    [[ $# -ge 2 && "$2" =~ ^([1-9]|10|11|12|13)$ ]] || usage
+                    [[ $# -ge 2 && "$2" =~ ^([1-9]|10|11|12|13|14|15)$ ]] || usage
                     heya_args+=("$1" "$2")
                     shift 2
                     ;;
@@ -42,7 +42,11 @@ case "${1:-}" in
             esac
         done
         ;;
-    --ui-benchmark|--wheel-check|--close-check|--startup-check)
+    --clipboard-ui-check)
+        [[ $# == 2 && -n "$2" ]] || usage
+        heya_args+=("$2")
+        ;;
+    --video-check|--ui-benchmark|--wheel-check|--close-check|--startup-check|--clipboard-check|--wayland-clipboard-check|--wayland-drop-check)
         [[ $# == 1 ]] || usage
         ;;
     *)
@@ -50,9 +54,15 @@ case "${1:-}" in
         ;;
 esac
 
-for program in Xvfb xvfb-run xauth; do
+heya_display_tools=(Xvfb xvfb-run xauth)
+if [[ "${heya_args[0]}" == --wayland-drop-check ]]; then
+    heya_display_tools=(kwin_wayland dbus-run-session qdbus6 wayland-scanner pkg-config cc c++)
+elif [[ "${heya_args[0]}" == --wayland-clipboard-check ]]; then
+    heya_display_tools=(kwin_wayland dbus-run-session wl-copy wl-paste)
+fi
+for program in "${heya_display_tools[@]}"; do
     if ! command -v "$program" >/dev/null; then
-        echo "Missing $program. Install with: sudo pacman -S xorg-server-xvfb xorg-xauth" >&2
+        echo "Missing offscreen test tool: $program" >&2
         exit 1
     fi
 done
@@ -70,6 +80,20 @@ case "$heya_renderer" in
 esac
 
 heya_command=("$heya_binary" --demo "${heya_args[@]}")
+if [[ "${heya_args[0]}" == --video-check ]]; then
+    heya_command=(bash "$heya_root/scripts/video-check.sh" "$heya_binary" "$heya_root/target/release/heya")
+fi
+if [[ "${heya_args[0]}" == --clipboard-ui-check ]]; then
+    for program in xclip xdotool import identify cc; do
+        command -v "$program" >/dev/null || { echo "Clipboard UI check needs $program." >&2; exit 1; }
+    done
+    heya_command=(bash "$heya_root/scripts/ui-clipboard-check.sh" "$heya_binary" "${heya_args[1]}" "$heya_root")
+fi
+if [[ "${heya_args[0]}" == --clipboard-check ]]; then
+    command -v xclip >/dev/null || { echo "Install xclip with pacman." >&2; exit 1; }
+    # Pass the Cargo test executable explicitly; never use the owner's clipboard.
+    heya_command=(env HEYA_PRIVATE_CLIPBOARD_TEST=1 "$heya_binary" --ignored --exact clipboard::tests::native_clipboard_roundtrip --nocapture)
+fi
 if [[ "${heya_args[0]}" == --startup-check ]]; then
     heya_command=(python3 "$heya_root/scripts/check-gui-startup.py" "$heya_binary" --software-only)
 fi
@@ -175,6 +199,29 @@ fi
 heya_test_dir=$(mktemp -d "${TMPDIR:-/tmp}/heya-offscreen.XXXXXXXX")
 trap 'rm -rf -- "$heya_test_dir"' EXIT
 mkdir -m 700 "$heya_test_dir/runtime" "$heya_test_dir/config" "$heya_test_dir/data" "$heya_test_dir/cache"
+
+if [[ "${heya_args[0]}" == --wayland-clipboard-check || "${heya_args[0]}" == --wayland-drop-check ]]; then
+    heya_wayland_script=clipboard-wayland-check.sh
+    if [[ "${heya_args[0]}" == --wayland-drop-check ]]; then heya_wayland_script=wayland-drop-check.sh; fi
+    # No desktop-service autostart: a headless compositor needs neither portals
+    # nor a document-portal FUSE mount that can outlive this isolated test bus.
+    cat >"$heya_test_dir/bus.conf" <<'XML'
+<busconfig>
+  <type>session</type><listen>unix:tmpdir=/tmp</listen><auth>EXTERNAL</auth>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/><allow own="*"/>
+  </policy>
+</busconfig>
+XML
+    timeout --signal=TERM --kill-after=5s 60s env -u DISPLAY -u WAYLAND_DISPLAY -u WAYLAND_SOCKET -u XAUTHORITY \
+        -u DBUS_SESSION_BUS_ADDRESS -u SESSION_MANAGER -u AT_SPI_BUS_ADDRESS \
+        XDG_RUNTIME_DIR="$heya_test_dir/runtime" XDG_CONFIG_HOME="$heya_test_dir/config" \
+        XDG_DATA_HOME="$heya_test_dir/data" XDG_CACHE_HOME="$heya_test_dir/cache" \
+        dbus-run-session --config-file="$heya_test_dir/bus.conf" -- \
+        bash "$heya_root/scripts/$heya_wayland_script" "$heya_binary" "$heya_root"
+    exit $?
+fi
 
 # Removing both Wayland entry points and using a private runtime directory
 # prevents an X11 failure from selecting the owner's real Wayland compositor.

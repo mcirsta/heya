@@ -2,6 +2,7 @@ import { Theme } from "theme.slint";
 import { RaisedSurface } from "components.slint";
 import { MessageBubble, MessageRow } from "message.slint";
 import { SystemNotice } from "system-notice.slint";
+import { CallEvent } from "call-event.slint";
 
 export struct TimelineRow {
     message: MessageRow,
@@ -25,6 +26,7 @@ export component TimelineItem inherits Rectangle {
     in property <color> tint;
     callback activate(int,int);
     callback audio-control(int,int,float);
+    callback video-control(int,int,float);
     callback message-action(int,int,length,length);
     in property <bool> actions-enabled;
     in property <bool> menu-open;
@@ -61,7 +63,12 @@ export component TimelineItem inherits Rectangle {
             horizontal-alignment: center; vertical-alignment: center;
         }
     }
-    if !root.measurement-only && root.message.system-notice: SystemNotice {
+    if !root.measurement-only && root.message.call-kind > 0: CallEvent {
+        y:root.before-bubble;width:root.width;text:root.message.text;
+        kind:root.message.call-kind;details:root.message.call-details;
+        time:root.message.time;outgoing:root.message.outgoing;
+    }
+    if !root.measurement-only && root.message.system-notice && root.message.call-kind == 0: SystemNotice {
         y: root.before-bubble;
         width: root.width; text: root.message.text;
     }
@@ -75,6 +82,7 @@ export component TimelineItem inherits Rectangle {
         viewport-bottom: root.viewport-bottom - root.before-bubble;
         message-action(action,x,y) => {root.message-action(root.message.id,action,x,y);}
         audio-control(action,value) => {root.audio-control(root.message.id,action,value);}
+        video-control(action,value) => {root.video-control(root.message.id,action,value);}
         activate(index) => { root.activate(root.message.id,index); }
     }
     if root.selection-mode && !root.measurement-only && root.message.actionable:TouchArea {

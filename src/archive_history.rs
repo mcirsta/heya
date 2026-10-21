@@ -7,16 +7,16 @@ impl Archive {
             let chat=local_chat(db,chat)?;
             let jid:Option<String>=db.query_row("SELECT jid FROM chats WHERE id=?1",[chat],|r|r.get(0)).optional()?;
             let Some(jid)=jid else {return Ok(None)};
-            let first:Option<(String,bool,i64)>=db.query_row("SELECT wire_id,outgoing,stamp FROM messages WHERE chat_id=?1 AND visible=1 AND stamp>0 AND (outgoing=0 OR delivery IN ('accepted','delivered','read')) ORDER BY stamp,id LIMIT 1",[chat],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
+            let first:Option<(String,bool,i64)>=db.query_row("SELECT wire_id,outgoing,stamp FROM messages WHERE chat_id=?1 AND visible=1 AND CASE WHEN json_valid(content) THEN json_type(content,'$.notice.call') IS NULL ELSE 1 END AND stamp>0 AND (outgoing=0 OR delivery IN ('accepted','delivered','read')) ORDER BY stamp,id LIMIT 1",[chat],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
             let (wire,outgoing,stamp)=first.unwrap_or_else(||(String::new(),false,chrono::Utc::now().timestamp()));
-            let known=db.query_row("SELECT count(*) FROM messages WHERE chat_id=?1 AND visible=1 AND stamp<=?2 AND (outgoing=0 OR delivery IN ('accepted','delivered','read'))",params![chat,stamp],|r|r.get(0))?;
+            let known=db.query_row("SELECT count(*) FROM messages WHERE chat_id=?1 AND visible=1 AND CASE WHEN json_valid(content) THEN json_type(content,'$.notice.call') IS NULL ELSE 1 END AND stamp<=?2 AND (outgoing=0 OR delivery IN ('accepted','delivered','read'))",params![chat,stamp],|r|r.get(0))?;
             Ok(Some(Anchor{chat,jid,wire,outgoing,stamp,known}))
         }).await
     }
     pub async fn phone_history_advanced(&self, anchor: Anchor) -> Result<bool> {
         self.call(move|db|{
             let chat=local_chat(db,anchor.chat)?;
-            let count:i64=db.query_row("SELECT count(*) FROM messages WHERE chat_id=?1 AND visible=1 AND stamp<=?2 AND (outgoing=0 OR delivery IN ('accepted','delivered','read'))",params![chat,anchor.stamp],|r|r.get(0))?;
+            let count:i64=db.query_row("SELECT count(*) FROM messages WHERE chat_id=?1 AND visible=1 AND CASE WHEN json_valid(content) THEN json_type(content,'$.notice.call') IS NULL ELSE 1 END AND stamp<=?2 AND (outgoing=0 OR delivery IN ('accepted','delivered','read'))",params![chat,anchor.stamp],|r|r.get(0))?;
             Ok(count>anchor.known)
         }).await
     }

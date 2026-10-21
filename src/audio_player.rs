@@ -3,14 +3,9 @@
 use crate::audio::{Error, Status};
 #[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
 use gstreamer::{self as gst, prelude::*};
-#[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
-use gstreamer_app::{AppSrc, AppSrcCallbacks, AppStreamType};
 use std::sync::Arc;
 #[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
-use std::{
-    sync::Mutex,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 use tokio::sync::{oneshot, watch};
 
 #[derive(Clone)]
@@ -146,50 +141,7 @@ impl Pipeline {
     fn new(bytes: Arc<[u8]>, output: Output) -> Result<Self, Error> {
         gst::init().map_err(|_| Error::Playback)?;
         let pipeline = Self(gst::Pipeline::new());
-        let source = AppSrc::builder()
-            .format(gst::Format::Bytes)
-            .stream_type(AppStreamType::RandomAccess)
-            .size(bytes.len() as i64)
-            .max_bytes(256 * 1024)
-            .build();
-        let cursor = Arc::new(Mutex::new(0usize));
-        let seek_cursor = cursor.clone();
-        let len = bytes.len();
-        source.set_callbacks(
-            AppSrcCallbacks::builder()
-                .need_data(move |src, length| {
-                    let buffer = {
-                        let mut at = cursor.lock().unwrap();
-                        if *at >= bytes.len() {
-                            None
-                        } else {
-                            // Random-access demuxers request an exact byte range.
-                            let length = if length == u32::MAX {
-                                64 * 1024
-                            } else {
-                                length as usize
-                            };
-                            let end = at.saturating_add(length).min(bytes.len());
-                            let buffer = gst::Buffer::from_mut_slice(bytes[*at..end].to_vec());
-                            *at = end;
-                            Some(buffer)
-                        }
-                    };
-                    if let Some(buffer) = buffer {
-                        let _ = src.push_buffer(buffer);
-                    } else {
-                        let _ = src.end_of_stream();
-                    }
-                })
-                .seek_data(move |_, offset| {
-                    if offset > len as u64 {
-                        return false;
-                    }
-                    *seek_cursor.lock().unwrap() = offset as usize;
-                    true
-                })
-                .build(),
-        );
+        let source = crate::gstreamer_memory::source(bytes);
         let make = |name| {
             gst::ElementFactory::make(name)
                 .build()

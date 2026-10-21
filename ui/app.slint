@@ -11,7 +11,8 @@ import {
     RaisedSurface,
     PanelShadow,
 } from "components.slint";
-import { PhotoViewer } from "photo.slint";
+import { PhotoViewer, PhotoThumbnail } from "photo.slint";
+export { PhotoThumbnail }
 import { Composer } from "composer.slint";
 import { MicrophoneDialog } from "voice.slint";
 import { MessageOperationDialog, ForwardDestination } from "message-actions.slint";
@@ -24,6 +25,8 @@ import { AttachmentMenu, AttachmentReview, AttachmentItem } from "attachments.sl
 export { AttachmentItem }
 import { DownloadStatus } from "download-status.slint";
 export { EmojiChoice, EmojiGridRow, EmojiCategory, ForwardDestination }
+import { VideoViewer, VideoPlayback } from "video.slint";
+export { VideoPlayback }
 import { MessageBubble, MessageRow, MessageActionRow } from "message.slint";
 import { SystemNotice } from "system-notice.slint";
 import { SessionView } from "session.slint";
@@ -47,6 +50,7 @@ export struct ChatRow {
     initials: string,
     tint: color,
     preview: string,
+    call-kind: int,
     time: string,
     unread: int,
     marked-unread: bool,
@@ -90,6 +94,7 @@ export component AppWindow inherits Window {
     callback request-audio-devices();
     callback download-folder-ready(string);
     in property <int> voice-phase;
+    changed voice-phase=>{if root.voice-phase>0 {root.video-control(0,3,0);}}
     in property <bool> voice-playing;
     in property <string> voice-time;
     in property <string> voice-waveform;
@@ -111,6 +116,21 @@ export component AppWindow inherits Window {
     in property <string> attachment-status;
     in property <float> attachment-progress;
     callback pick-attachments(int);
+    callback paste-composer(int,int);
+    pure callback accepts-drop(data-transfer) -> bool;
+    callback drop-files(data-transfer);
+    callback copy-photo(int);
+    in property <bool> clipboard-enabled;
+    in-out property <bool> clipboard-busy;
+    out property <bool> drop-hover: file-drop.has-drag;
+    in-out property <int> paste-generation;
+    changed draft => { root.paste-generation += 1; }
+    out property <bool> composer-focused: composer.focused;
+    out property <int> composer-anchor: composer.anchor;
+    out property <int> composer-cursor: composer.cursor;
+    public pure function can-import() -> bool {
+        return root.selected-id>0 && (root.demo-mode || root.live-can-send) && !root.settings-open && !root.new-chat-open && root.account-dialog==0 && root.photo-viewer-id==0 && !root.video-expanded && root.message-dialog==0 && root.attachment-phase==0 && root.voice-phase==0 && !root.microphone-dialog && !root.selection-active && (!root.narrow || root.show-conversation);
+    }
     callback attachment-control(int,int,string);
 
     in-out property <bool> settings-open;
@@ -128,6 +148,8 @@ export component AppWindow inherits Window {
     callback request-photos();
     callback activate-photo(int);
     callback audio-control(int,int,float);
+    callback video-control(int,int,float);
+    in-out property <bool> video-expanded;
     callback message-action(int,int,length,length);
     in-out property <int> message-dialog;
     in-out property <bool> action-context-menu;
@@ -192,7 +214,7 @@ export component AppWindow inherits Window {
     callback forward-message(int);
     public function focus-composer() {
         if !root.settings-open && !root.new-chat-open && root.account-dialog==0
-            && root.photo-viewer-id==0 && root.message-dialog==0 && !root.attachment-modal
+            && root.photo-viewer-id==0 && !root.video-expanded && root.message-dialog==0 && !root.attachment-modal
             && root.voice-phase==0 && !root.microphone-dialog && !root.selection-active && root.show-conversation {
             composer.focus-editor();
         }
@@ -202,7 +224,16 @@ export component AppWindow inherits Window {
     in property <image> photo-viewer-image;
     in property <string> photo-viewer-status;
     in property <bool> photo-viewer-ready;
-    changed photo-viewer-id => { root.request-photos(); }
+    in-out property <string> photo-viewer-sender;
+    in-out property <string> photo-viewer-date;
+    in-out property <string> photo-viewer-caption;
+    in-out property <string> photo-viewer-counter: @tr("Photo");
+    in-out property <int> photo-viewer-previous;
+    in-out property <int> photo-viewer-next;
+    in-out property <[int]> photo-gallery-ids;
+    in-out property <[PhotoThumbnail]> photo-thumbnails;
+    callback navigate-photo(int);
+    changed photo-viewer-id => { if root.photo-viewer-id==0 {root.reset-photo-gallery();} root.request-photos(); }
     in-out property <bool> show-shortcut-hint: true;
     callback preference-changed(string, int);
     callback search-settings(string);
@@ -225,7 +256,7 @@ export component AppWindow inherits Window {
     in property <int> qr-seconds;
     in property <bool> archive-ready;
     in property <bool> live-chat-view;
-    changed live-chat-view => { if !root.live-chat-view {root.audio-control(0,3,0);} }
+    changed live-chat-view => { if !root.live-chat-view {root.audio-control(0,3,0);root.video-control(0,3,0);} }
     in property <bool> live-can-send;
     in-out property <int> live-revision;
     in property <int> live-shown-revision: -1;
@@ -239,7 +270,7 @@ export component AppWindow inherits Window {
         && !root.message-search-open && !root.browsing-history && root.navigation-request==root.navigation-shown
         && root.read-window-active && !root.read-window-occluded && !root.minimized
         && !root.settings-open && !root.new-chat-open && root.account-dialog==0
-        && root.photo-viewer-id==0 && root.message-dialog==0 && !root.attachment-modal && !root.microphone-dialog
+        && root.photo-viewer-id==0 && !root.video-expanded && root.message-dialog==0 && !root.attachment-modal && !root.microphone-dialog
         && (!root.narrow || root.show-conversation)
         && root.live-revision==root.live-shown-revision ? root.read-tail : 0;
     callback read-visible();
@@ -267,7 +298,7 @@ export component AppWindow inherits Window {
     callback request-avatars();
     changed avatar-first => { root.request-avatars(); }
     changed avatar-count => { root.request-avatars(); }
-    changed selected-id => { root.message-search-open=false;root.message-search-query="";root.browsing-history=false;root.highlighted-message=0; if root.message-dialog==8 {root.close-message-info();} root.selection-control(0); if root.voice-phase>0 && root.voice-phase!=5 {root.voice-control(1);} root.attachment-menu=false; root.message-dialog=0; root.audio-control(0,3,0); root.photo-viewer-id = 0; root.request-avatars(); }
+    changed selected-id => { root.paste-generation += 1; root.message-search-open=false;root.message-search-query="";root.browsing-history=false;root.highlighted-message=0; if root.message-dialog==8 {root.close-message-info();} root.selection-control(0); if root.voice-phase>0 && root.voice-phase!=5 {root.voice-control(1);} root.attachment-menu=false; root.message-dialog=0; root.audio-control(0,3,0);root.video-control(0,3,0); root.photo-viewer-id = 0; root.request-avatars(); }
     in property <string> chat-presence;
     in property <bool> chat-online;
     out property <int> presence-chat: !root.demo-mode && root.live-chat-view
@@ -289,7 +320,7 @@ export component AppWindow inherits Window {
         && !root.settings-open && !root.minimized
         && (!root.narrow || root.show-conversation)
         && !root.new-chat-open && root.account-dialog==0
-        && root.photo-viewer-id==0 && root.message-dialog==0 && !root.attachment-modal && !root.microphone-dialog
+        && root.photo-viewer-id==0 && !root.video-expanded && root.message-dialog==0 && !root.attachment-modal && !root.microphone-dialog
         && (root.demo-mode || root.live-revision==root.live-shown-revision);
     changed history-active => {root.layout-timeline();}
     in-out property <string> draft;
@@ -298,7 +329,7 @@ export component AppWindow inherits Window {
     in-out property <string> notice;
     in-out property <int> view-revision;
     in-out property <bool> show-conversation: false;
-    changed show-conversation => { if !root.show-conversation {root.audio-control(0,3,0);} }
+    changed show-conversation => { if !root.show-conversation {root.audio-control(0,3,0);root.video-control(0,3,0);} }
     in-out property <length> timeline-y <=> timeline.content-y;
     in-out property <length> timeline-height <=> timeline.content-height;
     out property <length> timeline-width: timeline.visible-width;
@@ -320,7 +351,7 @@ export component AppWindow inherits Window {
     in property <TimelineRow> timeline-probe;
     out property <length> timeline-measured-height: measure-row.height;
     out property <length> timeline-measured-prefix: measure-row.bubble-offset;
-    out property <length> timeline-measured-body-height: root.timeline-probe.message.system-notice ? measure-notice.height : measure-bubble.height;
+    out property <length> timeline-measured-body-height: root.timeline-probe.message.call-kind > 0 ? 88px : root.timeline-probe.message.system-notice ? measure-notice.height : measure-bubble.height;
     callback layout-timeline();
     callback follow-timeline-bottom();
     changed timeline-width => { root.layout-timeline(); }
@@ -372,8 +403,19 @@ export component AppWindow inherits Window {
     }
     public function close-photo() {
         root.photo-viewer-id = 0;
+        root.reset-photo-gallery();
         root.request-photos();
         app-focus.focus();
+    }
+    public function reset-photo-gallery() {
+        root.photo-gallery-ids = [];
+        root.photo-thumbnails = [];
+        root.photo-viewer-sender = "";
+        root.photo-viewer-caption = "";
+        root.photo-viewer-date = "";
+        root.photo-viewer-counter = @tr("Photo");
+        root.photo-viewer-previous = 0;
+        root.photo-viewer-next = 0;
     }
 
     app-focus := FocusScope {
@@ -390,6 +432,7 @@ export component AppWindow inherits Window {
             if root.message-dialog!=0 {if event.text==Key.Escape {root.close-message-actions();return accept;} return reject;}
             if root.selection-active && event.text==Key.Escape {root.selection-control(0);root.focus-composer();return accept;}
             if root.selection-active && event.text==Key.Return {return accept;}
+            if root.video-expanded {if event.text==Key.Escape {root.video-expanded=false;return accept;}return reject;}
             if root.photo-viewer-id != 0 { if event.text == Key.Escape { root.close-photo(); return accept; } return reject; }
             if event.modifiers.control && event.text == "," { root.toggle-settings(); return accept; }
             if event.modifiers.control && (event.text == "b" || event.text == "B") { root.sidebar-hidden = !root.sidebar-hidden; return accept; }
@@ -402,7 +445,7 @@ export component AppWindow inherits Window {
             return reject;
         }
         FocusScope {
-            enabled: !root.new-chat-open && root.account-dialog == 0 && root.photo-viewer-id == 0 && root.message-dialog==0 && !root.attachment-modal && !root.microphone-dialog;
+            enabled: !root.new-chat-open && root.account-dialog == 0 && root.photo-viewer-id == 0 && !root.video-expanded && root.message-dialog==0 && !root.attachment-modal && !root.microphone-dialog;
             measure-row := TimelineItem {
                 visible: false;
                 measurement-only: true;
@@ -675,13 +718,18 @@ export component AppWindow inherits Window {
                                         height: 18px;
                                         max-lines: 1;
                                         wrap: no-wrap;
-                                        x: chat.muted ? 94px : 76px;
+                                        x: (chat.muted ? 94px : 76px) + (chat.call-kind > 0 ? 21px : 0px);
                                         y: 38px;
                                         width: max(0px, parent.width - self.x - 42px - ((chat.unread > 0 || chat.marked-unread) ? badge.width + 6px : 0px));
                                         text: chat.preview;
                                         color: (chat.unread > 0 || chat.marked-unread) ? Theme.secondary : Theme.dim;
                                         font-size: 13px;
                                         overflow: elide;
+                                    }
+                                    if chat.call-kind > 0: Image {
+                                        x: chat.muted ? 94px : 76px;y:39px;width:16px;height:16px;
+                                        source: chat.call-kind == 2 ? @image-url("icons/call-video.svg") : @image-url("icons/call-voice.svg");
+                                        colorize: Theme.dim;
                                     }
 
                                     badge := Rectangle {
@@ -1004,13 +1052,14 @@ export component AppWindow inherits Window {
                                     tint: root.chat-tint;
                                     selection-mode:root.selection-active;
                                     selected:root.selection-active && root.message-selected(row.message.id,root.selection-revision);
-                                    actions-enabled: !root.selection-active && root.voice-phase==0 && !root.microphone-dialog && !root.settings-open && !root.new-chat-open && root.account-dialog == 0 && root.photo-viewer-id == 0 && root.message-dialog==0;
+                                    actions-enabled: !root.selection-active && root.voice-phase==0 && !root.microphone-dialog && !root.settings-open && !root.new-chat-open && root.account-dialog == 0 && root.photo-viewer-id == 0 && !root.video-expanded && root.message-dialog==0;
                                     menu-open:root.message-dialog==3 && root.action-message==row.message.id;
                                     can-reply: (root.demo-mode || root.live-can-send) && root.voice-phase==0;
                                     viewport-top: -timeline.content-y - row.top * 1px;
                                     viewport-bottom: -timeline.content-y - row.top * 1px + timeline.visible-height;
                                     message-action(id,action,x,y) => {root.message-action(id,action,x,y);}
                                     audio-control(id,action,value) => {root.audio-control(id,action,value);}
+                                    video-control(id,action,value) => {root.video-control(id,action,value);}
                                     activate(id,index) => { if index == -7 {root.navigate-message(id,true);} else if index == -5 { root.activate-photo(id); } else { root.activate-message(id,index); } }
                                 }
                             }
@@ -1022,9 +1071,11 @@ export component AppWindow inherits Window {
                                 voice-control(action)=>{root.voice-control(action);}
                                 reply-id:root.reply-id;reply-sender:root.reply-sender;reply-text:root.reply-text;
                                 cancel-reply=>{if root.voice-phase>0 {root.voice-control(6);}root.cancel-reply();}
-                                attachment-enabled:root.attachment-phase==0;
+                                attachment-enabled:root.attachment-phase==0 && !root.clipboard-busy;
                                 attach(x,y)=>{root.attachment-x=x;root.attachment-y=y;root.attachment-menu=true;}
                                 emoji(x,y)=>{root.open-composer-emoji(x,y);}
+                                custom-paste:root.clipboard-enabled;
+                                paste(anchor,cursor)=>{root.paste-composer(anchor,cursor);}
                                 insert-emoji-text(value,anchor,cursor)=>{root.insert-composer-emoji(value,anchor,cursor);}
                                 draft <=> root.draft;
                                 enter-sends: root.enter-sends;
@@ -1220,11 +1271,44 @@ export component AppWindow inherits Window {
                 root.account-dialog = 0;
             }
         }
+        if root.video-expanded: video-viewer := VideoViewer {
+            message-id:VideoPlayback.id;
+            closed=>{root.video-expanded=false;root.focus-composer();}
+            control(action,value)=>{root.video-control(VideoPlayback.id,action,value);}
+        }
         if root.photo-viewer-id > 0: photo-viewer := PhotoViewer {
+            photo-id: root.photo-viewer-id;
+            sender: root.photo-viewer-sender; date: root.photo-viewer-date;
+            caption: root.photo-viewer-caption; counter: root.photo-viewer-counter;
+            previous-id: root.photo-viewer-previous; next-id: root.photo-viewer-next;
+            thumbnails: root.photo-thumbnails;
+            navigate(id) => { root.navigate-photo(id); }
             picture: root.photo-viewer-image; status: root.photo-viewer-status;
             ready: root.photo-viewer-ready;
+            copy => { root.copy-photo(root.photo-viewer-id); }
             closed => { root.close-photo(); }
             retry => { root.activate-photo(root.photo-viewer-id); }
+        }
+        file-drop := DropArea {
+            x: root.conversation-left;
+            width: parent.width - self.x;
+            height: parent.height;
+            can-drop(event) => {
+                root.can-import() && !root.clipboard-busy && root.accepts-drop(event.data)
+                    ? DragAction.copy : DragAction.none
+            }
+            dropped(event) => {
+                if root.can-import() && !root.clipboard-busy && root.accepts-drop(event.data) {
+                    root.drop-files(event.data);
+                    return DragAction.copy;
+                }
+                return DragAction.none;
+            }
+        }
+        if root.drop-hover && root.can-import(): Rectangle {
+            x:root.conversation-left + 12px;y:70px;width:parent.width - self.x - 12px;height:parent.height - self.y - 12px;
+            background:Theme.surface.transparentize(12%);border-color:Theme.accent;border-width:2px;border-radius:12px;
+            Text {text:@tr("Drop photos or files to review before sending");color:Theme.accent;font-size:20px;wrap:word-wrap;horizontal-alignment:center;vertical-alignment:center;}
         }
         if root.attachment-menu: AttachmentMenu {
             anchor-x:root.attachment-x;anchor-y:root.attachment-y;

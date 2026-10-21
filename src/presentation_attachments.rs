@@ -18,10 +18,12 @@ pub fn attach(
 ) {
     let (tx, rx) = mpsc::channel(32);
     bind(ui, tx.clone());
+    let clipboard = crate::presentation_clipboard::attach(ui, archives.clone(), tx.clone(), demo);
     let (updates, snapshots) = watch::channel(Snapshot::default());
     let weak = ui.as_weak();
     (tx, async move {
         tokio::join!(
+            clipboard,
             attachments::run(
                 archives,
                 sources,
@@ -39,7 +41,8 @@ fn bind(ui: &AppWindow, tx: mpsc::Sender<Command>) {
     let picks = tx.clone();
     ui.on_pick_attachments(move |kind| {
         let Some(ui) = weak.upgrade() else { return };
-        if ui.get_voice_phase() > 0
+        if ui.get_clipboard_busy()
+            || ui.get_voice_phase() > 0
             || ui.get_selected_id() <= 0
             || ui.get_attachment_phase() != 0
             || (!ui.get_demo_mode()

@@ -237,7 +237,7 @@ async fn schema_fifteen_upgrade_keeps_data_and_requests_a_snapshot_after_an_uncl
     db.draft(chat, "Preserved draft".into()).await.unwrap();
     let files = db.0._files.clone();
     db.blocking(|c| {
-        c.execute_batch("DROP TABLE chat_settings; PRAGMA user_version=15;")?;
+        c.execute_batch("DROP TABLE chat_settings; DROP INDEX messages_album; ALTER TABLE messages DROP COLUMN album_index; ALTER TABLE messages DROP COLUMN album; PRAGMA user_version=15;")?;
         Ok(())
     })
     .unwrap();

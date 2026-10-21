@@ -1,0 +1,116 @@
+{
+  "date": "2026-10-21",
+  "slint_base": "a5a124bf80961966e875dc91d8d04271ec5885d8",
+  "patch": "patches/slint-skia-opacity-bounds.patch",
+  "environment": "Private Xvfb; Mesa OpenGL without DRI3 acceleration. Optimized builds; no compiler during measurements. Frame callbacks force full redraws.",
+  "limits": "Synthetic application/render CPU and timer timings, not GPU completion, hardware or compositor presentation. Resize includes abrupt size resets.",
+  "runs": {
+    "paired-before-1-gl": [
+      "UI benchmark album-navigation: frames=73, render CPU p50=17.87ms p95=25.81ms; frame interval p95=141.91ms; timer lateness p95=12.85ms max=81.55ms; snapshot apply count=66 p95=1.97ms; render CPU max=94.56ms",
+      "UI benchmark album-resize: frames=168, render CPU p50=10.68ms p95=16.87ms; frame interval p95=22.69ms; timer lateness p95=13.56ms max=168.27ms; snapshot apply count=1 p95=1.01ms; render CPU max=174.45ms",
+      "Timeline album-resize: layout calls=166, p95=0.36ms; measured rows=81",
+      "Album selection-to-UI-ready: samples=19, p50=104.46ms p95=155.64ms max=248.45ms"
+    ],
+    "paired-after-1-gl": [
+      "UI benchmark album-navigation: frames=75, render CPU p50=11.39ms p95=18.97ms; frame interval p95=142.68ms; timer lateness p95=1.96ms max=72.50ms; snapshot apply count=73 p95=2.04ms; render CPU max=87.55ms",
+      "UI benchmark album-resize: frames=181, render CPU p50=7.72ms p95=13.99ms; frame interval p95=18.36ms; timer lateness p95=3.26ms max=119.66ms; snapshot apply count=1 p95=1.07ms; render CPU max=131.56ms",
+      "Timeline album-resize: layout calls=178, p95=0.43ms; measured rows=87",
+      "Album selection-to-UI-ready: samples=19, p50=108.58ms p95=165.76ms max=200.84ms"
+    ],
+    "paired-after-2-gl": [
+      "UI benchmark album-navigation: frames=79, render CPU p50=12.43ms p95=20.14ms; frame interval p95=141.52ms; timer lateness p95=3.26ms max=75.85ms; snapshot apply count=72 p95=2.16ms; render CPU max=90.88ms",
+      "UI benchmark album-resize: frames=181, render CPU p50=8.45ms p95=13.34ms; frame interval p95=18.76ms; timer lateness p95=4.49ms max=121.75ms; snapshot apply count=1 p95=1.07ms; render CPU max=133.00ms",
+      "Timeline album-resize: layout calls=178, p95=0.49ms; measured rows=87",
+      "Album selection-to-UI-ready: samples=19, p50=115.54ms p95=158.73ms max=187.63ms"
+    ],
+    "paired-before-2-gl": [
+      "UI benchmark album-navigation: frames=74, render CPU p50=17.83ms p95=26.17ms; frame interval p95=127.60ms; timer lateness p95=12.01ms max=82.88ms; snapshot apply count=70 p95=1.96ms; render CPU max=96.86ms",
+      "UI benchmark album-resize: frames=172, render CPU p50=10.77ms p95=16.61ms; frame interval p95=20.56ms; timer lateness p95=15.22ms max=161.20ms; snapshot apply count=1 p95=1.53ms; render CPU max=170.79ms",
+      "Timeline album-resize: layout calls=170, p95=0.38ms; measured rows=83",
+      "Album selection-to-UI-ready: samples=19, p50=115.00ms p95=164.50ms max=239.65ms"
+    ],
+    "paired-before-cpu": [
+      "UI benchmark album-navigation: frames=0, render CPU p50=0.00ms p95=0.00ms; frame interval p95=0.00ms; timer lateness p95=25.76ms max=43.41ms; snapshot apply count=65 p95=3.16ms; render CPU max=0.00ms",
+      "UI benchmark album-resize: frames=0, render CPU p50=0.00ms p95=0.00ms; frame interval p95=0.00ms; timer lateness p95=6.82ms max=12.40ms; snapshot apply count=2 p95=1.09ms; render CPU max=0.00ms",
+      "Timeline album-resize: layout calls=170, p95=0.28ms; measured rows=82",
+      "Album selection-to-UI-ready: samples=19, p50=114.48ms p95=158.25ms max=160.72ms"
+    ],
+    "paired-after-cpu": [
+      "UI benchmark album-navigation: frames=0, render CPU p50=0.00ms p95=0.00ms; frame interval p95=0.00ms; timer lateness p95=20.93ms max=37.97ms; snapshot apply count=75 p95=3.08ms; render CPU max=0.00ms",
+      "UI benchmark album-resize: frames=0, render CPU p50=0.00ms p95=0.00ms; frame interval p95=0.00ms; timer lateness p95=2.34ms max=16.25ms; snapshot apply count=1 p95=4.16ms; render CPU max=0.00ms",
+      "Timeline album-resize: layout calls=180, p95=0.44ms; measured rows=87",
+      "Album selection-to-UI-ready: samples=19, p50=115.36ms p95=148.58ms max=155.02ms"
+    ],
+    "opacity-after-gl": [
+      "UI benchmark album-idle: frames=1, render CPU p50=7.36ms p95=7.36ms; frame interval p95=68.63ms; timer lateness p95=0.07ms max=0.27ms; snapshot apply count=0 p95=0.00ms; render CPU max=7.36ms",
+      "UI benchmark album-navigation: frames=74, render CPU p50=13.38ms p95=58.38ms; frame interval p95=154.56ms; timer lateness p95=35.45ms max=75.07ms; snapshot apply count=68 p95=2.24ms; render CPU max=90.03ms",
+      "UI benchmark album-resize: frames=45, render CPU p50=44.23ms p95=97.42ms; frame interval p95=106.85ms; timer lateness p95=91.42ms max=249.00ms; snapshot apply count=2 p95=1.21ms; render CPU max=255.14ms",
+      "UI benchmark album-resize-no-strip: frames=82, render CPU p50=17.49ms p95=49.96ms; frame interval p95=60.71ms; timer lateness p95=49.99ms max=63.62ms; snapshot apply count=0 p95=0.00ms; render CPU max=66.45ms",
+      "UI benchmark album-resize-no-image: frames=79, render CPU p50=19.62ms p95=34.81ms; frame interval p95=50.87ms; timer lateness p95=44.30ms max=65.89ms; snapshot apply count=0 p95=0.00ms; render CPU max=69.93ms",
+      "UI benchmark album-resize-closed: frames=93, render CPU p50=16.55ms p95=27.74ms; frame interval p95=44.75ms; timer lateness p95=32.78ms max=51.88ms; snapshot apply count=1 p95=0.23ms; render CPU max=40.47ms",
+      "UI benchmark album-closed: frames=2, render CPU p50=19.12ms p95=19.12ms; frame interval p95=28.92ms; timer lateness p95=0.37ms max=16.50ms; snapshot apply count=0 p95=0.00ms; render CPU max=19.12ms"
+    ],
+    "final-settled-gl": [
+      "UI benchmark album-idle: frames=1, render CPU p50=5.95ms p95=5.95ms; frame interval p95=62.97ms; timer lateness p95=0.06ms max=0.34ms; snapshot apply count=0 p95=0.00ms; render CPU max=5.95ms",
+      "UI benchmark album-navigation: frames=77, render CPU p50=11.81ms p95=19.27ms; frame interval p95=141.82ms; timer lateness p95=4.26ms max=59.55ms; snapshot apply count=78 p95=1.46ms; render CPU max=70.77ms",
+      "UI benchmark album-resize: frames=179, render CPU p50=8.41ms p95=13.55ms; frame interval p95=18.44ms; timer lateness p95=6.16ms max=118.96ms; snapshot apply count=1 p95=1.02ms; render CPU max=129.59ms",
+      "UI benchmark album-resize-settled: frames=184, render CPU p50=8.25ms p95=9.96ms; frame interval p95=18.61ms; timer lateness p95=0.75ms max=14.65ms; snapshot apply count=0 p95=0.00ms; render CPU max=11.37ms",
+      "Timeline album-resize-settled: layout calls=182, p95=0.58ms; measured rows=88",
+      "UI benchmark album-resize-no-strip: frames=186, render CPU p50=5.17ms p95=7.96ms; frame interval p95=18.29ms; timer lateness p95=0.63ms max=4.88ms; snapshot apply count=0 p95=0.00ms; render CPU max=9.40ms",
+      "UI benchmark album-resize-no-image: frames=186, render CPU p50=5.15ms p95=7.65ms; frame interval p95=18.19ms; timer lateness p95=0.70ms max=18.36ms; snapshot apply count=0 p95=0.00ms; render CPU max=31.78ms",
+      "UI benchmark album-resize-closed: frames=188, render CPU p50=4.59ms p95=6.87ms; frame interval p95=18.29ms; timer lateness p95=0.76ms max=1.00ms; snapshot apply count=1 p95=0.17ms; render CPU max=7.26ms",
+      "UI benchmark album-closed: frames=0, render CPU p50=0.00ms p95=0.00ms; frame interval p95=0.00ms; timer lateness p95=0.07ms max=0.09ms; snapshot apply count=0 p95=0.00ms; render CPU max=0.00ms"
+    ],
+    "final-settled-cpu": [
+      "UI benchmark album-idle: frames=0, render CPU p50=0.00ms p95=0.00ms; frame interval p95=0.00ms; timer lateness p95=0.07ms max=0.82ms; snapshot apply count=0 p95=0.00ms; render CPU max=0.00ms",
+      "UI benchmark album-navigation: frames=0, render CPU p50=0.00ms p95=0.00ms; frame interval p95=0.00ms; timer lateness p95=23.67ms max=99.61ms; snapshot apply count=68 p95=1.80ms; render CPU max=0.00ms",
+      "UI benchmark album-resize: frames=0, render CPU p50=0.00ms p95=0.00ms; frame interval p95=0.00ms; timer lateness p95=39.50ms max=64.76ms; snapshot apply count=2 p95=1.23ms; render CPU max=0.00ms",
+      "UI benchmark album-resize-settled: frames=0, render CPU p50=0.00ms p95=0.00ms; frame interval p95=0.00ms; timer lateness p95=50.52ms max=85.49ms; snapshot apply count=0 p95=0.00ms; render CPU max=0.00ms",
+      "Timeline album-resize-settled: layout calls=113, p95=0.49ms; measured rows=55",
+      "UI benchmark album-resize-no-strip: frames=0, render CPU p50=0.00ms p95=0.00ms; frame interval p95=0.00ms; timer lateness p95=51.77ms max=71.29ms; snapshot apply count=0 p95=0.00ms; render CPU max=0.00ms",
+      "UI benchmark album-resize-no-image: frames=0, render CPU p50=0.00ms p95=0.00ms; frame interval p95=0.00ms; timer lateness p95=45.54ms max=71.07ms; snapshot apply count=0 p95=0.00ms; render CPU max=0.00ms",
+      "UI benchmark album-resize-closed: frames=0, render CPU p50=0.00ms p95=0.00ms; frame interval p95=0.00ms; timer lateness p95=46.00ms max=59.17ms; snapshot apply count=1 p95=0.21ms; render CPU max=0.00ms",
+      "UI benchmark album-closed: frames=0, render CPU p50=0.00ms p95=0.00ms; frame interval p95=0.00ms; timer lateness p95=0.48ms max=2.24ms; snapshot apply count=0 p95=0.00ms; render CPU max=0.00ms"
+    ],
+    "final-cpu-repeat": [
+      "UI benchmark album-idle: frames=0, render CPU p50=0.00ms p95=0.00ms; frame interval p95=0.00ms; timer lateness p95=0.06ms max=0.08ms; snapshot apply count=0 p95=0.00ms; render CPU max=0.00ms",
+      "UI benchmark album-navigation: frames=0, render CPU p50=0.00ms p95=0.00ms; frame interval p95=0.00ms; timer lateness p95=11.80ms max=38.60ms; snapshot apply count=75 p95=2.24ms; render CPU max=0.00ms",
+      "UI benchmark album-resize: frames=0, render CPU p50=0.00ms p95=0.00ms; frame interval p95=0.00ms; timer lateness p95=2.28ms max=7.03ms; snapshot apply count=2 p95=1.34ms; render CPU max=0.00ms",
+      "UI benchmark album-resize-settled: frames=0, render CPU p50=0.00ms p95=0.00ms; frame interval p95=0.00ms; timer lateness p95=1.97ms max=9.56ms; snapshot apply count=0 p95=0.00ms; render CPU max=0.00ms",
+      "Timeline album-resize-settled: layout calls=182, p95=0.46ms; measured rows=88",
+      "UI benchmark album-resize-no-strip: frames=0, render CPU p50=0.00ms p95=0.00ms; frame interval p95=0.00ms; timer lateness p95=1.68ms max=17.53ms; snapshot apply count=0 p95=0.00ms; render CPU max=0.00ms",
+      "UI benchmark album-resize-no-image: frames=0, render CPU p50=0.00ms p95=0.00ms; frame interval p95=0.00ms; timer lateness p95=4.62ms max=17.07ms; snapshot apply count=0 p95=0.00ms; render CPU max=0.00ms",
+      "UI benchmark album-resize-closed: frames=0, render CPU p50=0.00ms p95=0.00ms; frame interval p95=0.00ms; timer lateness p95=0.75ms max=1.31ms; snapshot apply count=1 p95=0.14ms; render CPU max=0.00ms",
+      "UI benchmark album-closed: frames=0, render CPU p50=0.00ms p95=0.00ms; frame interval p95=0.00ms; timer lateness p95=0.07ms max=0.08ms; snapshot apply count=0 p95=0.00ms; render CPU max=0.00ms"
+    ],
+    "scroll-before": [
+      "UI benchmark scroll-10000: frames=187, render CPU p50=4.91ms p95=10.63ms; frame interval p95=16.84ms; timer lateness p95=0.82ms max=1.37ms; snapshot apply count=0 p95=0.00ms; render CPU max=12.94ms",
+      "UI benchmark resize-10000: frames=269, render CPU p50=5.78ms p95=9.41ms; frame interval p95=16.93ms; timer lateness p95=12.26ms max=17.25ms; snapshot apply count=0 p95=0.00ms; render CPU max=15.75ms"
+    ],
+    "scroll-after": [
+      "UI benchmark scroll-10000: frames=187, render CPU p50=5.49ms p95=11.04ms; frame interval p95=16.96ms; timer lateness p95=0.74ms max=1.72ms; snapshot apply count=0 p95=0.00ms; render CPU max=13.36ms",
+      "UI benchmark resize-10000: frames=265, render CPU p50=5.91ms p95=10.19ms; frame interval p95=16.78ms; timer lateness p95=12.56ms max=18.83ms; snapshot apply count=0 p95=0.00ms; render CPU max=14.62ms"
+    ]
+  },
+  "pixels": {
+    "light_opengl_1200x900": "identical",
+    "dark_software_520x700": "maximum 1/255 channel difference; none above 0.5% fuzz"
+  },
+  "validation": {
+    "default": "271 passed, 7 opt-in ignored",
+    "no_default_features": "253 passed, 7 opt-in ignored",
+    "renderer_cpu": "2 passed, including overflow, rotation, clipping and 1x/2x assertions",
+    "test_build": "Release dependencies; Heya test harness opt-level=0. Performance binaries use the normal optimized release profile.",
+    "clippy_default": "passed, all targets, warnings denied",
+    "patch_reproduction": "All pinned renderer Rust sources reproduce exactly from the source pin and recorded patch queue",
+    "upstream_draft": "https://github.com/slint-ui/slint/pull/14307",
+    "clippy_no_default_features": "passed, all targets, warnings denied",
+    "release_build": "passed; normal optimized build",
+    "normal_instance": "Installed matching optimized binary and reopened normally; saved session reached Connected, no session conflict."
+  },
+  "variability": "The first patched OpenGL run and the final software run were slower across control phases too. Retained as variability evidence; compared alternating runs separately.",
+  "binaries": {
+    "before": "eb1cee746e68c2d32d28fcca18a99434ee556e1d546af046e324e6507a7955a5",
+    "patched": "cd56c427a847ec004d65bf0fefb3632bcb2aa5d155431c375b2e2c1866000f1f"
+  }
+}

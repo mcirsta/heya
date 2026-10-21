@@ -71,7 +71,7 @@ async fn worker_is_lazy_reuses_positive_and_negative_results_and_stops_in_flight
         .unwrap();
     let own = db.create_chat(PN.into()).await.unwrap();
     let other = db.create_chat("555@g.us".into()).await.unwrap();
-    let (demand, rx) = watch::channel(vec![0, own, other]);
+    let (demand, rx) = watch::channel(vec![0.into(), own.into(), other.into()]);
     let (online, on) = watch::channel(false);
     let (stop, stopped) = watch::channel(false);
     let (calls, mut requests) = mpsc::unbounded_channel();
@@ -89,13 +89,16 @@ async fn worker_is_lazy_reuses_positive_and_negative_results_and_stops_in_flight
     assert_eq!(jid, "555@g.us", "self aliases must share one fetch");
     assert!(reply.send(Ok(Outcome::Absent)).is_ok());
     // Updating demand to the same chats must not retry positive or absent photos.
-    demand.send_replace(vec![other, own, 0]);
+    demand.send_replace(vec![other.into(), own.into(), 0.into()]);
     assert!(
         timeout(Duration::from_millis(250), requests.recv())
             .await
             .is_err()
     );
-    let entries = db.avatar_entries(vec![0, own, other], true).await.unwrap();
+    let entries = db
+        .avatar_entries(vec![0.into(), own.into(), other.into()], true)
+        .await
+        .unwrap();
     assert!(entries[0].has_photo && entries[1].has_photo);
     assert!(!entries[2].has_photo && entries[2].retry_at > chrono::Utc::now().timestamp());
     db.invalidate_avatar(PN.into(), false, 100).await.unwrap();
@@ -119,12 +122,12 @@ async fn rate_limit_stops_the_whole_queue_and_transient_failure_keeps_cached_pho
     let other = db.create_chat("555@g.us".into()).await.unwrap();
     let waiting = db.create_chat("556@g.us".into()).await.unwrap();
     let cached = db
-        .avatar_entries(vec![chat], false)
+        .avatar_entries(vec![chat.into()], false)
         .await
         .unwrap()
         .remove(0);
     db.save_avatar(cached, picture(15), 0).await.unwrap();
-    let (_demand, rx) = watch::channel(vec![chat, other, waiting]);
+    let (_demand, rx) = watch::channel(vec![chat.into(), other.into(), waiting.into()]);
     let (_online, on) = watch::channel(true);
     let (stop, stopped) = watch::channel(false);
     let (calls, mut requests) = mpsc::unbounded_channel();
@@ -142,7 +145,10 @@ async fn rate_limit_stops_the_whole_queue_and_transient_failure_keeps_cached_pho
             .await
             .is_err()
     );
-    let entries = db.avatar_entries(vec![chat, other], true).await.unwrap();
+    let entries = db
+        .avatar_entries(vec![chat.into(), other.into()], true)
+        .await
+        .unwrap();
     assert_eq!(entries[0].photo.as_ref().unwrap().pixels[0], 15);
     assert!(entries[1].retry_at > chrono::Utc::now().timestamp() + 90);
     stop.send_replace(true);
@@ -155,11 +161,15 @@ async fn offline_snapshots_reuse_pixels_remove_private_photos_and_bound_residenc
     let first = db.create_chat(PN.into()).await.unwrap();
     let second = db.create_chat("555@g.us".into()).await.unwrap();
     for id in [first, second] {
-        let entry = db.avatar_entries(vec![id], false).await.unwrap().remove(0);
+        let entry = db
+            .avatar_entries(vec![id.into()], false)
+            .await
+            .unwrap()
+            .remove(0);
         db.save_avatar(entry, picture(id as u8), 0).await.unwrap();
     }
     let (archives, rx) = watch::channel(None);
-    let (demand, requests) = watch::channel(vec![first]);
+    let (demand, requests) = watch::channel(vec![first.into()]);
     let (updates, mut snapshots) = watch::channel(Snapshot::default());
     let task = tokio::spawn(present(rx, requests, updates));
     archives.send_replace(Some(db.clone()));
@@ -175,19 +185,22 @@ async fn offline_snapshots_reuse_pixels_remove_private_photos_and_bound_residenc
             .await
             .is_err()
     );
-    demand.send_replace(vec![first, second]);
+    demand.send_replace(vec![first.into(), second.into()]);
     timeout(Duration::from_secs(2), snapshots.changed())
         .await
         .unwrap()
         .unwrap();
-    assert!(Arc::ptr_eq(&initial[&first], &snapshots.borrow()[&first]));
-    demand.send_replace(vec![second]);
+    assert!(Arc::ptr_eq(
+        &initial[&first.into()],
+        &snapshots.borrow()[&first.into()]
+    ));
+    demand.send_replace(vec![second.into()]);
     timeout(Duration::from_secs(2), snapshots.changed())
         .await
         .unwrap()
         .unwrap();
     assert_eq!(snapshots.borrow().len(), 1);
-    assert!(!snapshots.borrow().contains_key(&first));
+    assert!(!snapshots.borrow().contains_key(&first.into()));
     db.invalidate_avatar("555@g.us".into(), true, 100)
         .await
         .unwrap();

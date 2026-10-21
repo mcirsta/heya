@@ -3,7 +3,7 @@
 use crate::AppWindow;
 use slint::{
     ComponentHandle, LogicalPosition, Window,
-    winit_030::{EventResult, WinitWindowAccessor, winit::event},
+    winit_031::{EventResult, WinitWindowAccessor, winit::event},
 };
 
 // Same logical distance as the pinned ZapFast/fastframe reference.
@@ -25,17 +25,25 @@ pub fn bind(ui: &AppWindow) {
                     ui.set_read_window_occluded(*occluded);
                 }
             }
-            event::WindowEvent::CursorMoved { position, .. } => pointer = Some(*position),
-            event::WindowEvent::CursorLeft { .. } => {
-                pointer = None;
-            }
-            event::WindowEvent::MouseInput {
-                state,
-                button: event::MouseButton::Right,
+            event::WindowEvent::PointerMoved {
+                position,
+                source: event::PointerSource::Mouse,
+                ..
+            } => pointer = Some(*position),
+            event::WindowEvent::PointerLeft {
+                kind: event::PointerKind::Mouse,
                 ..
             } => {
-                if let (Some(p), Some(ui)) = (pointer, weak.upgrade()) {
-                    let p = p.to_logical::<f32>(f64::from(window.scale_factor()));
+                pointer = None;
+            }
+            event::WindowEvent::PointerButton {
+                state,
+                position,
+                button: event::ButtonSource::Mouse(event::MouseButton::Right),
+                ..
+            } => {
+                if let Some(ui) = weak.upgrade() {
+                    let p = position.to_logical::<f32>(f64::from(window.scale_factor()));
                     if context_pointer(
                         &ui,
                         LogicalPosition::new(p.x, p.y),
@@ -89,11 +97,11 @@ pub(crate) fn context_pointer(
 fn wheel_delta(delta: &event::MouseScrollDelta) -> Option<(f32, f32)> {
     match delta {
         event::MouseScrollDelta::LineDelta(x, y) => Some((x * WHEEL_STEP, y * WHEEL_STEP)),
-        event::MouseScrollDelta::PixelDelta(_) => None,
+        _ => None,
     }
 }
 
-// Slint 1.18.1's public PointerScrolled dispatch hardcodes Cancelled, which
+// Slint's public PointerScrolled dispatch hardcodes Cancelled, which
 // bypasses Flickable's 180 ms wheel animation. Keep this version-specific bridge
 // here until the public event can express phases or a wheel-step setting exists.
 // This is the same event path as its winit backend, with only the distance changed.

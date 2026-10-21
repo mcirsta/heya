@@ -4,7 +4,7 @@ use std::{collections::BTreeMap, io::Cursor, sync::Arc, time::Duration};
 use tokio::sync::watch;
 
 pub const EDGE: u32 = 128;
-pub const MAX_DEMAND: usize = 66; // visible rows + selected chat + account
+pub const MAX_DEMAND: usize = 66; // account, selected chat, visible senders/sidebar
 pub const MAX_DOWNLOAD: usize = 2 * 1024 * 1024;
 
 pub struct Thumbnail {
@@ -17,7 +17,17 @@ impl Thumbnail {
         })
     }
 }
-pub type Snapshot = Arc<BTreeMap<i32, Arc<Thumbnail>>>;
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Target {
+    Chat(i32),
+    Participant(String),
+}
+impl From<i32> for Target {
+    fn from(chat: i32) -> Self {
+        Self::Chat(chat)
+    }
+}
+pub type Snapshot = Arc<BTreeMap<Target, Arc<Thumbnail>>>;
 
 pub enum Outcome {
     Photo { id: String, photo: Thumbnail },
@@ -70,7 +80,7 @@ pub fn decode(bytes: &[u8]) -> Option<Thumbnail> {
 pub async fn fetch_worker(
     archive: Archive,
     source: impl Source,
-    mut demand: watch::Receiver<Vec<i32>>,
+    mut demand: watch::Receiver<Vec<Target>>,
     mut online: watch::Receiver<bool>,
     mut stop: watch::Receiver<bool>,
 ) -> archive::Result<()> {
@@ -129,13 +139,13 @@ pub async fn fetch_worker(
 /// unchanged images retain identity so Slint does not upload textures repeatedly.
 pub async fn present(
     mut archives: watch::Receiver<Option<Archive>>,
-    mut demand: watch::Receiver<Vec<i32>>,
+    mut demand: watch::Receiver<Vec<Target>>,
     updates: watch::Sender<Snapshot>,
 ) {
     let mut archive: Option<Archive> = None;
     let mut photos = None;
     let mut chats = None;
-    let mut known: BTreeMap<i32, (String, i64, Arc<Thumbnail>)> = BTreeMap::new();
+    let mut known: BTreeMap<Target, (String, i64, Arc<Thumbnail>)> = BTreeMap::new();
     let mut archives_open = true;
     loop {
         tokio::select! {
@@ -170,18 +180,20 @@ pub async fn present(
             .iter()
             .filter(|entry| {
                 entry.has_photo
-                    && !known.get(&entry.chat).is_some_and(|(jid, generation, _)| {
-                        *jid == entry.jid && *generation == entry.generation
-                    })
+                    && !known
+                        .get(&entry.target)
+                        .is_some_and(|(jid, generation, _)| {
+                            *jid == entry.jid && *generation == entry.generation
+                        })
             })
-            .map(|entry| entry.chat)
+            .map(|entry| entry.target.clone())
             .collect();
         let Ok(loaded) = db.avatar_entries(needed, true).await else {
             continue;
         };
         let mut loaded: BTreeMap<_, _> = loaded
             .into_iter()
-            .map(|entry| (entry.chat, entry))
+            .map(|entry| (entry.target.clone(), entry))
             .collect();
         let mut next = BTreeMap::new();
         let mut snapshot = BTreeMap::new();
@@ -190,12 +202,12 @@ pub async fn present(
                 continue;
             }
             let photo = known
-                .get(&entry.chat)
+                .get(&entry.target)
                 .filter(|(jid, generation, _)| *jid == entry.jid && *generation == entry.generation)
                 .map(|(_, _, photo)| photo.clone())
                 .or_else(|| {
                     loaded
-                        .remove(&entry.chat)
+                        .remove(&entry.target)
                         .filter(|loaded| {
                             loaded.generation == entry.generation && loaded.jid == entry.jid
                         })
@@ -204,8 +216,8 @@ pub async fn present(
             let Some(photo) = photo else {
                 continue;
             };
-            snapshot.insert(entry.chat, photo.clone());
-            next.insert(entry.chat, (entry.jid, entry.generation, photo));
+            snapshot.insert(entry.target.clone(), photo.clone());
+            next.insert(entry.target, (entry.jid, entry.generation, photo));
         }
         known = next;
         updates.send_if_modified(|previous| {

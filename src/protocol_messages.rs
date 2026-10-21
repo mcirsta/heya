@@ -1,7 +1,13 @@
 //! Protocol-specific ingestion and receipt mapping. SDK types stay in this adapter.
 #[cfg(test)]
+#[path = "protocol_album_tests.rs"]
+mod album_tests;
+#[cfg(test)]
 #[path = "protocol_business_archive_tests.rs"]
 mod business_tests;
+#[cfg(test)]
+#[path = "protocol_call_tests.rs"]
+mod call_tests;
 #[cfg(test)]
 #[path = "message_content_tests.rs"]
 mod content_tests;
@@ -280,7 +286,9 @@ fn record(
     } else if let Some(protocol) = message.protocol_message.as_option() {
         visible = false;
         change = mutation(chat, sender, outgoing, timestamp, protocol);
-    } else if message.reaction_message.is_set() || message.sender_key_distribution_message.is_set()
+    } else if message.reaction_message.is_set()
+        || message.sender_key_distribution_message.is_set()
+        || message.album_message.is_set()
     {
         visible = false;
     } else if message.image_message.is_set() {
@@ -309,6 +317,7 @@ fn record(
         sender_name: name,
         text,
         content,
+        album: crate::protocol_content::album(original),
         thumbnail,
         raw: if view_once || change.is_some() {
             Vec::new()
@@ -337,15 +346,46 @@ pub fn repair_text(archive: &Archive) -> archive::Result<()> {
         )?;
         change.text.is_none().then_some(change)
     })?;
-    archive.repair_unsupported_text(1, |raw| {
+    archive.repair_unsupported_messages(4, |raw| {
         let message = codec::message_decode(raw).ok()?;
-        crate::protocol_business::text(&message)
+        if !message.is_view_once() && message.get_base_message().album_message.is_set() {
+            Some((String::new(), false))
+        } else if !message.is_view_once() && message.get_base_message().image_message.is_set() {
+            Some((
+                format!(
+                    "[Photo] {}",
+                    message
+                        .get_base_message()
+                        .image_message
+                        .caption
+                        .as_deref()
+                        .unwrap_or("")
+                ),
+                true,
+            ))
+        } else if !message.is_view_once() && message.get_base_message().video_message.is_set() {
+            Some((
+                format!(
+                    "[Video] {}",
+                    message
+                        .get_base_message()
+                        .video_message
+                        .caption
+                        .as_deref()
+                        .unwrap_or("")
+                ),
+                true,
+            ))
+        } else {
+            crate::protocol_business::text(&message).map(|text| (text, true))
+        }
     })?;
     archive.repair_message_content(|raw| {
         let message = codec::message_decode(raw).ok()?;
         let (_, content, thumbnail) = crate::protocol_content::extract(&message);
         (content != Default::default()).then_some((content, thumbnail))
-    })
+    })?;
+    archive.repair_albums(|raw| crate::protocol_content::album(&codec::message_decode(raw).ok()?))
 }
 
 pub struct MessageEvents {
@@ -362,6 +402,8 @@ impl EventHandler for MessageEvents {
             EventKind::SelfPushNameUpdated,
             EventKind::PictureUpdate,
             EventKind::DeleteMessageForMeUpdate,
+            EventKind::MissedCall,
+            EventKind::CallEndedElsewhere,
         ])
     }
     fn handle_event(&self, event: Arc<Event>) {
@@ -376,6 +418,19 @@ impl EventHandler for MessageEvents {
 
 pub async fn event(archive: &Archive, client: &Client, event: Arc<Event>) -> archive::Result<()> {
     match event.as_ref() {
+        Event::MissedCall(_) | Event::CallEndedElsewhere(_) => {
+            if let Some(row) = crate::protocol_calls::signal(&event) {
+                if let Ok(jid) = row.chat.parse::<Jid>() {
+                    remember_alias(client, archive, &jid).await?;
+                }
+                archive
+                    .ingest(Batch {
+                        messages: vec![row],
+                        ..Default::default()
+                    })
+                    .await?;
+            }
+        }
         Event::PictureUpdate(update) => {
             remember_alias(client, archive, &update.jid).await?;
             archive
@@ -704,6 +759,22 @@ fn import_chunk(
         }
     }
     archive.ingest_blocking(batch)?;
+    let own = crate::protocol_calls::account(archive)?;
+    let mut batch = Batch::default();
+    for log in remainder.call_log_records {
+        if stop.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        if let Some(call) = crate::protocol_calls::history(&log, &own) {
+            batch.messages.push(call);
+        }
+        if batch.messages.len() == 100 {
+            archive.ingest_blocking(std::mem::take(&mut batch))?;
+        }
+    }
+    if !batch.messages.is_empty() {
+        archive.ingest_blocking(batch)?;
+    }
     archive.finish_history(id, index, pages)
 }
 

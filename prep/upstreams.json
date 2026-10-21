@@ -21,6 +21,14 @@
           "vendored_path": "vendor/wacore",
           "status": "local, not submitted",
           "reason": "Document thumbnail media crypto context missing from MediaType"
+        },
+        {
+          "path": "patches/album-child.patch",
+          "sha256": "e1d83cc97eb575066b26e6d61a061e8404d5f94abdc70fccbd5e95814a27957d",
+          "crate": "wacore",
+          "vendored_path": "vendor/wacore",
+          "status": "local, not submitted",
+          "reason": "Associated-child album wrappers are not unwrapped by the public message/media helpers, including view-once detection"
         }
       ]
     },
@@ -33,20 +41,29 @@
     },
     "slint": {
       "repository": "https://github.com/slint-ui/slint",
-      "revision": "372cf0ee5577c3dfec309a45e7b778ba4e81b734",
-      "tag": "v1.18.1",
-      "package_version": "1.18.1",
-      "role": "UI toolkit and integration examples",
+      "revision": "a5a124bf80961966e875dc91d8d04271ec5885d8",
+      "package_version": "1.19.0-dev",
+      "role": "Pinned development UI toolkit; winit 0.31 native Wayland drops; native accessibility bridge disabled upstream",
       "license": "GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR commercial",
       "patches": [
         {
           "path": "patches/slint-skia-text-coverage.patch",
-          "sha256": "9bb775e361050bd94350361c9d79a67eab36bb0a727e720c2e7ef11e5639f90f",
+          "sha256": "00cc3f746799ef86d1fe9d37d8be388db1e7a8c49075726f50b63dea9ebae1a6",
           "crate": "i-slint-renderer-skia",
-          "crate_sha256": "dc9c1cf02385f1d26fc1f423544e52390a8e5c2d89420a8042aa94b4fe109d1f",
           "vendored_path": "vendor/i-slint-renderer-skia",
           "status": "local, not submitted",
           "reason": "Linux glyph coverage: disable surface gamma/contrast correction without changing font metrics or layout"
+        },
+        {
+          "path": "patches/slint-skia-opacity-bounds.patch",
+          "sha256": "bbf1692ee7587e32f93c67ee8b5281e782d4ebe3621983f133b4d86e0b3a2940",
+          "crate": "i-slint-renderer-skia",
+          "vendored_path": "vendor/i-slint-renderer-skia",
+          "status": "upstream draft PR 14307; local backport pinned separately",
+          "reason": "Opacity groups allocate window-sized Skia layers without child bounds, causing transient allocation and resize spikes for small translucent subtrees",
+          "upstream_url": "https://github.com/slint-ui/slint/pull/14307",
+          "upstream_base": "7c8d0e523f50353af6161987a9b341882f94e7ba",
+          "upstream_commit": "b66b3dee526434fd1c9e6f1b01ef249db65eb3da"
         }
       ]
     },
@@ -73,6 +90,35 @@
           "reason": "Prefer platform emoji family for emoji clusters while retaining text presentation and ordinary keycap bases; scope Apple's UI emoji face and baseline correction to macOS"
         }
       ]
+    },
+    "arboard": {
+      "repository": "https://github.com/1Password/arboard",
+      "package_version": "3.6.1",
+      "crate_sha256": "0348a1c054491f4bfe6ab86a7b6ab1e44e45d899005de92f58b3df180b36ddaf",
+      "role": "Native clipboard; shared with Slint, with a URI-list parsing correction",
+      "license": "Apache-2.0 OR MIT",
+      "patches": [
+        {
+          "path": "patches/arboard-uri-list.patch",
+          "sha256": "96d0e1c342282d0a1d19f189c49d9e13462e5c531732df2fe59f2e3ced33e18a",
+          "crate": "arboard",
+          "vendored_path": "vendor/arboard",
+          "status": "local, not submitted",
+          "reason": "Accept CRLF file-manager URI lists and localhost; reject remote authorities without corrupting filenames"
+        }
+      ]
+    },
+    "winit": {
+      "repository": "https://github.com/rust-windowing/winit",
+      "package_version": "0.31.0-beta.3",
+      "role": "Slint native window backend; crates.io sources and checksums pinned in Cargo.lock",
+      "license": "Apache-2.0"
+    },
+    "glutin": {
+      "repository": "https://github.com/slint-ui/glutin",
+      "revision": "85888eebc3f512850239a05a59dfffbf5da6b108",
+      "role": "Slint winit 0.31 OpenGL integration; exact upstream workspace pin",
+      "license": "Apache-2.0"
     }
   },
   "reference_files": {

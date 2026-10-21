@@ -68,6 +68,9 @@ fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>) {
         if action != 3 && ui.get_voice_phase() > 0 {
             return;
         }
+        if action == 0 {
+            ui.invoke_video_control(0, 3, 0.);
+        }
         if action != 3
             && !ui
                 .get_timeline_rows()

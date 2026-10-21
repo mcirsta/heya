@@ -126,8 +126,8 @@ impl Archive {
                 // Only the snapshot's range is authoritative. Newer live
                 // arrivals retain their own unread flags.
                 tx.execute("UPDATE messages SET unread=0 WHERE chat_id=?1 AND stamp<=?2", params![chat,through])?;
-                tx.execute("UPDATE messages SET unread=1 WHERE id IN (SELECT id FROM messages WHERE chat_id=?1 AND outgoing=0 AND visible=1 AND stamp<=?2 ORDER BY stamp DESC,id DESC LIMIT ?3) AND seen=0 AND (stamp,id)>(?4,?5)", params![chat,through,count,read_stamp,read_row])?;
-                let available: i64 = tx.query_row("SELECT count(*) FROM messages WHERE chat_id=?1 AND outgoing=0 AND visible=1 AND stamp<=?2", params![chat,through], |r| r.get(0))?;
+                tx.execute("UPDATE messages SET unread=1 WHERE id IN (SELECT id FROM messages WHERE chat_id=?1 AND outgoing=0 AND visible=1 AND CASE WHEN json_valid(content) THEN json_type(content,'$.notice.call') IS NULL ELSE 1 END AND stamp<=?2 ORDER BY stamp DESC,id DESC LIMIT ?3) AND seen=0 AND (stamp,id)>(?4,?5)", params![chat,through,count,read_stamp,read_row])?;
+                let available: i64 = tx.query_row("SELECT count(*) FROM messages WHERE chat_id=?1 AND outgoing=0 AND visible=1 AND CASE WHEN json_valid(content) THEN json_type(content,'$.notice.call') IS NULL ELSE 1 END AND stamp<=?2", params![chat,through], |r| r.get(0))?;
                 // A partial history can omit unread messages. Retain its total
                 // only until a read position reaches that unknown prefix.
                 let extra = if read_stamp == 0 { (i64::from(count)-available).max(0) } else { 0 };

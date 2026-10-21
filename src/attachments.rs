@@ -21,6 +21,8 @@ pub enum Kind {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
+    Clipboard,
+    PhotoUnavailable,
     Picker,
     File,
     Limit,
@@ -35,6 +37,12 @@ pub enum Error {
 impl Error {
     pub fn label(self) -> &'static str {
         match self {
+            Self::PhotoUnavailable => {
+                "This photo is no longer available to copy. Open it again and retry."
+            }
+            Self::Clipboard => {
+                "The clipboard could not be read or updated. Copy the item again and retry."
+            }
             Self::Caption => {
                 "Captions can contain up to 1,024 characters. Your text has been kept."
             }
@@ -104,7 +112,15 @@ pub struct Snapshot {
     pub bytes: u64,
     pub total: u64,
 }
+pub enum Input {
+    Paths(Vec<PathBuf>, Option<Kind>),
+    Png(Vec<u8>),
+}
 pub enum Command {
+    Import {
+        destination: Destination,
+        input: Input,
+    },
     Voice {
         destination: Destination,
         file: Arc<Staged>,
@@ -274,6 +290,20 @@ pub async fn run(
                         if work.is_some() {
                             if updates.borrow().phase!=5 {control.cancel();}
                         } else {selection=None;updates.send_replace(Snapshot::default());}
+                    }
+                    Command::Import{destination,input} if work.is_none() && selection.is_none()=>{
+                        control=Control::default();
+                        updates.send_replace(Snapshot{phase:2,title:destination.title.clone(),..Default::default()});
+                        let c=control.clone();
+                        work=Some(Box::pin(async move {
+                            let _guard=CancelOnDrop(c.clone());
+                            let files=crate::protocol_uploads::stage_input(input,c).await?;
+                            let captions=vec![String::new();files.len()];
+                            Ok(Selection{destination,files,captions,selected:0})
+                        }));
+                    }
+                    Command::Import{..}=>{
+                        updates.send_modify(|s|s.error="Finish the current attachment selection, then paste or drop again.".into());
                     }
                     Command::Pick{chat,title,parent,kind} if work.is_none()=>{
                         selection=None;uploading=false;control=Control::default();

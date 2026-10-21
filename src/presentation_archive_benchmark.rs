@@ -87,6 +87,7 @@ fn traffic(seq: u64, chat: i32) -> Record {
         text: format!("PERF-{seq} A synthetic received message 👩🏽‍💻\nMultiline text."),
         raw: vec![0],
         content: Default::default(),
+        album: None,
         thumbnail: Vec::new(),
         visible: true,
         expires: None,

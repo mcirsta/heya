@@ -10,6 +10,28 @@ pub const MAX_BYTES: usize = 20 * 1024 * 1024;
 pub const MAX_DEMAND: usize = 24;
 pub const INLINE_EDGE: u32 = 640;
 pub const VIEWER_EDGE: u32 = 2048;
+pub const THUMB_EDGE: u32 = 96;
+pub const THUMB_COUNT: usize = 7;
+
+/// A viewer selection resolved from the archive, independent of timeline paging.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct Gallery {
+    pub id: i32,
+    pub members: Vec<i32>,
+    pub position: usize,
+    pub sender: String,
+    pub date: String,
+    pub caption: String,
+}
+impl Gallery {
+    pub fn thumbnails(&self) -> &[i32] {
+        let start = self
+            .position
+            .saturating_sub(THUMB_COUNT / 2)
+            .min(self.members.len().saturating_sub(THUMB_COUNT));
+        &self.members[start..(start + THUMB_COUNT).min(self.members.len())]
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(i32)]
@@ -50,6 +72,7 @@ impl State {
 
 #[derive(Clone, Default, PartialEq, Eq)]
 pub struct Demand {
+    pub chat: i32,
     pub visible: Vec<i32>,
     pub viewer: Option<i32>,
     pub automatic: bool,
@@ -85,6 +108,23 @@ pub struct Photo {
 pub struct Snapshot {
     pub rows: BTreeMap<i32, Photo>,
     pub viewer: Option<(i32, Arc<Pixels>)>,
+    pub checked: Option<(i32, i32)>,
+    pub gallery: Option<Arc<Gallery>>,
+    pub thumbnails: BTreeMap<i32, Thumbnail>,
+}
+#[derive(Clone)]
+pub struct Thumbnail {
+    pub pixels: Arc<Pixels>,
+    pub key: u64,
+}
+impl Thumbnail {
+    fn new(pixels: Pixels) -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        Self {
+            pixels: Arc::new(pixels),
+            key: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        }
+    }
 }
 pub struct Request {
     pub id: i32,
@@ -201,7 +241,8 @@ pub async fn fetch_worker(
             let retry = wanted.retry.filter(|r| Some(*r) != attempted_retry);
             let rows = archive.photo_candidates(wanted.ids()).await?;
             if let Some(&(id, _)) = rows.iter().find(|&&(id, state)| {
-                retry.is_some_and(|r| r.0 == id) || (wanted.automatic && state == State::Idle)
+                retry.is_some_and(|r| r.0 == id)
+                    || ((wanted.automatic || wanted.viewer == Some(id)) && state == State::Idle)
             }) {
                 if retry.is_some_and(|r| r.0 == id) {
                     attempted_retry = retry;
@@ -314,9 +355,52 @@ pub async fn demo_present(
             };
         }
         result.viewer = viewer.clone();
+        if let Some(id) = wanted.viewer {
+            let gallery = demo_gallery(wanted.chat, id);
+            result.checked = Some((wanted.chat, id));
+            if gallery.members.len() > 1 {
+                for &id in gallery.thumbnails() {
+                    if let Some(thumbnail) = blocking(move || {
+                        Thumbnail::new(crate::fixtures::photo_pixels(
+                            id.unsigned_abs() as usize,
+                            THUMB_EDGE,
+                        ))
+                    })
+                    .await
+                    {
+                        result.thumbnails.insert(id, thumbnail);
+                    }
+                }
+            }
+            result.gallery = Some(Arc::new(gallery));
+        }
         updates.send_replace(Arc::new(result));
         if demand.changed().await.is_err() {
             return;
         }
+    }
+}
+
+/// Only the explicit synthetic photo fixture forms a demo album. Other photos
+/// remain standalone; production associations always come from the protocol.
+fn demo_gallery(chat: i32, id: i32) -> Gallery {
+    let members = if chat == 9 && (22002..=22004).contains(&id) {
+        (22002..=22004).collect::<Vec<_>>()
+    } else {
+        vec![id]
+    };
+    let position = members.iter().position(|&member| member == id).unwrap_or(0);
+    Gallery {
+        id,
+        members,
+        position,
+        sender: "Mira Sample".into(),
+        date: "Today, 10:24".into(),
+        caption: match id {
+            22002 => "A synthetic landscape · Salut 👋 · こんにちは",
+            22004 => "A wide photo keeps its proportions.",
+            _ => "",
+        }
+        .into(),
     }
 }

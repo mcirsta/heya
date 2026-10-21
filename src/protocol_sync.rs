@@ -22,6 +22,7 @@ struct Pending {
     chats: BTreeMap<(String, crate::chat_management::Setting), crate::chat_management::Update>,
     names: BTreeMap<String, Contact>,
     reads: BTreeMap<String, ReadUpdate>,
+    calls: BTreeMap<(String, String), whatsapp_rust::wacore::types::events::CallLogSync>,
     aliases: BTreeMap<String, String>,
     bytes: usize,
     failed: bool,
@@ -64,6 +65,7 @@ impl AppState {
         archive
             .save_chat_settings(pending.chats.into_values().collect())
             .await?;
+        crate::protocol_calls::save(archive, pending.calls.into_values().collect()).await?;
         Ok(())
     }
 }
@@ -80,9 +82,38 @@ impl EventHandler for AppState {
             EventKind::MuteUpdate,
             EventKind::ArchiveUpdate,
             EventKind::LockChatUpdate,
+            EventKind::CallLogSync,
         ])
     }
     fn handle_event(&self, event: Arc<Event>) {
+        if let Event::CallLogSync(call) = event.as_ref() {
+            use whatsapp_rust::waproto::buffa::Message as _;
+            let mut pending = self.0.pending.lock().expect("app-state mailbox poisoned");
+            let key = (address(&call.call_creator_jid), call.call_id.clone());
+            let size = call.record.encoded_len() as usize + key.0.len() + key.1.len();
+            if pending.failed {
+                return;
+            }
+            let previous = pending.calls.get(&key);
+            if previous.is_some_and(|old| call.timestamp < old.timestamp) {
+                return;
+            }
+            let bytes = pending
+                .bytes
+                .saturating_sub(previous.map_or(0, |old| {
+                    old.record.encoded_len() as usize + key.0.len() + key.1.len()
+                }))
+                .saturating_add(size);
+            if (pending.calls.len() >= 100_000 && previous.is_none()) || bytes > 32 * 1024 * 1024 {
+                pending.failed = true;
+            } else {
+                pending.calls.insert(key, call.clone());
+                pending.bytes = bytes;
+            }
+            drop(pending);
+            self.0.changed.notify_one();
+            return;
+        }
         if let Some(next) = chat_update(&event) {
             let mut pending = self.0.pending.lock().expect("app-state mailbox poisoned");
             let key = (next.jid.clone(), next.setting);
@@ -316,6 +347,7 @@ pub async fn run(
                 }
                 archive.ingest(batch).await?;
             }
+            rebuild |= archive.needs_call_snapshot().await?;
         }
         contacts.flush(&archive, false).await?;
         if rebuild && !fatal && tokio::time::Instant::now() >= next_attempt {
@@ -327,12 +359,13 @@ pub async fn run(
             let result = tokio::select! {
                 biased;
                 _ = stop.changed() => return Ok(false), // dirty mark survives cancellation
-                result = client.resync_app_state([WAPatchName::CriticalUnblockLow, WAPatchName::RegularLow, WAPatchName::RegularHigh], AppStateResyncMode::Snapshot) => result,
+                result = client.resync_app_state([WAPatchName::CriticalUnblockLow, WAPatchName::RegularLow, WAPatchName::RegularHigh, WAPatchName::Regular], AppStateResyncMode::Snapshot) => result,
             };
             let complete = result.as_ref().is_ok_and(|r| {
                 r.synced.contains(&WAPatchName::CriticalUnblockLow)
                     && r.synced.contains(&WAPatchName::RegularLow)
                     && r.synced.contains(&WAPatchName::RegularHigh)
+                    && r.synced.contains(&WAPatchName::Regular)
                     && r.all_synced()
             });
             fatal = result.as_ref().is_ok_and(|r| !r.fatal.is_empty());
@@ -340,7 +373,8 @@ pub async fn run(
             rebuild = !complete;
             next_attempt = tokio::time::Instant::now() + Duration::from_secs(30);
             if complete {
-                eprintln!("Heya: contacts and read state synchronized");
+                archive.finish_call_snapshot().await?;
+                eprintln!("Heya: contacts, calls and read state synchronized");
             } else {
                 eprintln!("Heya: app-state sync incomplete; saved state retained");
             }

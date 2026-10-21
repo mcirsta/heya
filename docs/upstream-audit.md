@@ -8,7 +8,7 @@ record is [upstreams.json](../prep/upstreams.json).
 | --- | --- | --- |
 | whatsapp-rust | [`0dc38af`](https://github.com/oxidezap/whatsapp-rust/tree/0dc38af07632f48f0cf6c66df285f1643fc22b95) | Package 0.7.0; workspace Rust floor 1.94. Native features can be selected explicitly. |
 | ZapFast | [`c73ce57`](https://github.com/crmne/zapfast/tree/c73ce57522d28eff4da1a5cc9e3b6de0f27b0de0) | Package 0.19.0, development HEAD; Rust floor 1.98. Already uses whatsapp-rust. |
-| Slint | [`v1.18.1 / 372cf0e`](https://github.com/slint-ui/slint/tree/372cf0ee5577c3dfec309a45e7b778ba4e81b734) | Stable reference; workspace Rust floor 1.92. Use the same version for slint and slint-build. |
+| Slint | [`1.19.0 development / a5a124b`](https://github.com/slint-ui/slint/tree/a5a124bf80961966e875dc91d8d04271ec5885d8) | Pinned winit 0.31 branch for native Wayland drops. Native accessibility bridge disabled upstream. All Slint crates use the same revision. |
 
 ## Protocol integration
 

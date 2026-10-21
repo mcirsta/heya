@@ -6,7 +6,7 @@ use crate::{
 };
 use slint::{
     ComponentHandle, Model,
-    winit_030::{
+    winit_031::{
         WinitWindowAccessor,
         winit::raw_window_handle::{HasWindowHandle, RawWindowHandle},
     },

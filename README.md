@@ -41,6 +41,11 @@ uses Core Audio output queues for playback and Core Audio/AudioToolbox for micro
 and Opus encoding. Launch the `.app` bundle to grant microphone permission;
 GStreamer is only used on Linux.
 
+Received-video playback uses GStreamer on Linux and a native AVFoundation path
+on macOS, with explicit play/pause, seek, mute and inline/expanded views. See
+[video playback and validation limits](docs/video-playback.md); native macOS
+video validation remains open.
+
 macOS startup diagnostics are saved automatically under `~/Library/Logs/Heya`.
 If the process appears in the Dock without a window, retain the newest logs and
 try `--software-rendering --demo` after closing it. See
@@ -59,6 +64,14 @@ On Linux, the default `media-gstreamer` feature links the installed GStreamer ru
 app library. `--no-default-features` builds the UI/domain without playback or recording.
 Use the optimized build for everyday desktop testing. `cargo run --locked`
 is the slower development build.
+The toolkit is pinned to a Slint 1.19.0 development snapshot using
+winit 0.31.0-beta.3 for native Wayland file drops. Versions and source revisions
+are recorded in `prep/upstreams.json` and `Cargo.lock`; no floating branch is
+used. **Known limitation:** this Slint branch disables the native accessibility
+bridge, so screen readers do not receive Heya's accessibility tree on Linux or
+macOS. Keyboard navigation remains available. Restore the bridge when Slint
+supports it with winit 0.31; Heya does not carry a separate AccessKit port.
+
 The Linux default prefers Slint's Skia/Vulkan renderer, selected after synthetic
 scroll/resize comparisons on the development machine. OpenGL remains enabled
 for automatic fallback if Vulkan initialization fails. Launch normally without
@@ -150,12 +163,21 @@ only for the open direct conversation; it clears on disconnect. The header uses
 plain text and updates independently of message rendering. Synthetic lifecycle
 and layout tests cover it; live-account availability still needs verification.
 
+Saved call events appear as voice/video/missed-call cards and contact-list
+previews, including calls synchronized from the phone. This is call history;
+placing and answering calls remain separate work. See [call events](docs/call-events.md)
+for supported inputs and validation limits.
+
 Contact, group and account avatars load on demand for visible chats and the open
 conversation. Small thumbnails stay in the encrypted archive for offline use;
 downloads and decoding run off the UI thread. Picture-change/removal events
 invalidate the cache, and missing or private pictures keep the initials fallback.
-The owner has confirmed live pictures appearing. The collapsed sidebar uses the same pictures. Full-size picture viewing and group
-message-sender photos are not implemented yet. The demo uses synthetic geometric
+The owner has confirmed live sidebar pictures appearing. The collapsed sidebar
+uses the same pictures. Incoming group sender runs now show participant photos
+through the same bounded cache, including people without a private chat. Profile
+names have a `~` prefix; saved contact names do not. Group sender photos are covered
+by synthetic archive/UI checks; live-account confirmation remains open. Full-size
+profile-picture viewing is not implemented yet. The demo uses synthetic geometric
 images and never downloads account pictures.
 
 Unread badges now consume phone/linked-device read receipts, synchronized read
@@ -328,13 +350,15 @@ selections are session-only. After queueing, ordinary delivery receipts and the
 existing no-automatic-resend rule apply. Closing Heya cancels outstanding uploads;
 files already queued remain in the durable outbox. Upload workers exit after their
 work; unnamed encrypted staging files disappear on close or process exit. See [sending attachments](docs/attachments.md)
-for limits and validation. Clipboard/drop sending, video recording,
+for limits and validation. Clipboard photo/file paste, native X11/macOS file drops,
+and original-photo Copy image now use this flow, including native Wayland file
+drops through the pinned development backend. Video recording,
 and an image editor remain pending.
 
 Automatic photo and audio-player downloads are limited to 20 MiB and decoded photos to 32 megapixels. Chat images
 are at most 640px on the long edge; the one open viewer uses at most 2048px.
 Expired CDN references may require the sender to resend the photo. Automatic
-media re-upload recovery, disk-cache eviction, image clipboard copying,
+media re-upload recovery, disk-cache eviction,
 and video playback remain pending. Other unsupported attachment types retain placeholders.
 View-once content is not opened. Administrator deletion variants, chat-settings synchronization,
 and full local account/data removal remain pending. Disappearing-message expiration is
@@ -568,7 +592,8 @@ connect to WhatsApp, or read account data. Pinned reference revisions are in
 
 The base and media environment checks pass on the development host, including
 MP4 demuxing and automatic audio output. Slint's language server and viewer are
-installed at version 1.18.1, matching the toolkit pin. See
+installed at version 1.18.1; they predate the current development toolkit pin.
+Use tools from the pinned Slint revision when testing new toolkit APIs. See
 [development preparation](docs/development.md) for the verified setup status.
 
 The user manages system package installation; the development guide distinguishes

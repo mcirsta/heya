@@ -1,0 +1,25 @@
+--- a/itemrenderer.rs
++++ b/itemrenderer.rs
+@@ -951,11 +951,19 @@
+     ) -> RenderingResult {
+         let opacity = opacity_item.opacity();
+         if Opacity::need_layer(item_rc, opacity) {
+-            self.canvas.save_layer_alpha(None, (opacity * 255.) as u32);
++            let window_adapter = WindowInner::from_pub(self.window).window_adapter();
++            // An unbounded saveLayer allocates for the entire current clip,
++            // even for a small translucent subtree. Include overflowing and
++            // transformed children rather than just the opacity item's size.
++            let bounds = i_slint_core::properties::evaluate_no_tracking(|| {
++                i_slint_core::item_rendering::item_children_bounding_rect(item_rc, &window_adapter)
++            });
++            self.canvas.save_layer_alpha(
++                to_skia_rect(&(bounds * self.scale_factor)),
++                (opacity * 255.) as u32,
++            );
+             self.state_stack.push(self.current_state);
+             self.current_state.alpha = 1.0;
+-
+-            let window_adapter = WindowInner::from_pub(self.window).window_adapter();
+ 
+             i_slint_core::item_rendering::render_item_children(
+                 self,

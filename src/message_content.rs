@@ -3,6 +3,14 @@ use serde::{Deserialize, Serialize};
 
 pub const MAX_ACTIONS: usize = 8;
 
+/// Explicit protocol association, separate from mutable caption/media content.
+/// The archive scopes the parent ID to the child's canonical chat and author.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Album {
+    pub parent: String,
+    pub index: Option<u32>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Content {
     #[serde(skip)]
@@ -18,6 +26,8 @@ pub struct Content {
     pub photo: Option<Photo>,
     #[serde(default)]
     pub audio: Option<Audio>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video: Option<Video>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub document: Option<Document>,
     /// Attachments without a dedicated photo/audio projection. Never inferred
@@ -47,16 +57,77 @@ pub struct Content {
 pub enum Notice {
     MessagePinned,
     MessageUnpinned,
+    Call(Call),
 }
 impl Notice {
     pub fn description(self) -> &'static str {
         match self {
             Self::MessagePinned => "pinned a message",
             Self::MessageUnpinned => "unpinned a message",
+            Self::Call(call) => call.label(),
         }
     }
     pub fn label(self, sender: &str) -> String {
-        format!("{sender} {}", self.description())
+        match self {
+            Self::Call(call) => call.label().into(),
+            _ => format!("{sender} {}", self.description()),
+        }
+    }
+}
+
+/// A saved call event, independent of call signalling or media playback.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Call {
+    pub video: Option<bool>,
+    pub outcome: CallOutcome,
+    pub seconds: Option<u64>,
+    /// App-state mutation time, used only to reject older replayed updates.
+    pub revision: i64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CallOutcome {
+    Unknown,
+    Connected,
+    Missed,
+    Declined,
+    Cancelled,
+    Failed,
+    AnsweredElsewhere,
+    Ongoing,
+    Scheduled,
+}
+impl Call {
+    pub fn label(self) -> &'static str {
+        match (self.video, self.outcome) {
+            (Some(true), CallOutcome::Missed) => "Missed video call",
+            (Some(false), CallOutcome::Missed) => "Missed voice call",
+            (None, CallOutcome::Missed) => "Missed call",
+            (Some(true), _) => "Video call",
+            (Some(false), _) => "Voice call",
+            (None, _) => "Call",
+        }
+    }
+    pub fn details(self, outgoing: bool) -> String {
+        let direction = if outgoing { "Outgoing" } else { "Incoming" };
+        let detail = match self.outcome {
+            CallOutcome::Connected => self.seconds.map(|s| {
+                if s >= 3600 {
+                    format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60)
+                } else {
+                    format!("{}:{:02}", s / 60, s % 60)
+                }
+            }),
+            CallOutcome::Declined => Some("Declined".into()),
+            CallOutcome::Cancelled => Some("Cancelled".into()),
+            CallOutcome::Failed => Some("Failed".into()),
+            CallOutcome::AnsweredElsewhere => Some("Answered on another device".into()),
+            CallOutcome::Ongoing => Some("Ongoing".into()),
+            CallOutcome::Scheduled => Some("Scheduled".into()),
+            _ => None,
+        };
+        detail.map_or_else(|| direction.into(), |d| format!("{direction} · {d}"))
     }
 }
 
@@ -90,6 +161,15 @@ pub struct Photo {
     pub width: u32,
     pub height: u32,
     pub size: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Video {
+    pub width: u32,
+    pub height: u32,
+    pub seconds: Option<u32>,
+    pub size: Option<u64>,
+    pub gif: bool,
 }
 
 /// Sender-supplied metadata only. Displaying a card never opens the document.

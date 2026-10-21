@@ -302,6 +302,13 @@ impl MessageExt for wa::Message {
         {
             current = msg;
         }
+        if let Some(msg) = current
+            .associated_child_message
+            .as_option()
+            .and_then(|w| w.message.as_option())
+        {
+            current = msg.get_base_message();
+        }
         current
     }
 
@@ -325,6 +332,12 @@ impl MessageExt for wa::Message {
         peel_wrapper!(view_once_message_v2_extension);
         peel_wrapper!(document_with_caption_message);
         peel_wrapper!(edited_message);
+        if let Some(mut wrapper) = self.associated_child_message.take() {
+            if let Some(msg) = wrapper.message.take() {
+                return msg.into_base_message();
+            }
+            self.associated_child_message = buffa::MessageField::some(wrapper);
+        }
         self
     }
 
@@ -353,6 +366,14 @@ impl MessageExt for wa::Message {
                 .ephemeral_message
                 .as_option()
                 .and_then(|m| m.message.as_option())
+            {
+                current = inner;
+                continue;
+            }
+            if let Some(inner) = current
+                .associated_child_message
+                .as_option()
+                .and_then(|w| w.message.as_option())
             {
                 current = inner;
                 continue;
@@ -2870,5 +2891,34 @@ mod tests {
             EditAttribute::infer_from_message(&unreact),
             Some(EditAttribute::SenderRevoke)
         );
+    }
+    #[test]
+    fn album_child_helpers_unwrap_media_and_preserve_empty_wrappers() {
+        let mut inner = wa::Message::default();
+        inner.image_message.get_or_insert_default().caption = Some("Synthetic album".into());
+        let mut key = wa::MessageKey::default();
+        key.id = Some("parent".into());
+        let child = wrap_as_album_child(inner.clone(), key);
+        assert_eq!(child.get_base_message(), &inner);
+        assert_eq!(child.clone().into_base_message(), inner);
+        assert!(!child.is_view_once());
+        let mut empty = wa::Message::default();
+        empty.associated_child_message =
+            buffa::MessageField::some(wa::message::FutureProofMessage::default());
+        assert_eq!(empty.get_base_message(), &empty);
+        assert_eq!(empty.clone().into_base_message(), empty);
+    }
+
+    #[test]
+    fn album_child_view_once_is_detected_before_unwrapping() {
+        let mut once = wa::Message::default();
+        once.view_once_message_v2.get_or_insert_default().message =
+            buffa::MessageField::some(wa::Message::default());
+        let child = wrap_as_album_child(once, wa::MessageKey::default());
+        assert!(child.is_view_once());
+        let mut ephemeral = wa::Message::default();
+        ephemeral.ephemeral_message.get_or_insert_default().message =
+            buffa::MessageField::some(child);
+        assert!(ephemeral.is_view_once());
     }
 }

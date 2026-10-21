@@ -1,12 +1,12 @@
 use super::{Archive, Result, canonical, local_chat};
-use crate::avatars::{MAX_DEMAND, Outcome, Thumbnail};
+use crate::avatars::{MAX_DEMAND, Outcome, Target, Thumbnail};
 use rusqlite::{OptionalExtension, Transaction, params};
 use std::sync::Arc;
 use tokio::sync::watch;
 
 // Private account data: intentionally no Debug implementation.
 pub struct AvatarEntry {
-    pub chat: i32,
+    pub target: Target,
     pub jid: String,
     pub generation: i64,
     pub picture_id: Option<String>,
@@ -28,16 +28,20 @@ impl Archive {
     /// Zero denotes the account avatar, even if no self-chat exists.
     pub async fn avatar_entries(
         &self,
-        ids: Vec<i32>,
+        ids: Vec<Target>,
         with_pixels: bool,
     ) -> Result<Vec<AvatarEntry>> {
         self.call(move |db| {
             let mut entries = Vec::new();
-            for chat in ids.into_iter().take(MAX_DEMAND) {
-                let jid: Option<String> = if chat == 0 {
+            for target in ids.into_iter().take(MAX_DEMAND) {
+                let jid: Option<String> = match &target {
+                  Target::Chat(0) => {
                     db.query_row("SELECT value FROM metadata WHERE key='identity'", [], |r| r.get(0)).optional()?
-                } else {
-                    db.query_row("SELECT jid FROM chats WHERE id=?1", [local_chat(db, chat)?], |r| r.get(0)).optional()?
+                  },
+                  Target::Chat(chat) => {
+                    db.query_row("SELECT jid FROM chats WHERE id=?1", [local_chat(db, *chat)?], |r| r.get(0)).optional()?
+                  },
+                  Target::Participant(jid) => Some(canonical(db, jid)?),
                 };
                 let Some(jid) = jid else { continue; };
                 let cached = db.query_row(
@@ -47,7 +51,7 @@ impl Archive {
                     },
                 ).optional()?;
                 let (generation,picture_id,photo,retry_at,has_photo) = cached.unwrap_or((0,None,None,0,false));
-                entries.push(AvatarEntry {chat,jid,generation,picture_id,photo,retry_at,has_photo});
+                entries.push(AvatarEntry {target,jid,generation,picture_id,photo,retry_at,has_photo});
             }
             Ok(entries)
         }).await
@@ -139,7 +143,61 @@ mod tests {
         }
     }
     async fn entry(db: &Archive, chat: i32) -> AvatarEntry {
-        db.avatar_entries(vec![chat], true).await.unwrap().remove(0)
+        db.avatar_entries(vec![chat.into()], true)
+            .await
+            .unwrap()
+            .remove(0)
+    }
+    #[tokio::test]
+    async fn participant_photos_need_no_chat_and_follow_aliases_and_removals() {
+        let (_temp, db) = fixture();
+        let lid = Target::Participant(LID.into());
+        let pn = Target::Participant(PN.into());
+        let entry = db
+            .avatar_entries(vec![lid.clone()], false)
+            .await
+            .unwrap()
+            .remove(0);
+        db.save_avatar(entry, photo(7), 0).await.unwrap();
+        let late = db
+            .avatar_entries(vec![lid.clone()], false)
+            .await
+            .unwrap()
+            .remove(0);
+        db.ingest(Batch {
+            aliases: vec![(LID.into(), PN.into())],
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        db.save_avatar(late, photo(99), 0).await.unwrap();
+        let entries = db
+            .avatar_entries(vec![lid, pn.clone()], true)
+            .await
+            .unwrap();
+        assert!(
+            entries
+                .iter()
+                .all(|e| e.jid == PN && e.photo.as_ref().unwrap().pixels[0] == 7)
+        );
+        assert!(
+            db.view(0, 100, String::new(), false, false)
+                .await
+                .unwrap()
+                .chats
+                .is_empty(),
+            "photo lookup must not create private conversations"
+        );
+        let late = db
+            .avatar_entries(vec![pn.clone()], false)
+            .await
+            .unwrap()
+            .remove(0);
+        db.invalidate_avatar(LID.into(), true, 101).await.unwrap();
+        db.save_avatar(late, photo(99), 0).await.unwrap();
+        let removed = db.avatar_entries(vec![pn], true).await.unwrap().remove(0);
+        assert!(!removed.has_photo);
+        assert!(removed.retry_at > chrono::Utc::now().timestamp());
     }
     #[tokio::test]
     async fn alias_merge_keeps_newer_removals_and_rejects_an_old_pn_download() {

@@ -192,6 +192,6 @@ async fn archive_repair_is_restartable_preserves_state_and_never_resurrects_cont
     drop(archive);
     let archive = Archive::open(files, KEY).unwrap();
     archive
-        .repair_unsupported_text(1, |_| panic!("completed repair must not rescan"))
+        .repair_unsupported_messages(3, |_| panic!("completed repair must not rescan"))
         .unwrap();
 }

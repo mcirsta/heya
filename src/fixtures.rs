@@ -19,12 +19,49 @@ pub fn avatar_samples(ids: impl IntoIterator<Item = i32>) -> crate::avatars::Sna
                     }
                 });
             (
-                id,
+                id.into(),
                 Arc::new(crate::avatars::Thumbnail::from_pixels(image.into_raw()).unwrap()),
             )
         })
         .collect();
     Arc::new(samples)
+}
+
+pub fn group_avatar_samples(messages: &[Message]) -> crate::avatars::Snapshot {
+    use std::collections::BTreeMap;
+    // A few generated landscapes stand in for participant photos in offline
+    // checks. Leave one sender without a photo to exercise the initials fallback.
+    let samples = avatar_samples(0..3);
+    let mut pictures = BTreeMap::new();
+    for message in messages.iter().filter(|m| !m.outgoing) {
+        if pictures.len() == 3 {
+            break;
+        }
+        let key = crate::avatars::Target::Participant(message.sender_id.clone());
+        let image = samples[&(pictures.len() as i32).into()].clone();
+        pictures.entry(key).or_insert(image);
+    }
+    pictures.into()
+}
+
+/// Procedural video frame: a moving square over a fixed landscape, no files.
+pub fn video_pixels(seconds: f64) -> crate::photos::Pixels {
+    let (width, height) = (640, 360);
+    let x0 = ((seconds * 90.) as u32) % 560;
+    let image = image::RgbaImage::from_fn(width, height, |x, y| {
+        if x >= x0 && x < x0 + 80 && (100..180).contains(&y) {
+            image::Rgba([255, 215, 90, 255])
+        } else if y > height * 2 / 3 {
+            image::Rgba([28, 125, 88, 255])
+        } else {
+            image::Rgba([60, (110 + y / 5) as u8, 175, 255])
+        }
+    });
+    crate::photos::Pixels {
+        width,
+        height,
+        rgba: image.into_raw(),
+    }
 }
 
 pub fn demo() -> DemoState {
@@ -37,7 +74,11 @@ pub fn demo() -> DemoState {
             .map(|(i, (sender, text, outgoing))| {
                 let message = Message {
                     id: next_id,
-                    sender: (*sender).into(),
+                    sender: if matches!(id, 2 | 4) && !outgoing {
+                        crate::domain::participant_name(sender, false, sender)
+                    } else {
+                        (*sender).into()
+                    },
                     sender_id: if *outgoing {
                         "#self".into()
                     } else {
@@ -338,7 +379,84 @@ pub fn demo() -> DemoState {
                 };
         }
     }
+    let mut videos = chats[0].clone();
+    videos.id = 14;
+    videos.title = "Received videos".into();
+    videos.initials = "RV".into();
+    videos.is_group = false;
+    videos.messages = (0..3)
+        .map(|i| Message {
+            id: 27001 + i,
+            sender: "Sample contact".into(),
+            sender_id: "demo:video".into(),
+            text: if i == 1 {
+                "[Video] A caption retained in full. 👋".into()
+            } else {
+                "[Video]".into()
+            },
+            time: format!("10:{:02}", 24 + i),
+            date: Some(today),
+            outgoing: i == 2,
+            local: false,
+            content: crate::message_content::Content {
+                body: Some(if i == 1 {
+                    "A caption retained in full. 👋".into()
+                } else {
+                    String::new()
+                }),
+                has_attachment: true,
+                video: Some(crate::message_content::Video {
+                    width: if i == 1 { 360 } else { 640 },
+                    height: if i == 1 { 640 } else { 360 },
+                    seconds: Some(5),
+                    size: Some(1024),
+                    gif: false,
+                }),
+                ..Default::default()
+            }
+            .into(),
+        })
+        .collect();
+    chats.push(videos);
+    let mut calls = chats[0].clone();
+    calls.id = 15;
+    calls.title = "Call history".into();
+    calls.initials = "CH".into();
+    calls.unread = 0;
+    calls.messages = (0..6)
+        .map(|i| {
+            let mut m = calls.messages[0].clone();
+            m.id = 43000 + i;
+            m
+        })
+        .collect();
+    fill_calls(&mut calls.messages);
+    chats.push(calls);
     DemoState::new(chats)
+}
+
+pub fn fill_calls(messages: &mut [Message]) {
+    use crate::message_content::{Call, CallOutcome, Content, Notice};
+    for (i, m) in messages.iter_mut().enumerate() {
+        let call = Call {
+            video: Some(i % 3 == 1),
+            outcome: match i % 3 {
+                0 => CallOutcome::Missed,
+                1 => CallOutcome::AnsweredElsewhere,
+                _ => CallOutcome::Connected,
+            },
+            seconds: Some(125),
+            revision: 0,
+        };
+        m.content = std::sync::Arc::new(Content {
+            notice: Some(Notice::Call(call)),
+            ..Default::default()
+        });
+        m.text = call.label().into();
+        m.outgoing = i % 2 == 1;
+        m.sender = if m.outgoing { "You" } else { "Sample contact" }.into();
+        m.sender_id = if m.outgoing { "#self" } else { "demo:sample" }.into();
+    }
 }
 
 pub fn fill_documents(messages: &mut [Message]) {
@@ -397,6 +515,9 @@ pub fn message_image_samples(
     avatar_samples(ids)
         .iter()
         .map(|(id, thumbnail)| {
+            let crate::avatars::Target::Chat(id) = id else {
+                unreachable!()
+            };
             (
                 *id,
                 std::sync::Arc::new(crate::photos::Pixels {

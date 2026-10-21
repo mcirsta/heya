@@ -18,7 +18,7 @@ pub struct ReceiptJob {
 pub(super) fn inserted(db: &Connection, row: i64) -> Result<()> {
     db.execute(
         "INSERT OR IGNORE INTO outgoing_receipts(message_id,kind,state)
-        SELECT id,0,2 FROM messages WHERE id=?1 AND outgoing=0 AND visible=1 AND deleted=0",
+        SELECT id,0,2 FROM messages WHERE id=?1 AND outgoing=0 AND visible=1 AND CASE WHEN json_valid(content) THEN json_type(content,'$.notice.call') IS NULL ELSE 1 END AND deleted=0",
         [row],
     )?;
     Ok(())
@@ -36,7 +36,7 @@ pub(super) fn visible(
     let inserted = db.execute(
         "INSERT OR IGNORE INTO outgoing_receipts(message_id,kind,state)
          SELECT id,0,?4 FROM messages WHERE chat_id=?1 AND unread=1 AND outgoing=0
-         AND visible=1 AND deleted=0 AND (expires IS NULL OR expires>unixepoch())
+         AND visible=1 AND CASE WHEN json_valid(content) THEN json_type(content,'$.notice.call') IS NULL ELSE 1 END AND deleted=0 AND (expires IS NULL OR expires>unixepoch())
          AND (stamp,id)<=(?2,?3)",
         params![chat, stamp, row, enabled],
     )?;
@@ -44,7 +44,7 @@ pub(super) fn visible(
         "UPDATE outgoing_receipts SET state=?4 WHERE kind=0 AND
         (state=2 OR (state=1 AND ?4=0)) AND message_id IN (
         SELECT id FROM messages WHERE chat_id=?1 AND (stamp,id)<=(?2,?3)
-        AND visible=1 AND deleted=0 AND (expires IS NULL OR expires>unixepoch()))",
+        AND visible=1 AND CASE WHEN json_valid(content) THEN json_type(content,'$.notice.call') IS NULL ELSE 1 END AND deleted=0 AND (expires IS NULL OR expires>unixepoch()))",
         params![chat, stamp, row, enabled],
     )?;
     Ok(inserted > 0 || observed > 0)
@@ -58,7 +58,7 @@ impl Archive {
                 Ok(db.execute(
                     "INSERT OR IGNORE INTO outgoing_receipts(message_id,kind)
              SELECT id,1 FROM messages WHERE id=?1 AND raw=?2 AND outgoing=0
-             AND visible=1 AND deleted=0 AND (expires IS NULL OR expires>unixepoch())
+             AND visible=1 AND CASE WHEN json_valid(content) THEN json_type(content,'$.notice.call') IS NULL ELSE 1 END AND deleted=0 AND (expires IS NULL OR expires>unixepoch())
              AND json_extract(nullif(content,''),'$.audio.voice')=1",
                     params![request.id, request.raw],
                 )? > 0)

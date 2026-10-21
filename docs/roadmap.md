@@ -58,6 +58,17 @@ remain open.
 Clipboard/drop handling shares the existing attachment flow rather than creating
 a second sending pipeline.
 
+The first received-video slice adds explicit inline/expanded playback, pause,
+seek and mute with one finite decoder process and encrypted original caching.
+Linux uses GStreamer; macOS has a native AVFoundation implementation awaiting
+native validation. GIF looping, animated stickers, video notes and video sending
+remain separate increments. See [video playback](video-playback.md) for bounds,
+teardown and reproducible offscreen checks.
+
+The photo viewer now uses explicit album associations for navigation, counters and
+a bounded thumbnail strip, independently of timeline paging. See
+[photo albums](photo-albums.md) for storage, decoding bounds and validation limits.
+
 Performance regression checks accompany each increment. Existing before/after
 measurements establish changes within Heya, not speed parity with ZapFast;
 offscreen application/render timings do not establish compositor, device or
@@ -121,6 +132,13 @@ a protocol connection.
 
 ## M2 Connect messaging and durable storage
 
+Saved call events reuse the encrypted timeline and sidebar, with voice,
+video, missed-call, direction and available outcome/duration metadata. Public
+SDK app-state, captured history and call-log envelopes feed the same projection;
+calls never become message unread/receipt/outbox keys. Initial state recovery
+requests call logs previously ignored. Calling itself remains separate work.
+See [call events](call-events.md); live phone interoperability remains unverified.
+
 The first slice now implements Connect/Cancel/Disconnect, QR rotation/expiry,
 encrypted single-session storage with a desktop keyring key, automatic saved
 session resume, offline archive opening, SDK reconnection states and bounded
@@ -183,7 +201,11 @@ recovery remain deliberate account-validation gates.
 On-demand contact/group/account avatar thumbnails now use a separate bounded
 worker and an encrypted schema-3 cache, including offline display, picture
 notifications, privacy/no-picture fallbacks and stale-download protection.
-Full-size avatar viewing and photos beside group-message senders remain pending.
+Visible incoming group sender runs now share that worker/cache for participant
+pictures, without creating private chats. Group headings distinguish profile
+names (`~`) from saved contact names. Synthetic checks cover aliases, removals,
+bounded demand and stable layout; live participant-picture verification remains
+open. Full-size profile-picture viewing remains pending.
 
 The open direct conversation now subscribes to online/last-seen presence through
 the unchanged SDK. A single transient slot feeds the header without rebuilding
@@ -257,7 +279,7 @@ microphone/speaker choices and recording/playback levels, with on-demand device
 discovery and explicit missing-input rejection. Downloads have a persisted initial
 Save As folder, defaulting to the portable system Downloads location plus Heya.
 Real microphone and
-recipient playback checks remain open. Image clipboard copying, video playback, disk-cache eviction
+recipient playback checks remain open. Video playback, disk-cache eviction
 and expired-CDN recovery remain pending. Received document cards now display
 sender-supplied thumbnails, filename, type, size and optional page count. Existing
 encrypted envelopes upgrade locally; decoding and thumbnail residency are bounded
@@ -279,8 +301,12 @@ Retries retain unsent items without duplicating queued ones, and protocol source
 ownership is released on shutdown. Upload-specific workers are created on demand
 and joined after completion; unnamed encrypted staging storage is released on
 close/process exit. Unsubmitted selections are session-only.
-See [sending attachments](attachments.md). Opening files inside Heya, sending
-from clipboard/drop and video playback remain separate work. See [voice messages](voice-messages.md)
+Clipboard photo/file paste and X11/macOS file-drop handling now reuse encrypted
+attachment review and explicit sending. Copy image uses cached original pixels.
+Native Wayland drops use the pinned Slint development/winit 0.31 backend. Native
+macOS clipboard/drop acceptance remains unverified. The development backend
+disables the native accessibility bridge; restore it when Slint supports it. See [sending attachments](attachments.md).
+Opening files inside Heya and video playback remain separate work. See [voice messages](voice-messages.md)
 for recording behavior and validation.
 See [downloads](downloads.md) for behavior and validation; desktop transfer RE
 and SDK API notes are recorded in `docs/desktop-media-audit.md`.

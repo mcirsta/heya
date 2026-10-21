@@ -139,7 +139,7 @@ pub fn devices() -> Result<Vec<Device>, Error> {
         })
         .collect())
 }
-fn selected_uid(input: bool, id: &str) -> Result<CString, Error> {
+pub(crate) fn selected_uid(input: bool, id: &str) -> Result<CString, Error> {
     if id.is_empty() {
         return Ok(CString::default());
     }

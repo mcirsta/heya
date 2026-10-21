@@ -1,0 +1,28 @@
+--- a/src/platform/linux/mod.rs
++++ b/src/platform/linux/mod.rs
+@@ -51,7 +51,13 @@
+ fn paths_from_uri_list(uri_list: Vec<u8>) -> Vec<PathBuf> {
+ 	uri_list
+ 		.split(|char| *char == b'\n')
++		// text/uri-list uses CRLF. Strip framing before percent-decoding so an
++		// encoded carriage return in a real filename remains intact.
++		.map(|line| line.strip_suffix(b"\r").unwrap_or(line))
+ 		.filter_map(|line| line.strip_prefix(b"file://"))
++		.map(|path| path.strip_prefix(b"localhost").unwrap_or(path))
++		// Remote authorities must not become paths relative to our working dir.
++		.filter(|path| path.starts_with(b"/"))
+ 		.filter_map(|s| percent_decode(s).decode_utf8().ok())
+ 		.map(|decoded| PathBuf::from(decoded.as_ref()))
+ 		.collect()
+@@ -444,6 +450,11 @@
+ 	use super::*;
+ 
+ 	#[test]
++	fn uri_list_framing_and_local_authorities() {
++		assert_eq!(paths_from_uri_list(b"# comment\r\nfile:///tmp/a%20b.png\r\nfile://localhost/tmp/hello%0D.png\r\nfile://remote/tmp/not-local\r\nhttps://example.com/a\r\n".to_vec()), vec![PathBuf::from("/tmp/a b.png"),PathBuf::from("/tmp/hello\r.png")]);
++	}
++
++	#[test]
+ 	fn test_decoding_uri_list() {
+ 		// Test that paths_from_uri_list correctly decodes
+ 		// differents percent encoded characters

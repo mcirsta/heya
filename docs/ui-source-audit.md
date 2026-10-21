@@ -127,8 +127,60 @@ and keeps a fallback until it loads. `account.rs::avatar` and
 `backend/worker.rs::fetch_avatar` informed the on-demand request/cache behavior.
 Heya implements its own viewport demand, encrypted thumbnail storage, generation
 checks and Slint image handoff. The existing 34/48/40/36px account/list/header/rail
-geometry is unchanged. It currently retains the initials fallback for both
-people and groups; full-size viewing and group sender photos remain pending.
+geometry is unchanged. Initials remain the fallback when a picture is unavailable;
+full-size profile-picture viewing remains pending.
+
+Group messages also use 28px participant pictures beside the first incoming
+message in each sender run, following the visual declaration in
+`src/ui/conversation.rs` at the pinned revision (the avatar column remains 36px).
+The reference's `src/app.rs::person_name` displays saved contact names unchanged
+and prefixes participant-supplied profile names with `~`. Heya now applies its
+existing sidebar name rule to group message headings too; number-only fallbacks
+remain unprefixed. Initials exclude the display prefix. Sender grouping and
+picture lookup continue to use stable participant identities, never names.
+
+Heya's existing avatar worker now accepts participant identities as well as
+local chat IDs. It resolves PN/LID aliases in the encrypted archive without
+creating a private conversation. Account, open-chat, visible group senders and
+sidebar rows share the existing 66-target bound and one in-flight fetch.
+The timeline requests only its materialized viewport/overscan; it does not scan
+group membership or loaded history. The existing encrypted 128px cache, privacy
+removal handling, retry/backoff and shutdown path are reused. No additional
+worker, per-message timer, database schema or protocol-library patch is needed.
+The fixed avatar slot allows image-only updates without remeasuring text,
+rebuilding the transcript or moving the scroll anchor.
+
+Validation on Linux, 21 October 2026: the optimized default-feature suite passed
+256 tests (5 native opt-in tests skipped), including the group-name/alias and
+participant-cache regressions. The build without default media features passed
+238 tests (5 skipped); strict Clippy passed for all targets in both configurations.
+The encrypted protocol-storage integration test also passed. The Slint test backend checked a 1,000-message
+group at wide and narrow sizes: demand followed only visible sender runs;
+same-named senders stayed distinct; repeated image updates reused textures;
+loading/removing photos caused zero additional text measurements and preserved
+height/scroll position. Native OpenGL screenshots used synthetic landscapes in
+light/wide and dark/narrow groups. No private pictures or message content were
+used for these checks.
+
+Optimized offscreen OpenGL/Mesa runs through `scripts/ui-offscreen.sh`, with
+received-photo fixtures, measured the following p95 timings. The baseline was
+the same Slint/winit build before this feature; compilation was idle during runs.
+The group variant adds eight synthetic participants with cached pictures via
+`HEYA_BENCHMARK_GROUP_AVATARS=1` (100, then 10,000 loaded messages).
+
+| Measurement | Before | After, same workload | After, group pictures |
+| --- | ---: | ---: | ---: |
+| Scroll 10,000, layout | 0.16 ms | 0.15 ms | 0.17 ms |
+| Scroll 10,000, render CPU | 12.77 ms | 9.79 ms | 11.87 ms |
+| Resize 10,000, layout | 0.99 ms | 0.94 ms | 1.00 ms |
+| Resize 10,000, render CPU | 10.78 ms | 8.87 ms | 9.85 ms |
+| Changing snapshot, apply | 0.29 ms | 0.26 ms | 0.27 ms |
+
+These short runs show no observed regression; differences include run-to-run
+variation, not an established speed improvement. They measure prepared UI
+snapshots/cached pictures, not server fetch latency, the full archive pipeline,
+hardware GPU presentation or compositor animation. Live group-picture retrieval
+and macOS rendering remain unverified for this change.
 
 Self-chat titles follow `src/app.rs::chat_title` / `self_title` at the pinned
 ZapFast revision: the account profile name plus `(You)`, or `You` without a
@@ -1567,3 +1619,14 @@ Artifacts and machine-readable samples are under the directory above.
 The verified release was installed and reopened normally, reaching Connected.
 The owner then confirmed “Older messages loaded” in response to the live
 phone-history check. No automatic chat-message send was part of validation.
+
+## Received-video controls, 21 October 2026
+
+The pinned ZapFast conversation video tile and its bottom play/time/seek/mute/
+expand controls supplied the visual reference. Heya uses its own finite decoder
+process, protocol adapter, encrypted cache and shared Slint frame state; no
+ZapFast media/state implementation was ported. Inline and expanded views share
+one player. Offscreen native framebuffer captures covered wide, narrow/dark,
+playing and expanded views. See [video playback](video-playback.md) for the real
+decoder-to-render measurements, paired photo-scroll comparison and validation
+limits. These checks do not close the native audio-device/macOS/account gates.

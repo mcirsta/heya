@@ -7,6 +7,7 @@ mod audio_devices;
 mod audio_player;
 mod avatars;
 mod chat_management;
+mod clipboard;
 mod connection;
 mod document_previews;
 mod domain;
@@ -14,6 +15,10 @@ mod downloads;
 mod downloads_file;
 mod downloads_picker;
 mod fixtures;
+#[cfg(all(target_os = "linux", feature = "media-gstreamer"))]
+mod gstreamer_memory;
+#[cfg(all(target_os = "linux", feature = "media-gstreamer"))]
+mod gstreamer_video;
 #[cfg(target_os = "linux")]
 mod linux_emoji;
 mod live_presentation;
@@ -22,6 +27,8 @@ mod local_worker;
 mod macos;
 #[cfg(target_os = "macos")]
 mod macos_audio;
+#[cfg(target_os = "macos")]
+mod macos_video;
 mod media_process;
 mod message_actions;
 mod message_content;
@@ -40,6 +47,7 @@ mod presentation_actions;
 mod presentation_attachments;
 mod presentation_audio;
 mod presentation_avatars;
+mod presentation_clipboard;
 mod presentation_content;
 mod presentation_downloads;
 mod presentation_emoji;
@@ -59,12 +67,14 @@ mod presentation_read_tests;
 mod presentation_scroll;
 mod presentation_settings_io;
 mod presentation_text;
+mod presentation_video;
 mod presentation_voice;
 mod protocol;
 mod protocol_actions;
 mod protocol_audio;
 mod protocol_avatars;
 mod protocol_business;
+mod protocol_calls;
 mod protocol_chat_management;
 mod protocol_content;
 mod protocol_document_previews;
@@ -80,12 +90,15 @@ mod protocol_reads;
 mod protocol_receipts;
 mod protocol_sync;
 mod protocol_uploads;
+mod protocol_video;
 mod service;
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 mod skia_cpu_tests;
 mod startup;
 mod storage;
 mod taskbar_badge;
+mod video;
+mod video_process;
 mod voice;
 mod voice_recorder;
 
@@ -157,16 +170,16 @@ fn options_from(args: impl IntoIterator<Item = String>) -> Result<Option<Options
             }
             "--help" | "-h" => {
                 println!(
-                    "Heya\n\nUsage: heya [--demo | --offline] [--light | --dark] [--size WIDTHxHEIGHT] [--demo-chat ID] [--screenshot FILE.png] [--ui-benchmark] [--software-rendering] [--startup-trace FILE.log] [--startup-check]\n\nSaved sessions resume automatically. On first use, click Connect to link WhatsApp.\n--offline opens saved chats without connecting; Connect remains available.\n--demo uses synthetic chats without opening account files or the network.\n--demo-chat selects a synthetic chat (1–13); 7 demonstrates message cards; 8 dates and spacing; 9 received photos; 10 received audio; 11 received documents; 12 pin/unpin notices; 13 color emoji.\n--screenshot requires --demo and exits after capturing the synthetic UI.\n--ui-benchmark requires --demo, measures synthetic updates/resizing and exits; it cannot be combined with --screenshot.\n--software-rendering uses Skia's CPU renderer for GUI troubleshooting.\n--startup-trace writes bounded GUI checkpoints, without account content. macOS logs startup automatically under ~/Library/Logs/Heya.\n--startup-check requires --demo and exits after the first native redraw returns; do not combine it with screenshots or benchmarks."
+                    "Heya\n\nUsage: heya [--demo | --offline] [--light | --dark] [--size WIDTHxHEIGHT] [--demo-chat ID] [--screenshot FILE.png] [--ui-benchmark] [--software-rendering] [--startup-trace FILE.log] [--startup-check]\n\nSaved sessions resume automatically. On first use, click Connect to link WhatsApp.\n--offline opens saved chats without connecting; Connect remains available.\n--demo uses synthetic chats without opening account files or the network.\n--demo-chat selects a synthetic chat (1–15); 7 demonstrates message cards; 8 dates and spacing; 9 received photos; 10 received audio; 11 received documents; 12 pin/unpin notices; 13 color emoji; 14 received videos; 15 call history.\n--screenshot requires --demo and exits after capturing the synthetic UI.\n--ui-benchmark requires --demo, measures synthetic updates/resizing and exits; it cannot be combined with --screenshot.\n--software-rendering uses Skia's CPU renderer for GUI troubleshooting.\n--startup-trace writes bounded GUI checkpoints, without account content. macOS logs startup automatically under ~/Library/Logs/Heya.\n--startup-check requires --demo and exits after the first native redraw returns; do not combine it with screenshots or benchmarks."
                 );
                 return Ok(None);
             }
             other => return Err(format!("Unknown option {other}. Use --help.")),
         }
     }
-    if options.demo_chat.is_some() && (!options.demo || !matches!(options.demo_chat, Some(1..=13)))
+    if options.demo_chat.is_some() && (!options.demo || !matches!(options.demo_chat, Some(1..=15)))
     {
-        return Err("--demo-chat requires --demo and a chat ID from 1 to 13".into());
+        return Err("--demo-chat requires --demo and a chat ID from 1 to 15".into());
     }
     if options.screenshot.is_some() && !options.demo {
         return Err(
@@ -187,6 +200,9 @@ fn options_from(args: impl IntoIterator<Item = String>) -> Result<Option<Options
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::args().nth(1).as_deref() == Some("--heya-video-worker") {
+        std::process::exit(if video_process::child().is_ok() { 0 } else { 1 });
+    }
     #[cfg(target_os = "macos")]
     if std::env::args().nth(1).as_deref() == Some("--heya-pdf-worker") {
         macos::pdf_worker();
@@ -312,7 +328,14 @@ fn run(options: Options, trace: &startup::Trace) -> Result<(), Box<dyn std::erro
             preferences_status,
         );
     presentation_content::bind_actions(&ui, &runtime);
-    let service = if options.demo {
+    let service = if options.demo
+        && options.ui_benchmark
+        && std::env::var_os("HEYA_BENCHMARK_ALBUM").is_some()
+    {
+        // The archive-backed viewer benchmark supplies its own model and photo
+        // publisher. A second demo publisher would race its startup snapshot.
+        runtime.spawn(async {})
+    } else if options.demo {
         presentation::attach(&ui, &runtime, current_preferences.clone())
     } else {
         live_presentation::attach(&ui, &runtime, options.offline, current_preferences.clone())
@@ -444,7 +467,7 @@ mod option_tests {
         assert!(options.screenshot.is_some());
         assert!(options_from(["--ui-benchmark"].map(String::from)).is_err());
         assert!(options_from(["--demo-chat", "7"].map(String::from)).is_err());
-        assert!(options_from(["--demo", "--demo-chat", "14"].map(String::from)).is_err());
+        assert!(options_from(["--demo", "--demo-chat", "16"].map(String::from)).is_err());
         assert_eq!(
             options_from(["--demo", "--demo-chat", "7"].map(String::from))
                 .unwrap()

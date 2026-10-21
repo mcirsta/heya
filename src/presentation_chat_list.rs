@@ -2,12 +2,12 @@
 use super::chat_row;
 use crate::{ChatRow, domain::ChatSummary};
 use slint::{Model, ModelNotify, ModelTracker};
-use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
+use std::{cell::RefCell, sync::Arc};
 
 struct Rows {
     source: Arc<[ChatSummary]>,
     cache: Vec<Option<ChatRow>>,
-    photos: BTreeMap<i32, (Arc<crate::avatars::Thumbnail>, slint::Image)>,
+    photos: crate::presentation_avatars::Images,
 }
 
 pub(crate) struct ChatListModel {
@@ -21,7 +21,7 @@ impl ChatListModel {
             rows: RefCell::new(Rows {
                 cache: vec![None; source.len()],
                 source,
-                photos: BTreeMap::new(),
+                photos: Default::default(),
             }),
             notify: ModelNotify::default(),
         }
@@ -77,50 +77,21 @@ impl ChatListModel {
     }
 
     pub fn avatar(&self, id: i32) -> slint::Image {
-        self.rows
-            .borrow()
-            .photos
-            .get(&id)
-            .map(|(_, image)| image.clone())
-            .unwrap_or_default()
+        self.rows.borrow().photos.get(&id.into())
     }
 
     pub fn update_avatars(&self, snapshot: &crate::avatars::Snapshot) {
         let mut rows = self.rows.borrow_mut();
-        let mut photos = BTreeMap::new();
-        for (id, pixels) in snapshot.iter() {
-            let image = rows
-                .photos
-                .get(id)
-                .filter(|(old, _)| Arc::ptr_eq(old, pixels))
-                .map(|(_, image)| image.clone())
-                .unwrap_or_else(|| {
-                    let buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
-                        &pixels.pixels,
-                        crate::avatars::EDGE,
-                        crate::avatars::EDGE,
-                    );
-                    slint::Image::from_rgba8(buffer)
-                });
-            photos.insert(*id, (pixels.clone(), image));
-        }
+        let changed_photos = rows.photos.update(snapshot, false);
         let changed: Vec<_> = rows
             .source
             .iter()
             .enumerate()
-            .filter_map(|(index, row)| {
-                let same = match (rows.photos.get(&row.id), photos.get(&row.id)) {
-                    (None, None) => true,
-                    (Some((old, _)), Some((new, _))) => Arc::ptr_eq(old, new),
-                    _ => false,
-                };
-                (!same).then_some(index)
-            })
+            .filter_map(|(index, row)| changed_photos.contains(&row.id.into()).then_some(index))
             .collect();
         for &index in &changed {
             rows.cache[index] = None;
         }
-        rows.photos = photos;
         drop(rows);
         for index in changed {
             self.notify.row_changed(index);
@@ -147,9 +118,7 @@ impl Model for ChatListModel {
             cache[index]
                 .get_or_insert_with(|| {
                     let mut item = chat_row(row);
-                    if let Some((_, image)) = photos.get(&row.id) {
-                        item.avatar = image.clone();
-                    }
+                    item.avatar = photos.get(&row.id.into());
                     item
                 })
                 .clone(),

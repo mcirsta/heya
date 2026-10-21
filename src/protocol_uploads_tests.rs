@@ -253,3 +253,49 @@ async fn large_document_encrypts_and_upload_readers_resume_without_buffering_pla
     drop(resumed);
     assert!(encrypted.upgrade().is_none());
 }
+
+#[tokio::test]
+async fn imported_files_share_encrypted_staging_and_preserve_photo_kind() {
+    let dir = tempfile::tempdir().unwrap();
+    let photo = dir.path().join("Clipboard 你好.PNG");
+    image::RgbaImage::from_pixel(900, 700, image::Rgba([30, 150, 200, 160]))
+        .save(&photo)
+        .unwrap();
+    let document = dir.path().join("Notes.txt");
+    std::fs::write(&document, b"Synthetic document").unwrap();
+    let png = std::fs::read(&photo).unwrap();
+    let paths = attachments::Input::Paths(vec![photo, document], None);
+    let files = stage_input(paths, Control::default()).await.unwrap();
+    assert_eq!(files.len(), 2);
+    assert_eq!(files[0].kind, Kind::Photo);
+    assert_eq!(files[1].kind, Kind::Document);
+    let pasted = stage_input(attachments::Input::Png(png.clone()), Control::default())
+        .await
+        .unwrap();
+    assert_eq!(pasted[0].size, png.len() as u64);
+    let mut original = Vec::new();
+    whatsapp_rust::wacore::download::DownloadUtils::decrypt_stream_to_writer_with_hashes(
+        test_reader(pasted[0].clone()),
+        &pasted[0].key,
+        MediaType::Image,
+        Some(&pasted[0].encrypted_hash),
+        Some(&pasted[0].hash),
+        &mut original,
+    )
+    .unwrap();
+    assert_eq!(original, png);
+    let cancelled = Control::default();
+    cancelled.cancel();
+    assert!(matches!(
+        stage_input(attachments::Input::Png(png), cancelled).await,
+        Err(Error::Cancelled)
+    ));
+    assert!(
+        stage_input(
+            attachments::Input::Paths(vec![dir.path().into()], None),
+            Control::default()
+        )
+        .await
+        .is_err()
+    );
+}

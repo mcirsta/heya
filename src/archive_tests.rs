@@ -22,6 +22,7 @@ pub(crate) fn record(id: &str) -> Record {
         text: format!("Synthetic {id}"),
         raw: vec![1, 2, 3],
         content: Default::default(),
+        album: None,
         thumbnail: Vec::new(),
         visible: true,
         expires: None,
@@ -255,6 +256,7 @@ async fn photo_sidebar_uses_metadata_and_current_group_sender_without_changing_c
         "Photo: First caption 👩🏽‍💻"
     );
     let message = &view.conversation.unwrap().messages[0];
+    assert_eq!(message.sender, "~Fallback Profile");
     assert_eq!(message.text, photo.text);
     assert_eq!(message.content.body.as_deref(), Some(caption));
 
@@ -272,6 +274,10 @@ async fn photo_sidebar_uses_metadata_and_current_group_sender_without_changing_c
             .chat
             .preview
             .starts_with("~Sasha: Photo:")
+    );
+    assert_eq!(
+        conversation(&db, group, 100).await.messages[0].sender,
+        "~Sasha Profile"
     );
     db.save_contacts(
         vec![Contact {
@@ -291,6 +297,10 @@ async fn photo_sidebar_uses_metadata_and_current_group_sender_without_changing_c
             .preview
             .starts_with("Saved: Photo:")
     );
+    assert_eq!(
+        conversation(&db, group, 100).await.messages[0].sender,
+        "Saved Contact"
+    );
     db.save_contacts(
         vec![Contact {
             jid: PN.into(),
@@ -308,6 +318,10 @@ async fn photo_sidebar_uses_metadata_and_current_group_sender_without_changing_c
             .chat
             .preview
             .starts_with("~Sasha: Photo:")
+    );
+    assert_eq!(
+        conversation(&db, group, 100).await.messages[0].sender,
+        "~Sasha Profile"
     );
     db.draft(group, "Keep this draft\nWith its second line".into())
         .await

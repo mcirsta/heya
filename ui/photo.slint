@@ -28,57 +28,126 @@ export component PhotoTile inherits Rectangle {
     }
 }
 
-// Created only for the one explicitly opened photo. The timeline remains a
-// plain Image. The worker supplies a separately bounded larger decode here.
+// The gallery exists only while open. Seven small cached thumbnails surround
+// the selection; full-size pixels belong only to the current photo.
+export struct PhotoThumbnail { id: int, picture: image, key: string }
+
+component ViewerButton inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    in property <bool> enabled: true;
+    callback activated();
+    width: 40px; height: 40px; border-radius: 20px;
+    background: area.has-hover && root.enabled ? Theme.hover : transparent;
+    opacity: root.enabled ? 1 : 0.32;
+    accessible-role: button; accessible-label: root.label; accessible-enabled: root.enabled;
+    accessible-action-default => {if root.enabled {root.activated();}}
+    border-width: focus.has-focus ? 1px : 0px; border-color: Theme.accent;
+    Image {x: 9px; y: 9px; width: 22px; height: 22px; source: root.icon; colorize: Theme.secondary;}
+    focus := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if event.text == Key.Return || event.text == " " {root.activated(); return accept;}
+            return reject;
+        }
+    }
+    area := TouchArea {enabled: root.enabled; mouse-cursor: pointer; clicked => {focus.focus();root.activated();}}
+}
+
 export component PhotoViewer inherits Rectangle {
+    in property <int> photo-id;
     in property <image> picture;
     in property <string> status;
     in property <bool> ready;
+    in property <string> sender;
+    in property <string> date;
+    in property <string> caption;
+    in property <string> counter;
+    in property <int> previous-id;
+    in property <int> next-id;
+    in property <[PhotoThumbnail]> thumbnails;
+    callback navigate(int);
     callback closed();
     callback retry();
+    callback copy();
     private property <bool> zoomed;
-    background: #10181eef;
-    TouchArea { clicked => {} }
+    changed photo-id => {root.zoomed=false; viewport.content-x=0px; viewport.content-y=0px;}
+    private property <bool> album: root.thumbnails.length>1;
+    private property <length> thumb-size: min(64px, (root.width - 32px - max(0,root.thumbnails.length - 1) * 8px) / max(1,root.thumbnails.length));
+    private property <length> caption-height: root.caption=="" ? 0px : min(76px, caption-text.preferred-height + 12px);
+    private property <length> footer-height: root.caption-height + (root.album ? root.thumb-size + 36px : 0px) + 40px;
+    background: Theme.panel;
+    TouchArea {clicked => {}}
     focus := FocusScope {
-        init => { self.focus(); }
+        init => {self.focus();}
         key-pressed(event) => {
-            if event.text == Key.Escape { root.closed(); return accept; }
-            if event.text == " " { root.zoomed = !root.zoomed; return accept; }
+            if (event.modifiers.control || event.modifiers.meta) && event.text == "c" && root.ready {root.copy();return accept;}
+            if event.text == Key.Escape {root.closed();return accept;}
+            if event.text == Key.LeftArrow {if root.previous-id>0 {root.navigate(root.previous-id);} return accept;}
+            if event.text == Key.RightArrow {if root.next-id>0 {root.navigate(root.next-id);} return accept;}
+            if event.text == " " {if root.ready {root.zoomed=!root.zoomed;} return accept;}
             return reject;
         }
-        ScrollView {
-            x: 16px; y: 64px; width: parent.width - 32px; height: parent.height - 124px;
-            content-width: root.zoomed ? max(self.visible-width,root.picture.width * 1px) : self.visible-width;
-            content-height: root.zoomed ? max(self.visible-height,root.picture.height * 1px) : self.visible-height;
-            Image {
-                width: parent.content-width; height: parent.content-height;
-                source: root.picture; image-fit: contain;
+        header := Rectangle {
+            x: 0px; y: 0px; height: 72px; width: parent.width;
+            background: Theme.panel;
+            Rectangle {x: 0px; y: parent.height - 1px; width: parent.width; height: 1px; background: Theme.outline;}
+            Rectangle {
+                x: 20px; y: 16px; width: 40px; height: 40px; border-radius: 20px; background: Theme.accent.with-alpha(0.12);
+                Image {x: 10px; y: 10px; width: 20px; height: 20px; source: @image-url("icons/photo.svg"); colorize: Theme.accent;}
+            }
+            Text {x: 72px; y: 14px; width: max(1px,parent.width - 228px); height: 24px; text: root.sender=="" ? @tr("Photo") : root.sender; color: Theme.text; font-size: 15px; font-weight: 600; overflow: elide;}
+            Text {x: 72px; y: 39px; width: max(1px,parent.width - 228px); height: 18px; text: root.date; color: Theme.secondary; font-size: 12px; overflow: elide;}
+            ViewerButton {x: parent.width - 144px; y: 16px; icon: @image-url("icons/copy.svg"); label: @tr("Copy image"); enabled: root.ready; activated => {root.copy();}}
+            ViewerButton {x: parent.width - 96px; y: 16px; icon: root.zoomed ? @image-url("icons/viewer-fit.svg") : @image-url("icons/viewer-zoom.svg"); label: root.zoomed ? @tr("Fit photo") : @tr("Zoom photo"); enabled: root.ready; activated => {root.zoomed=!root.zoomed;}}
+            ViewerButton {x: parent.width - 48px; y: 16px; icon: @image-url("icons/close.svg"); label: @tr("Close photo"); activated => {root.closed();}}
+        }
+        stage := Rectangle {
+            x: 0px; y: header.height; width: parent.width; height: max(40px,parent.height - header.height - root.footer-height);
+            viewport := ScrollView {
+                x: root.album ? 64px : 24px; y: 16px; width: max(1px,parent.width - 2 * self.x); height: max(1px,parent.height - 32px);
+                content-width: root.zoomed ? max(self.visible-width,root.picture.width * 1px) : self.visible-width;
+                content-height: root.zoomed ? max(self.visible-height,root.picture.height * 1px) : self.visible-height;
+                Image {width: parent.content-width; height: parent.content-height; source: root.picture; image-fit: contain;}
+            }
+            if root.album: previous := ViewerButton {
+                x: 12px; y: (parent.height - self.height)/2; icon: @image-url("icons/viewer-previous.svg");
+                label: @tr("Previous photo"); enabled: root.previous-id>0; activated => {root.navigate(root.previous-id);}
+            }
+            if root.album: next := ViewerButton {
+                x: parent.width - self.width - 12px; y: (parent.height - self.height)/2; icon: @image-url("icons/viewer-next.svg");
+                label: @tr("Next photo"); enabled: root.next-id>0; activated => {root.navigate(root.next-id);}
+            }
+            if !root.ready: Rectangle {
+                x: max(64px,(parent.width - self.width)/2); y: (parent.height - self.height)/2;
+                width: min(340px,parent.width - 128px); height: 52px; border-radius: 26px;
+                background: Theme.panel; border-width: 1px; border-color: Theme.outline;
+                Text {x: 16px; width: parent.width - 32px; height: parent.height; text: root.status; font-size: 13px; color: Theme.secondary; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap;}
+                ContentTarget {width: parent.width; height: parent.height; border-radius: 26px; label: root.status; activated => {root.retry();}}
             }
         }
-        Text {
-            x: 20px; y: 18px; width: parent.width - 132px; height: 28px;
-            text: @tr("Photo"); color: white; font-size: 18px; font-weight: 600;
-        }
-        IconButton {
-            x: parent.width - 104px; y: 12px;
-            icon: @image-url("icons/search.svg"); ink: white;
-            label: root.zoomed ? @tr("Fit photo") : @tr("Zoom photo");
-            activated => { root.zoomed = !root.zoomed; }
-        }
-        close := IconButton {
-            x: parent.width - 56px; y: 12px;
-            icon: @image-url("icons/close.svg"); ink: white; label: @tr("Close photo");
-            activated => { root.closed(); }
-        }
-        Text {
-            x: 20px; y: parent.height - 52px; width: parent.width - 40px; height: 40px;
-            text: root.ready ? @tr("Space to zoom or fit · Esc to close") : root.status;
-            color: white; font-size: 13px; wrap: word-wrap;
-            horizontal-alignment: center; vertical-alignment: center;
-        }
-        if !root.ready: ContentTarget {
-            x: 20px; y: parent.height - 52px; width: parent.width - 40px; height: 40px;
-            label: root.status; activated => { root.retry(); }
+        footer := Rectangle {
+            x: 0px; y: parent.height - root.footer-height; width: parent.width; height: root.footer-height;
+            caption-scroll := ScrollView {
+                x: max(24px,(parent.width - 760px)/2); y: 0px; width: min(760px,parent.width - 48px); height: root.caption-height;
+                content-width: self.visible-width; content-height: caption-text.preferred-height;
+                caption-text := Text {x: 0px; y: 0px; height: self.preferred-height; width: parent.visible-width; text: root.caption; wrap: word-wrap; color: Theme.text; font-size: 14px; horizontal-alignment: center;}
+            }
+            if root.album: strip := Rectangle {
+                x: (parent.width - self.width)/2; y: root.caption-height + 12px;
+                width: root.thumbnails.length * root.thumb-size + max(0,root.thumbnails.length - 1)*8px; height: root.thumb-size + 8px;
+                for thumbnail[i] in root.thumbnails: thumb := Rectangle {
+                    x: i * (root.thumb-size + 8px); width: root.thumb-size; height: root.thumb-size;
+                    border-radius: 8px; border-width: thumbnail.id==root.photo-id ? 3px : 1px;
+                    border-color: thumbnail.id==root.photo-id ? Theme.accent : Theme.outline;
+                    background: Theme.surface;
+                    opacity: thumbnail.id==root.photo-id || area.has-hover ? 1 : 0.65;
+                    Image {x: 5px; y: 5px; width: parent.width - 10px; height: parent.height - 10px; source: thumbnail.picture.width>0 ? thumbnail.picture : @image-url("icons/photo.svg"); colorize: thumbnail.picture.width>0 ? transparent : Theme.secondary; image-fit: contain;}
+                    accessible-role: button; accessible-label: @tr("View album photo"); accessible-action-default => {root.navigate(thumbnail.id);}
+                    area := TouchArea {mouse-cursor: pointer; clicked => {focus.focus();root.navigate(thumbnail.id);}}
+                }
+            }
+            Text {x: 24px; y: parent.height - 30px; width: parent.width - 48px; height: 20px; text: root.counter; font-size: 12px; color: Theme.secondary; horizontal-alignment: center;}
         }
     }
 }

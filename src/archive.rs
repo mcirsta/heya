@@ -29,10 +29,14 @@ mod receipts;
 pub use receipts::{ReceiptJob, ReceiptKind};
 #[path = "archive_actions.rs"]
 mod actions;
+#[path = "archive_albums.rs"]
+mod albums;
 #[path = "archive_attachments.rs"]
 mod attachments;
 #[path = "archive_audio.rs"]
 mod audio;
+#[path = "archive_calls.rs"]
+mod calls;
 #[path = "archive_controls.rs"]
 mod controls;
 #[path = "archive_document_previews.rs"]
@@ -51,6 +55,8 @@ mod photos;
 mod repair;
 #[path = "archive_timeline.rs"]
 mod timeline;
+#[path = "archive_video.rs"]
+mod video;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
@@ -89,6 +95,7 @@ pub struct Record {
     pub text: String,
     pub raw: Vec<u8>,
     pub content: crate::message_content::Content,
+    pub album: Option<crate::message_content::Album>,
     pub thumbnail: Vec<u8>,
     pub visible: bool,
     pub expires: Option<i64>,
@@ -170,7 +177,7 @@ impl Archive {
         db.busy_timeout(Duration::from_secs(5))?;
         db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA secure_delete=ON; PRAGMA temp_store=MEMORY;")?;
         let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if version > 16 {
+        if version > 18 {
             return Err(Error::Database);
         }
         if version == 0 {
@@ -271,6 +278,18 @@ impl Archive {
             let tx = db.transaction()?;
             tx.execute_batch(include_str!("archive_chat_settings.sql"))?;
             tx.pragma_update(None, "user_version", 16)?;
+            tx.commit()?;
+        }
+        if version < 17 {
+            let tx = db.transaction()?;
+            tx.execute_batch(include_str!("archive_video.sql"))?;
+            tx.pragma_update(None, "user_version", 17)?;
+            tx.commit()?;
+        }
+        if version < 18 {
+            let tx = db.transaction()?;
+            tx.execute_batch(include_str!("archive_albums.sql"))?;
+            tx.pragma_update(None, "user_version", 18)?;
             tx.commit()?;
         }
         // Never resend something that may have reached the network before a crash.
@@ -644,9 +663,7 @@ impl Archive {
                 let sender_name: String = r.get(9)?;
                 let saved: bool = r.get(10)?;
                 let sender: String = r.get(11)?;
-                let sender_name = if sender_name.trim().is_empty() {
-                    sender.split('@').next().unwrap_or(&sender).to_owned()
-                } else if saved { sender_name } else { format!("~{sender_name}") };
+                let sender_name = domain::participant_name(&sender_name, saved, &sender);
                 let notice = r.get::<_,Option<String>>(14)?.and_then(|s| serde_json::from_str::<crate::message_content::Notice>(&s).ok());
                 let notice_text = notice.map(|n| n.label(if outgoing {"You"} else {&sender_name}));
                 let preview = domain::chat_preview(
@@ -661,6 +678,9 @@ impl Archive {
                     title,
                     tint: 0x91d6bc,
                     preview,
+                    call_kind: if r.get::<_,i32>(0)? != selected && !r.get::<_,String>(4)?.is_empty() {0} else {
+                        match notice { Some(crate::message_content::Notice::Call(c))=>if c.video==Some(true) {2} else {1}, _=>0 }
+                    },
                     time: time(r.get(5)?),
                     unread: r.get::<_, u32>(3)? as usize,
                     marked_unread: r.get(6)?,
@@ -766,7 +786,7 @@ fn insert_record(tx: &Transaction<'_>, r: Record, live: bool) -> Result<()> {
     if let Some(change) = &r.change {
         edits::record(tx, chat, &sender, change)?;
     }
-    let inserted = tx.execute("INSERT OR IGNORE INTO messages(chat_id,sender,wire_id,stamp,outgoing,sender_name,body,raw,visible,expires,delivery,source_chat,source_sender,content,thumbnail) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)", params![chat,sender,r.id,r.timestamp,r.outgoing,r.sender_name,r.text,r.raw,r.visible,r.expires,if r.outgoing {"accepted"} else {""},r.chat,r.sender,encode_content(&r.content)?,r.thumbnail])?;
+    let inserted = tx.execute("INSERT OR IGNORE INTO messages(chat_id,sender,wire_id,stamp,outgoing,sender_name,body,raw,visible,expires,delivery,source_chat,source_sender,content,thumbnail,album,album_index) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)", params![chat,sender,r.id,r.timestamp,r.outgoing,r.sender_name,r.text,r.raw,r.visible,r.expires,if r.outgoing {"accepted"} else {""},r.chat,r.sender,encode_content(&r.content)?,r.thumbnail,r.album.as_ref().map(|a|&a.parent),r.album.as_ref().and_then(|a|a.index)])?;
     let inserted_row = tx.last_insert_rowid();
     // Only duplicate history can fill in a revoke placeholder's original
     // position/author. Ordinary incoming messages keep the simple insert path;
@@ -804,6 +824,18 @@ fn insert_record(tx: &Transaction<'_>, r: Record, live: bool) -> Result<()> {
             if r.outgoing { "accepted" } else { "" },
             value,
         )?;
+    }
+    if matches!(
+        r.content.notice,
+        Some(crate::message_content::Notice::Call(_))
+    ) {
+        if inserted == 0 {
+            calls::update(tx, &r, chat, &sender)?;
+        }
+        // Call IDs are not ordinary message receipt/history keys. Never queue receipts,
+        // delivery updates, unread messages or an outbox operation for them.
+        tx.execute("UPDATE messages SET delivery='',unread=0,seen=1,expires=NULL WHERE chat_id=?1 AND sender=?2 AND wire_id=?3 AND (delivery<>'' OR unread<>0 OR seen<>1 OR expires IS NOT NULL)",params![chat,sender,r.id])?;
+        return Ok(());
     }
     if r.outgoing {
         tx.execute("UPDATE messages SET expires=CASE WHEN expires IS NULL THEN NULL ELSE ?3+(expires-stamp) END,stamp=?3 WHERE chat_id=?1 AND sender='#self' AND wire_id=?2 AND delivery IN ('queued','sending','uncertain','failed') AND NOT EXISTS(SELECT 1 FROM message_controls WHERE event_wire=?2)", params![chat,r.id,r.timestamp])?;
@@ -955,10 +987,11 @@ fn move_records(
         &format!("UPDATE OR IGNORE messages SET {column}=?2 WHERE {column}=?1"),
         [from, to],
     )?;
-    tx.execute(&format!("INSERT INTO messages(chat_id,sender,wire_id,stamp,outgoing,sender_name,body,raw,visible,deleted,expires,delivery,source_chat,source_sender,unread,seen,content,thumbnail)
-        SELECT {chat},{sender},wire_id,stamp,outgoing,sender_name,body,raw,visible,deleted,expires,delivery,source_chat,source_sender,unread,seen,content,thumbnail FROM messages WHERE {column}=?1
+    tx.execute(&format!("INSERT INTO messages(chat_id,sender,wire_id,stamp,outgoing,sender_name,body,raw,visible,deleted,expires,delivery,source_chat,source_sender,unread,seen,content,thumbnail,album,album_index)
+        SELECT {chat},{sender},wire_id,stamp,outgoing,sender_name,body,raw,visible,deleted,expires,delivery,source_chat,source_sender,unread,seen,content,thumbnail,album,album_index FROM messages WHERE {column}=?1
         ON CONFLICT(chat_id,sender,wire_id) DO UPDATE SET
         body=CASE WHEN excluded.deleted=1 THEN excluded.body ELSE messages.body END,edit_version=-1,
+        album=coalesce(messages.album,excluded.album),album_index=coalesce(messages.album_index,excluded.album_index),
         content=CASE WHEN excluded.deleted=1 OR messages.deleted=1 THEN '' WHEN messages.content='' THEN excluded.content ELSE messages.content END,
         thumbnail=CASE WHEN excluded.deleted=1 OR messages.deleted=1 THEN X'' WHEN messages.content='' THEN excluded.thumbnail ELSE messages.thumbnail END,
         raw=CASE WHEN excluded.deleted=1 OR messages.deleted=1 THEN X'' ELSE messages.raw END,
@@ -984,13 +1017,15 @@ fn move_records(
         WHERE loser.{column}=?1 AND winner.id<>loser.id AND winner.raw=loser.raw AND winner.content=loser.content
         AND winner.deleted=0 AND winner.visible=1 AND (winner.expires IS NULL OR winner.expires>unixepoch()) AND p.state=2
         ON CONFLICT(message_id) DO UPDATE SET original=excluded.original,preview=excluded.preview,state=2,revision=message_photos.revision+1 WHERE message_photos.state<>2"), [from,to])?;
-    tx.execute(&format!("INSERT INTO message_audio(message_id,original)
+    for table in ["message_audio", "message_videos"] {
+        tx.execute(&format!("INSERT INTO {table}(message_id,original)
         SELECT winner.id,a.original FROM messages loser
         JOIN messages winner ON winner.chat_id={target_chat} AND winner.sender={target_sender} AND winner.wire_id=loser.wire_id
-        JOIN message_audio a ON a.message_id=loser.id
+        JOIN {table} a ON a.message_id=loser.id
         WHERE loser.{column}=?1 AND winner.id<>loser.id AND winner.raw=loser.raw AND winner.content=loser.content
         AND winner.deleted=0 AND winner.visible=1 AND (winner.expires IS NULL OR winner.expires>unixepoch())
         ON CONFLICT(message_id) DO NOTHING"), [from,to])?;
+    }
     tx.execute(&format!("INSERT INTO outgoing_receipts(message_id,kind,state)
         SELECT winner.id,r.kind,r.state FROM messages loser
         JOIN messages winner ON winner.chat_id={target_chat} AND winner.sender={target_sender} AND winner.wire_id=loser.wire_id

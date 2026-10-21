@@ -8,6 +8,11 @@ export component Composer inherits Rectangle {
     callback hint-dismissed();
     in-out property <bool> show-hint: true;
     callback send();
+    callback paste(int,int);
+    in property <bool> custom-paste;
+    out property <bool> focused: editor.has-focus && editor.preedit-text == "";
+    out property <int> anchor: editor.anchor-position-byte-offset;
+    out property <int> cursor: editor.cursor-position-byte-offset;
     callback edited(string);
     callback emoji(length,length);
     callback attach(length,length);
@@ -133,6 +138,10 @@ export component Composer inherits Rectangle {
                         }
                     }
                     key-pressed(event) => {
+                        if root.custom-paste && !event.modifiers.alt && ((event.modifiers.control && !event.modifiers.shift && event.text == "v") || (event.modifiers.shift && event.text == Key.Insert)) {
+                            if !event.repeat && editor.preedit-text == "" { root.paste(editor.anchor-position-byte-offset,editor.cursor-position-byte-offset); }
+                            return accept;
+                        }
                         if event.text == Key.Return && !event.modifiers.shift && !event.modifiers.alt && (event.modifiers.control || (root.enter-sends && !event.modifiers.meta)) {
                             if root.enabled && root.can-send && !event.repeat { root.send(); }
                             return accept;

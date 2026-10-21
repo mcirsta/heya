@@ -171,14 +171,26 @@ fn requested(requests: &watch::Receiver<Request>) -> bool {
 pub struct LiveServices {
     pub chat_sources: watch::Sender<crate::chat_management::Sources>,
     pub preferences: watch::Receiver<crate::preferences::Preferences>,
-    pub avatar_demand: watch::Receiver<Vec<i32>>,
+    pub avatar_demand: watch::Receiver<Vec<crate::avatars::Target>>,
     pub photo_demand: watch::Receiver<crate::photos::Demand>,
     pub thumbnail_demand: watch::Receiver<Vec<i32>>,
     pub audio_sources: watch::Sender<crate::audio::Sources>,
+    pub video_sources: watch::Sender<crate::video::Sources>,
     pub history_sources: watch::Sender<crate::phone_history::Sources>,
     pub download_sources: watch::Sender<crate::downloads::Sources>,
     pub upload_sources: watch::Sender<crate::attachments::Sources>,
     pub presence: crate::presence::Channels,
+}
+
+impl LiveServices {
+    fn clear_sources(&self) {
+        self.audio_sources.send_replace(None);
+        self.video_sources.send_replace(None);
+        self.download_sources.send_replace(None);
+        self.upload_sources.send_replace(None);
+        self.history_sources.send_replace(None);
+        self.chat_sources.send_replace(None);
+    }
 }
 
 async fn connect(
@@ -190,29 +202,13 @@ async fn connect(
 ) -> Result<(), Failure> {
     let audio_sources = &services.audio_sources;
     let chat_changes = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    struct ClearMediaSources(
-        watch::Sender<crate::audio::Sources>,
-        watch::Sender<crate::downloads::Sources>,
-        watch::Sender<crate::attachments::Sources>,
-        watch::Sender<crate::phone_history::Sources>,
-        watch::Sender<crate::chat_management::Sources>,
-    );
-    impl Drop for ClearMediaSources {
+    struct ClearMediaSources<'a>(&'a LiveServices);
+    impl Drop for ClearMediaSources<'_> {
         fn drop(&mut self) {
-            self.0.send_replace(None);
-            self.1.send_replace(None);
-            self.2.send_replace(None);
-            self.3.send_replace(None);
-            self.4.send_replace(None);
+            self.0.clear_sources();
         }
     }
-    let _clear_sources = ClearMediaSources(
-        audio_sources.clone(),
-        services.download_sources.clone(),
-        services.upload_sources.clone(),
-        services.history_sources.clone(),
-        services.chat_sources.clone(),
-    );
+    let _clear_sources = ClearMediaSources(services);
     updates.send_replace(Snapshot::new(Phase::Opening));
     let store = open_store(files).await;
     if !requested(requests) {
@@ -264,16 +260,7 @@ async fn connect(
         timeout(Duration::from_secs(15), async {
             let report = client.shutdown().await;
             drop(client);
-            finish_shutdown(
-                report,
-                release,
-                audio_sources,
-                &services.download_sources,
-                &services.upload_sources,
-                &services.history_sources,
-                &services.chat_sources,
-            )
-            .await
+            finish_shutdown(report, release, services).await
         })
         .await
         .map_err(|_| Failure::Shutdown)??;
@@ -287,16 +274,7 @@ async fn connect(
         timeout(Duration::from_secs(15), async {
             let report = client.shutdown().await;
             drop(client);
-            finish_shutdown(
-                report,
-                release,
-                audio_sources,
-                &services.download_sources,
-                &services.upload_sources,
-                &services.history_sources,
-                &services.chat_sources,
-            )
-            .await
+            finish_shutdown(report, release, services).await
         })
         .await
         .map_err(|_| Failure::Shutdown)??;
@@ -406,6 +384,7 @@ async fn connect(
                         if phase == Phase::Connected && let Err(error) = protocol_messages::verify_identity(&bot.client(),&archive).await { terminal=Some(archive_failure(error));break; }
                         online_tx.send_replace(phase == Phase::Connected);
                         audio_sources.send_replace((phase==Phase::Connected).then(||Arc::new(crate::protocol_audio::Audio(bot.client())) as Arc<dyn crate::audio::Source>));
+                        services.video_sources.send_replace((phase==Phase::Connected).then(||Arc::new(crate::protocol_video::Video(bot.client())) as Arc<dyn crate::video::Source>));
                         services.history_sources.send_replace((phase==Phase::Connected).then(||Arc::new(crate::protocol_history::History(bot.client())) as Arc<dyn crate::phone_history::Source>));
                         services.chat_sources.send_replace((phase==Phase::Connected).then(||Arc::new(crate::protocol_chat_management::Chats(bot.client(),chat_changes.clone())) as Arc<dyn crate::chat_management::Source>));
                         services.upload_sources.send_replace((phase==Phase::Connected).then(||Arc::new(crate::protocol_uploads::Uploads(bot.client())) as Arc<dyn crate::attachments::Uploader>));
@@ -533,16 +512,7 @@ async fn connect(
                 .map_err(|_| Failure::Archive)
                 .and_then(|result| result.map_err(archive_failure))
         };
-        finish_shutdown(
-            report,
-            release,
-            audio_sources,
-            &services.download_sources,
-            &services.upload_sources,
-            &services.history_sources,
-            &services.chat_sources,
-        )
-        .await?;
+        finish_shutdown(report, release, services).await?;
         if contact_result?
             && !matches!(
                 terminal,
@@ -604,22 +574,12 @@ fn archive_failure(error: crate::archive::Error) -> Failure {
 async fn finish_shutdown(
     report: whatsapp_rust::ShutdownReport,
     release: whatsapp_rust::StoreRelease,
-    audio_sources: &watch::Sender<crate::audio::Sources>,
-    download_sources: &watch::Sender<crate::downloads::Sources>,
-    upload_sources: &watch::Sender<crate::attachments::Sources>,
-    history_sources: &watch::Sender<crate::phone_history::Sources>,
-    chat_sources: &watch::Sender<crate::chat_management::Sources>,
+    services: &LiveServices,
 ) -> Result<(), Failure> {
     use whatsapp_rust::client::DrainOutcome;
-    // A watch channel retains its last value even after the audio task exits.
-    // That value owns a Client, so clearing it only when connect() returns would
-    // deadlock this ownership fence. Also cancels an in-flight audio download
-    // when disconnecting while the window remains open.
-    audio_sources.send_replace(None);
-    download_sources.send_replace(None);
-    upload_sources.send_replace(None);
-    history_sources.send_replace(None);
-    chat_sources.send_replace(None);
+    // Retained source snapshots own SDK Clients. Clear every media source before
+    // waiting for store release, including in-flight video downloads.
+    services.clear_sources();
     let saved = report.device.is_ok()
         && report.inbound == DrainOutcome::Completed
         && report.outbound == DrainOutcome::Completed
@@ -1034,7 +994,7 @@ mod tests {
         );
         let photo = crate::avatars::Thumbnail::from_pixels(vec![42; 65536]).unwrap();
         let entry = archive
-            .avatar_entries(vec![own_chat], false)
+            .avatar_entries(vec![own_chat.into()], false)
             .await
             .unwrap()
             .remove(0);
@@ -1059,7 +1019,13 @@ mod tests {
         protocol_messages::event(&archive, &client, received.recv().await.unwrap())
             .await
             .unwrap();
-        assert!(!archive.avatar_entries(vec![own_chat], true).await.unwrap()[0].has_photo);
+        assert!(
+            !archive
+                .avatar_entries(vec![own_chat.into()], true)
+                .await
+                .unwrap()[0]
+                .has_photo
+        );
         archive.blocking(|c|{c.execute_batch("CREATE TRIGGER fail_ingest BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT,'synthetic disk failure'); END;")?;Ok(())}).unwrap();
         assert!(hook.on_messages(client.clone(), &[message]).await.is_err());
         assert_eq!(*failed.borrow(), Some(archive::Error::Database));
@@ -1069,16 +1035,7 @@ mod tests {
         timeout(Duration::from_secs(5), async {
             let report = client.shutdown().await;
             drop(client);
-            finish_shutdown(
-                report,
-                release,
-                &watch::channel(None).0,
-                &watch::channel(None).0,
-                &watch::channel(None).0,
-                &watch::channel(None).0,
-                &watch::channel(None).0,
-            )
-            .await
+            finish_shutdown(report, release, &test_services()).await
         })
         .await
         .unwrap()
@@ -1179,11 +1136,11 @@ mod tests {
             finish_shutdown(
                 report,
                 release,
-                &audio_sources,
-                &download_sources,
-                &watch::channel(None).0,
-                &watch::channel(None).0,
-                &watch::channel(None).0,
+                &LiveServices {
+                    audio_sources,
+                    download_sources,
+                    ..test_services()
+                },
             )
             .await
         })
@@ -1215,28 +1172,27 @@ mod tests {
         requests.send_replace(Request::Connect);
         requests.send_replace(Request::Disconnect);
         drop(requests);
-        run(
-            receiver,
-            updates,
-            watch::channel(None).0,
-            LiveServices {
-                preferences: watch::channel(crate::preferences::Preferences::default()).1,
-                avatar_demand: watch::channel(Vec::new()).1,
-                photo_demand: watch::channel(crate::photos::Demand::default()).1,
-                thumbnail_demand: watch::channel(Vec::new()).1,
-                audio_sources: watch::channel(None).0,
-                history_sources: watch::channel(None).0,
-                chat_sources: watch::channel(None).0,
-                download_sources: watch::channel(None).0,
-                upload_sources: watch::channel(None).0,
-                presence: crate::presence::Channels {
-                    selected: watch::channel(0).1,
-                    snapshots: watch::channel(crate::presence::Snapshot::default()).0,
-                },
-            },
-        )
-        .await;
+        run(receiver, updates, watch::channel(None).0, test_services()).await;
         assert_eq!(snapshots.borrow().phase, Phase::Idle);
+    }
+
+    pub(super) fn test_services() -> LiveServices {
+        LiveServices {
+            preferences: watch::channel(crate::preferences::Preferences::default()).1,
+            avatar_demand: watch::channel(Vec::new()).1,
+            photo_demand: watch::channel(crate::photos::Demand::default()).1,
+            thumbnail_demand: watch::channel(Vec::new()).1,
+            audio_sources: watch::channel(None).0,
+            video_sources: watch::channel(None).0,
+            history_sources: watch::channel(None).0,
+            chat_sources: watch::channel(None).0,
+            download_sources: watch::channel(None).0,
+            upload_sources: watch::channel(None).0,
+            presence: crate::presence::Channels {
+                selected: watch::channel(0).1,
+                snapshots: watch::channel(crate::presence::Snapshot::default()).0,
+            },
+        }
     }
 
     #[test]

@@ -161,6 +161,10 @@ pub fn bind(ui: &AppWindow, submit: impl Fn(Command) -> bool + 'static) {
             if action == 16 {
                 ui.invoke_copy_value(row.message.wire_id.clone());
                 ui.invoke_close_message_actions();
+            } else if action == 18 {
+                let id = ui.get_action_message();
+                ui.invoke_close_message_actions();
+                ui.invoke_copy_photo(id);
             } else if action == COPY {
                 if let crate::message_content::Target::Copy(value) =
                     crate::presentation::timeline::action(&ui, row.message.id, -6)
@@ -327,6 +331,15 @@ fn menu_entries(ui: &AppWindow, row: &crate::MessageRow) -> Vec<crate::ui::Messa
             "Please wait for the current action",
             false,
         );
+        if row.has_photo {
+            add(
+                18,
+                "Copy image",
+                row.photo_state == 2 && !ui.get_clipboard_busy(),
+                "Wait for the photo to finish loading",
+                false,
+            );
+        }
         if row.outgoing {
             add(
                 15,
@@ -453,6 +466,15 @@ fn menu_entries(ui: &AppWindow, row: &crate::MessageRow) -> Vec<crate::ui::Messa
             "Download",
             !(1..=3).contains(&ui.get_download_phase()),
             "Wait for the current download or cancel it",
+            false,
+        );
+    }
+    if row.has_photo {
+        add(
+            18,
+            "Copy image",
+            row.photo_state == 2 && !ui.get_clipboard_busy(),
+            "Wait for the photo to finish loading",
             false,
         );
     }

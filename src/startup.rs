@@ -1,7 +1,7 @@
 //! Bounded GUI startup diagnostics. No account data, polling thread or frame log.
 use slint::{
     ComponentHandle,
-    winit_030::{
+    winit_031::{
         CustomApplicationHandler, EventResult, WinitWindowAccessor,
         winit::{event::WindowEvent, event_loop::ActiveEventLoop, window::WindowId},
     },
@@ -289,7 +289,7 @@ pub fn select_backend(
 
 fn install_surface_diagnostics(trace: &Trace) {
     let trace = trace.clone();
-    // Narrow adapter to the pinned Slint 1.18.1 log API. Capture only its
+    // Narrow adapter to the pinned Slint log API. Capture only its
     // surface-initialization failures, not general runtime/UI debug messages
     // which can contain private strings or image paths. Preserve stderr output.
     let _ = i_slint_core::context::with_global_context(
@@ -318,7 +318,7 @@ struct StartupEvents {
 }
 
 impl CustomApplicationHandler for StartupEvents {
-    fn resumed(&mut self, _: &ActiveEventLoop) -> EventResult {
+    fn resumed(&mut self, _: &dyn ActiveEventLoop) -> EventResult {
         if !self.resumed {
             self.resumed = true;
             if let Some(trace) = &self.trace {
@@ -330,9 +330,9 @@ impl CustomApplicationHandler for StartupEvents {
 
     fn window_event(
         &mut self,
-        _: &ActiveEventLoop,
+        _: &dyn ActiveEventLoop,
         _: WindowId,
-        native: Option<&slint::winit_030::winit::window::Window>,
+        native: Option<&dyn slint::winit_031::winit::window::Window>,
         _: Option<&slint::Window>,
         event: &WindowEvent,
     ) -> EventResult {
@@ -342,7 +342,7 @@ impl CustomApplicationHandler for StartupEvents {
         if let Some(window) = native {
             if !self.native_window {
                 self.native_window = true;
-                let size = window.inner_size();
+                let size = window.surface_size();
                 trace.record(
                     "native_window",
                     &format!(
@@ -364,7 +364,7 @@ impl CustomApplicationHandler for StartupEvents {
         EventResult::Propagate
     }
 
-    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) -> EventResult {
+    fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) -> EventResult {
         // Winit dispatches RedrawRequested synchronously. Reaching this point
         // without exiting establishes return from Slint's draw/present call,
         // not that the compositor displayed pixels on a physical monitor.

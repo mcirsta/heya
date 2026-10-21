@@ -315,3 +315,51 @@ async fn offline_cancel_shutdown_and_failed_archive_never_discard_unsent_selecti
         .unwrap()
         .unwrap();
 }
+
+#[tokio::test]
+async fn imported_selection_requires_send_and_keeps_original_recipient() {
+    let (_dir, db) = fixture();
+    let chat = db.create_chat(PN.into()).await.unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("Pasted.txt");
+    std::fs::write(&path, b"Synthetic").unwrap();
+    let source = uploader();
+    let (commands, rx) = mpsc::channel(8);
+    let (updates, mut snapshots) = watch::channel(Snapshot::default());
+    let (_archives, archive_rx) = watch::channel(Some(db.clone()));
+    let (_online, online_rx) = watch::channel(Some(source.clone() as Arc<dyn Uploader>));
+    let task = tokio::spawn(run(
+        archive_rx,
+        online_rx,
+        rx,
+        updates,
+        Arc::new(Choose(vec![])),
+        false,
+    ));
+    let mut destination = db.attachment_destination(chat).await.unwrap();
+    destination.title = "Captured recipient".into();
+    commands
+        .send(Command::Import {
+            destination,
+            input: Input::Paths(vec![path], None),
+        })
+        .await
+        .unwrap();
+    let ready = phase(&mut snapshots, 3).await;
+    assert_eq!(ready.title, "Captured recipient");
+    assert_eq!(ready.items.len(), 1);
+    assert!(source.calls.lock().unwrap().is_empty());
+    assert!(db.claim_next().await.unwrap().is_none());
+    commands
+        .send(Command::Send("Caption".into()))
+        .await
+        .unwrap();
+    phase(&mut snapshots, 0).await;
+    assert_eq!(source.calls.lock().unwrap()[0].2, chat);
+    assert!(db.claim_next().await.unwrap().is_some());
+    drop(commands);
+    tokio::time::timeout(Duration::from_secs(3), task)
+        .await
+        .unwrap()
+        .unwrap();
+}

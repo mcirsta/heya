@@ -10,9 +10,19 @@ pub(crate) struct Row {
     pub bytes: Option<Vec<u8>>,
     pub original: Option<Vec<u8>>,
 }
-const ELIGIBLE: &str = "m.visible=1 AND m.deleted=0 AND (m.expires IS NULL OR m.expires>unixepoch()) AND json_type(nullif(m.content,''),'$.photo')='object'";
+pub(super) const ELIGIBLE: &str = "m.visible=1 AND m.deleted=0 AND (m.expires IS NULL OR m.expires>unixepoch()) AND json_type(nullif(m.content,''),'$.photo')='object' AND NOT EXISTS(SELECT 1 FROM chats c JOIN chat_settings s ON s.jid=c.jid AND s.kind=2 AND s.value=1 WHERE c.id=m.chat_id)";
 
 impl Archive {
+    /// Copy the original, never the downsampled display preview. Recheck access
+    /// after the menu opens so revoked, expired and locked media cannot be copied.
+    pub async fn clipboard_photo(&self, chat: i32, id: i32) -> Result<Option<Vec<u8>>> {
+        self.call(move |db| {
+            let chat = local_chat(db, chat)?;
+            chat_settings::unlocked(db, chat)?;
+            Ok(db.query_row(&format!("SELECT p.original FROM message_photos p JOIN messages m ON m.id=p.message_id WHERE m.id=?1 AND m.chat_id=?2 AND length(p.original)>0 AND length(p.original)<=?3 AND {ELIGIBLE}"), params![id,chat,crate::photos::MAX_BYTES as i64], |r|r.get(0)).optional()?)
+        }).await
+    }
+
     pub async fn photo_candidates(&self, ids: Vec<i32>) -> Result<Vec<(i32, State)>> {
         self.call(move |db| {
             let mut query = db.prepare_cached(&format!("SELECT coalesce(p.state,0) FROM messages m LEFT JOIN message_photos p ON p.message_id=m.id WHERE m.id=?1 AND {ELIGIBLE}"))?;

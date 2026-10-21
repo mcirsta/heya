@@ -1,3 +1,4 @@
+import { VideoTile } from "video.slint";
 import { AudioPlayer } from "audio.slint";
 import { MessageHoverControls, MessageMenuArrow } from "message-hover.slint";
 import { Theme, Metrics } from "theme.slint";
@@ -12,6 +13,8 @@ export struct MessageRow {
     sent-at: string,
     operation-busy: bool,
     system-notice: bool,
+    call-kind: int,
+    call-details: string,
     has-attachment:bool,
     actionable:bool,
     quote-sender:string,
@@ -22,6 +25,8 @@ export struct MessageRow {
     reaction-status:string,
     id: int,
     sender: string,
+    sender-id: string,
+    sender-avatar: image,
     sender-initials: string,
     text: string,
     long-text: bool,
@@ -46,6 +51,8 @@ export struct MessageRow {
     audio-waveform: string,
     audio-duration: string,
     has-photo: bool,
+    has-video: bool,
+    video-duration: string,
     photo-width: float,
     photo-height: float,
     photo-image: image,
@@ -59,6 +66,7 @@ export component MessageBubble inherits Rectangle {
     in property <color> tint;
     callback activate(int);
     callback audio-control(int,float);
+    callback video-control(int,float);
     callback message-action(int,length,length);
     in property <bool> actions-enabled;
     in property <bool> menu-open;
@@ -79,13 +87,15 @@ export component MessageBubble inherits Rectangle {
     private property <length> footer-width: stamp.preferred-width;
     // Single-line messages share a baseline with the footer. Wrapped text keeps
     // a separate footer until the text renderer exposes last-line metrics.
-    private property <bool> inline-time: (root.message.has-audio && root.footer-width + 100px <= root.max-bubble) || (!root.message.long-text && !root.message.has-audio && !root.message.has-photo && !root.message.has-document && natural.preferred-width + root.footer-width + 28px <= root.max-bubble && natural.preferred-height <= line-probe.preferred-height + 1px);
+    private property <bool> inline-time: (root.message.has-audio && root.footer-width + 100px <= root.max-bubble) || (!root.message.long-text && !root.message.has-audio && !root.message.has-photo && !root.message.has-video && !root.message.has-document && natural.preferred-width + root.footer-width + 28px <= root.max-bubble && natural.preferred-height <= line-probe.preferred-height + 1px);
     private property <length> photo-cap: max(1px,min(320px,root.max-bubble - 12px));
     private property <float> photo-scale: min(1,min(root.photo-cap / 1px / max(1,root.message.photo-width), 440 / max(1,root.message.photo-height)));
     private property <length> photo-width: max(min(120px,root.photo-cap),root.message.photo-width * root.photo-scale * 1px);
     private property <length> photo-height: min(440px,max(90px,root.message.photo-height * root.photo-scale * 1px));
+    private property <bool> visual-media: root.message.has-photo || root.message.has-video;
     private property <bool> photo-only: root.message.has-photo && root.message.text == "";
-    private property <length> photo-space: root.message.has-photo ? root.photo-height + (root.photo-only ? 0px : 6px) : 0px;
+    private property <bool> video-only: root.message.has-video && root.message.text == "";
+    private property <length> photo-space: root.visual-media ? root.photo-height + (root.photo-only || root.video-only ? 0px : 6px) : 0px;
     private property <bool> document-only: root.message.has-document && root.message.text == "";
     private property <length> document-preview-height: root.message.has-thumbnail ? min(140px,max(80px,(bubble.width - 12px) * 0.4)) : 0px;
     private property <length> document-space: root.message.has-document ? root.document-preview-height + 84px + (root.document-only ? 0px : 6px) : 0px;
@@ -99,14 +109,15 @@ export component MessageBubble inherits Rectangle {
         width: 28px;
         height: 28px;
         initials: root.message.sender-initials;
+        picture: root.message.sender-avatar;
         tint: root.tint;
     }
     bubble := Rectangle {
         x: root.message.outgoing ? parent.width - self.width - Metrics.gutter : Metrics.gutter + root.avatar-space;
         y: 0px;
-        width: root.message.has-document ? min(root.max-bubble,352px) : root.message.has-audio ? min(root.max-bubble,340px) : root.message.has-photo ? min(root.max-bubble,max(root.photo-width + 12px,root.footer-width + 20px)) : root.message.long-text ? root.max-bubble : min(root.max-bubble, max(root.has-preview || root.has-actions || root.quote-height > 0px ? 320px : 0px, max(root.footer-width, max(root.show-sender ? sender.preferred-width : 0px, natural.preferred-width + (root.inline-time ? root.footer-width + 8px : 0px))) + 20px));
+        width: root.message.has-document ? min(root.max-bubble,352px) : root.message.has-audio ? min(root.max-bubble,340px) : root.visual-media ? min(root.max-bubble,max(root.photo-width + 12px,root.footer-width + 20px)) : root.message.long-text ? root.max-bubble : min(root.max-bubble, max(root.has-preview || root.has-actions || root.quote-height > 0px ? 320px : 0px, max(root.footer-width, max(root.show-sender ? sender.preferred-width : 0px, natural.preferred-width + (root.inline-time ? root.footer-width + 8px : 0px))) + 20px));
         // Compact macOS fonts must still contain the 26px menu target with 2px margins.
-        height: max(Theme.macos ? 30px : 0px, (root.message.has-audio ? 48px : root.photo-only || root.document-only ? 0px : body.preferred-height) + root.sender-height + root.metadata-height + root.preview-height + root.photo-space + root.document-space + 11px + (root.inline-time || root.photo-only ? 0px : stamp.height + 4px) + actions.height);
+        height: max(Theme.macos ? 30px : 0px, (root.message.has-audio ? 48px : root.photo-only || root.video-only || root.document-only ? 0px : body.preferred-height) + root.sender-height + root.metadata-height + root.preview-height + root.photo-space + root.document-space + 11px + (root.inline-time || root.photo-only ? 0px : stamp.height + 4px) + actions.height);
         background: root.fill;
         border-radius: 10px;
         border-top-left-radius: root.message.first-in-run && !root.message.outgoing ? 0px : 10px;
@@ -205,6 +216,12 @@ export component MessageBubble inherits Rectangle {
             picture: root.message.photo-image; state: root.message.photo-state; status: root.message.photo-status;
             activated => { root.activate(-5); }
         }
+        if root.message.has-video: video := VideoTile {
+            x:6px;y:6px+root.sender-height+root.metadata-height;
+            width:parent.width - 12px;height:root.photo-height;
+            message-id:root.message.id;poster:root.message.thumbnail;duration:root.message.video-duration;
+            control(action,value)=>{root.video-control(action,value);}
+        }
         if root.message.has-audio: audio := AudioPlayer {
             x: 10px; y: 6px + root.sender-height + root.metadata-height; width: parent.width - 20px;
             message-id: root.message.id; waveform: root.message.audio-waveform; duration: root.message.audio-duration; footer-width: root.inline-time ? root.footer-width : 0px;
@@ -217,7 +234,7 @@ export component MessageBubble inherits Rectangle {
             preview-height: root.document-preview-height;
         }
         body := TextInput {
-            visible: root.message.body-url == "" && !root.photo-only && !root.document-only && !root.message.has-audio;
+            visible: root.message.body-url == "" && !root.photo-only && !root.video-only && !root.document-only && !root.message.has-audio;
             x: 10px;
             y: 6px + root.sender-height + root.metadata-height + root.preview-height + root.photo-space + root.document-space;
             width: parent.width - 20px - (root.inline-time ? root.footer-width + 8px : 0px);

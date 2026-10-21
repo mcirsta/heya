@@ -49,6 +49,9 @@ fn payload(raw: &[u8]) -> Result<(DownloadParams, Info), Error> {
                 v.mimetype.as_deref().unwrap_or("audio/ogg"),
             )
         } else if let Some(v) = base.video_message.as_option() {
+            if v.view_once == Some(true) {
+                return Err(Error::Unavailable);
+            }
             (
                 v,
                 Kind::Video,

@@ -60,6 +60,7 @@ pub(crate) fn check_ui() {
                         )]
                         .into(),
                         viewer: None,
+                        ..Default::default()
                     });
                     publish(&ui, &data);
                     assert_eq!(
@@ -175,6 +176,7 @@ pub(crate) fn check_ui() {
         )]
         .into(),
         viewer: Some((id, full)),
+        ..Default::default()
     });
     publish(&ui, &data);
     assert!(ui.get_photo_viewer_ready());
@@ -207,10 +209,24 @@ pub(crate) fn check_ui() {
     ui.invoke_activate_photo(id);
     view.messages = Arc::from([]);
     presentation::conversation(&ui, &view, false);
+    assert_eq!(
+        ui.get_photo_viewer_id(),
+        id,
+        "paging cannot close an album photo"
+    );
+    publish(
+        &ui,
+        &Arc::new(photos::Snapshot {
+            checked: Some((9, id)),
+            ..Default::default()
+        }),
+    );
     assert_eq!(ui.get_photo_viewer_id(), 0);
     assert!(demand.borrow().ids().is_empty());
     ui.invoke_activate_photo(id);
     assert_eq!(ui.get_photo_viewer_id(), 0, "removed message cannot reopen");
+
+    check_album(&ui, &messages[0], &sample);
 
     let mut many = (0..10000)
         .map(|i| {
@@ -264,6 +280,7 @@ fn check_wheel_motion(
             })
             .collect(),
         viewer: None,
+        ..Default::default()
     });
     // The manual backend has spent time constructing/measuring the fixture
     // without pumping events. Refresh its cached animation tick as a native
@@ -317,4 +334,138 @@ fn check_wheel_motion(
     slint::platform::update_timers_and_animations();
     ui.invoke_layout_timeline();
     assert!((ui.get_timeline_y() - start).abs() < 1.);
+}
+
+fn check_album(ui: &AppWindow, message: &crate::domain::Message, pixels: &Arc<photos::Pixels>) {
+    let mut demo = fixtures::demo();
+    demo.select(9);
+    let mut view = demo.conversation();
+    view.messages = Arc::from([message.clone()]);
+    presentation::conversation(ui, &view, true);
+    ui.invoke_layout_timeline();
+    ui.invoke_activate_photo(message.id);
+    let members = std::iter::once(message.id)
+        .chain(70001..70020)
+        .collect::<Vec<_>>();
+    let data = |id: i32| {
+        let position = members.iter().position(|&m| m == id).unwrap();
+        let gallery = photos::Gallery {
+            id,
+            members: members.clone(),
+            position,
+            sender: "~Mira Sample".into(),
+            date: "21 Oct 10:24".into(),
+            caption: "A long caption 👩🏽‍💻\nSecond line مرحبا · こんにちは\n".repeat(20),
+        };
+        Arc::new(photos::Snapshot {
+            checked: Some((9, id)),
+            gallery: Some(Arc::new(gallery)),
+            viewer: Some((id, pixels.clone())),
+            ..Default::default()
+        })
+    };
+    publish(ui, &data(message.id));
+    for dark in [false, true] {
+        ui.global::<Theme>().set_dark(dark);
+        for (width, height) in [(520., 500.), (800., 600.), (1920., 1080.)] {
+            ui.window().set_size(slint::LogicalSize::new(width, height));
+            let viewer = ElementHandle::find_by_element_type_name(ui, "PhotoViewer")
+                .next()
+                .unwrap();
+            for id in [
+                "PhotoViewer::header",
+                "PhotoViewer::stage",
+                "PhotoViewer::footer",
+                "PhotoViewer::strip",
+            ] {
+                contains(&viewer, &child(&viewer, id));
+            }
+            let header = child(&viewer, "PhotoViewer::header");
+            let stage = child(&viewer, "PhotoViewer::stage");
+            let footer = child(&viewer, "PhotoViewer::footer");
+            assert!((header.absolute_position().y - viewer.absolute_position().y).abs() < 0.5);
+            assert!(
+                stage.absolute_position().y
+                    >= header.absolute_position().y + header.size().height - 0.5
+            );
+            assert!(
+                footer.absolute_position().y
+                    >= stage.absolute_position().y + stage.size().height - 0.5
+            );
+            let caption = child(&viewer, "PhotoViewer::caption-scroll");
+            let strip = child(&viewer, "PhotoViewer::strip");
+            assert!(
+                strip.absolute_position().y
+                    >= caption.absolute_position().y + caption.size().height + 7.5
+            );
+            let thumbs = strip
+                .query_descendants()
+                .match_type_name("Rectangle")
+                .find_all();
+            for thumb in thumbs
+                .iter()
+                .filter(|t| t.id().as_deref() == Some("PhotoViewer::thumb"))
+            {
+                contains(&strip, thumb);
+            }
+            assert_eq!(ui.get_photo_thumbnails().row_count(), photos::THUMB_COUNT);
+        }
+    }
+    assert_eq!(ui.get_photo_viewer_previous(), 0);
+    let next = ElementHandle::find_by_accessible_label(ui, "Next photo")
+        .next()
+        .unwrap();
+    next.invoke_accessible_default_action();
+    assert_eq!(
+        ui.get_photo_viewer_id(),
+        70001,
+        "navigation reaches photos outside the timeline"
+    );
+    assert!(!ui.get_photo_viewer_ready());
+    assert_eq!(
+        ui.get_photo_viewer_image().size().width,
+        0,
+        "no previous full image while opening the next"
+    );
+    publish(ui, &data(70001));
+    let ready = ui.get_photo_viewer_image();
+    publish(ui, &data(message.id));
+    assert_eq!(
+        ui.get_photo_viewer_image(),
+        ready,
+        "late publication cannot replace/clear the new photo"
+    );
+    ui.invoke_navigate_photo(*members.last().unwrap());
+    publish(ui, &data(*members.last().unwrap()));
+    assert_eq!(ui.get_photo_viewer_next(), 0);
+    let zoom = ElementHandle::find_by_accessible_label(ui, "Zoom photo")
+        .next()
+        .unwrap();
+    zoom.invoke_accessible_default_action();
+    ui.window()
+        .dispatch_event(slint::platform::WindowEvent::KeyPressed {
+            text: slint::platform::Key::LeftArrow.into(),
+        });
+    assert_eq!(ui.get_photo_viewer_id(), members[members.len() - 2]);
+    assert!(
+        ElementHandle::find_by_accessible_label(ui, "Zoom photo")
+            .next()
+            .is_some(),
+        "changing photos resets zoom"
+    );
+    let id = ui.get_photo_viewer_id();
+    publish(
+        ui,
+        &Arc::new(photos::Snapshot {
+            checked: Some((9, id)),
+            ..Default::default()
+        }),
+    );
+    assert_eq!(
+        ui.get_photo_viewer_id(),
+        0,
+        "deletion/expiry/locking closes an invalid selection"
+    );
+    assert_eq!(ui.get_photo_thumbnails().row_count(), 0);
+    assert_eq!(ui.get_photo_gallery_ids().row_count(), 0);
 }

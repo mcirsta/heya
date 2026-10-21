@@ -139,6 +139,7 @@ struct State {
     transcript: Arc<str>,
     return_anchor: Option<(i32, f64, bool)>,
     images: HashMap<i32, (Arc<crate::photos::Pixels>, slint::Image)>,
+    avatars: crate::presentation_avatars::Images,
     today: chrono::NaiveDate,
     photos: HashMap<i32, PhotoImage>,
     viewer: Option<(i32, Arc<crate::photos::Pixels>, slint::Image)>,
@@ -172,6 +173,11 @@ impl State {
                 super::message_row(message, previous)
             })
             .clone();
+        if self.group && !row.outgoing && row.first_in_run && !row.system_notice {
+            row.sender_avatar = self.avatars.get(&crate::avatars::Target::Participant(
+                message.sender_id.clone(),
+            ));
+        }
         if row.has_thumbnail {
             row.thumbnail = self
                 .images
@@ -487,6 +493,8 @@ impl Timeline {
         self.laying_out.set(false);
         ui.invoke_request_message_images();
         ui.invoke_request_photos();
+        ui.invoke_video_control(0, 5, 0.);
+        ui.invoke_request_avatars();
         if let Some(started) = started {
             SAMPLES.with_borrow_mut(|samples| {
                 if let Some(samples) = samples {
@@ -627,8 +635,12 @@ fn same_row(a: &TimelineRow, b: &TimelineRow) -> bool {
         && a.day_label == b.day_label
         && am.id == bm.id
         && am.system_notice == bm.system_notice
+        && am.call_kind == bm.call_kind
+        && am.call_details == bm.call_details
         && am.text == bm.text
         && am.sender == bm.sender
+        && am.sender_id == bm.sender_id
+        && same_image(&am.sender_avatar, &bm.sender_avatar)
         && am.sender_initials == bm.sender_initials
         && am.time == bm.time
         && am.outgoing == bm.outgoing
@@ -657,6 +669,8 @@ fn same_row(a: &TimelineRow, b: &TimelineRow) -> bool {
         && am.audio_waveform == bm.audio_waveform
         && am.audio_duration == bm.audio_duration
         && am.has_photo == bm.has_photo
+        && am.has_video == bm.has_video
+        && am.video_duration == bm.video_duration
         && am.photo_width == bm.photo_width
         && am.photo_height == bm.photo_height
         && am.photo_state == bm.photo_state
@@ -668,6 +682,30 @@ fn same_row(a: &TimelineRow, b: &TimelineRow) -> bool {
 
 fn same_image(a: &slint::Image, b: &slint::Image) -> bool {
     (a.size().width == 0 && b.size().width == 0) || a == b
+}
+
+pub(crate) fn avatars(ui: &AppWindow, snapshot: &crate::avatars::Snapshot) {
+    with(ui, |model| {
+        let mut state = model.state.borrow_mut();
+        let changed = state.avatars.update(snapshot, true);
+        if !state.group || changed.is_empty() {
+            return;
+        }
+        // The avatar occupies a reserved 28px square. Update pixels only;
+        // retain measured text, bubble positions and the reader's scroll anchor.
+        for i in 0..model.visible.row_count() {
+            let mut row = model.visible.row_data(i).unwrap();
+            let m = &mut row.message;
+            if m.outgoing || !m.first_in_run || m.system_notice {
+                continue;
+            }
+            let target = crate::avatars::Target::Participant(m.sender_id.to_string());
+            if changed.contains(&target) {
+                m.sender_avatar = state.avatars.get(&target);
+                model.visible.set_row_data(i, row);
+            }
+        }
+    });
 }
 
 fn photo_image(p: &crate::photos::Pixels) -> slint::Image {
@@ -766,9 +804,12 @@ pub(crate) fn photos(ui: &AppWindow, snapshot: &crate::photos::Snapshot) {
                     state.viewer = Some((id, pixels.clone(), photo_image(pixels)));
                 }
             }
-            _ => {
+            _ if snapshot.checked.is_none()
+                || snapshot.checked == Some((ui.get_selected_id(), id)) =>
+            {
                 state.viewer = None;
             }
+            _ => {}
         }
         viewer(ui, &mut state);
         for i in 0..model.visible.row_count() {

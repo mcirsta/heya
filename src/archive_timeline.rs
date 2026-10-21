@@ -4,8 +4,9 @@ use crate::performance::{Metric, Probe};
 use std::time::Instant;
 
 const SELECT: &str =
-    "SELECT m.id,coalesce(nullif(n.saved_name,''),nullif(n.profile_name,''),m.sender_name),
-    m.sender,m.body,m.stamp,m.outgoing,m.delivery,m.content,m.wire_id,m.deleted,length(m.raw)
+    "SELECT m.id,coalesce(nullif(trim(n.saved_name),''),nullif(trim(n.profile_name),''),m.sender_name),
+    m.sender,m.body,m.stamp,m.outgoing,m.delivery,m.content,m.wire_id,m.deleted,length(m.raw),
+    nullif(trim(n.saved_name),'') IS NOT NULL
     FROM messages m LEFT JOIN contacts n ON n.jid=m.sender
     WHERE m.chat_id=?1 AND m.visible=1 AND (m.stamp,m.id)<=(?5,?6)";
 fn query(append: bool) -> String {
@@ -220,6 +221,8 @@ impl Cache {
                 id: r.get(0)?,
                 sender: if outgoing {
                     "You".into()
+                } else if group {
+                    domain::participant_name(&name, r.get(11)?, &sender)
                 } else if name.is_empty() {
                     sender.split('@').next().unwrap_or(&sender).into()
                 } else {

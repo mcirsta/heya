@@ -39,12 +39,30 @@ pub async fn stage(
     kind: Kind,
     control: Control,
 ) -> Result<Vec<Arc<Staged>>, Error> {
-    if kind == Kind::Voice {
-        return Err(Error::File);
-    }
+    stage_input(attachments::Input::Paths(paths, Some(kind)), control).await
+}
+pub async fn stage_input(
+    input: attachments::Input,
+    control: Control,
+) -> Result<Vec<Arc<Staged>>, Error> {
     let permit = tokio::select! {_ = control.cancelled()=>return Err(Error::Cancelled),p=PREPARE.acquire()=>p.map_err(|_|Error::File)?};
     crate::attachment_worker::blocking(control.clone(), move || {
         let _permit = permit;
+        cancelled(&control)?;
+        let (paths, kind) = match input {
+            attachments::Input::Png(bytes) => {
+                return Ok(vec![Arc::new(prepare_reader(
+                    Box::new(io::Cursor::new(bytes)),
+                    "Pasted image.png".into(),
+                    Kind::Photo,
+                    &control,
+                )?)]);
+            }
+            attachments::Input::Paths(paths, kind) => (paths, kind),
+        };
+        if kind == Some(Kind::Voice) {
+            return Err(Error::File);
+        }
         if paths.is_empty() || paths.len() > attachments::MAX_FILES {
             return Err(Error::Limit);
         }
@@ -63,6 +81,17 @@ pub async fn stage(
         let mut prepared_total = 0u64;
         for path in paths {
             cancelled(&control)?;
+            let kind = kind.unwrap_or_else(|| {
+                match path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(str::to_ascii_lowercase)
+                    .as_deref()
+                {
+                    Some("jpg" | "jpeg" | "png") => Kind::Photo,
+                    _ => Kind::Document,
+                }
+            });
             let file = prepare(&path, kind, &control)?;
             prepared_total = prepared_total.checked_add(file.size).ok_or(Error::Limit)?;
             if prepared_total > attachments::MAX_BYTES {
@@ -100,7 +129,7 @@ fn prepare(path: &Path, kind: Kind, control: &Control) -> Result<Staged, Error> 
         use std::os::unix::fs::OpenOptionsExt;
         options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
     }
-    let mut input = options.open(path).map_err(|_| Error::File)?;
+    let input = options.open(path).map_err(|_| Error::File)?;
     let before = input.metadata().map_err(|_| Error::File)?;
     if !before.is_file() {
         return Err(Error::File);
@@ -117,6 +146,24 @@ fn prepare(path: &Path, kind: Kind, control: &Control) -> Result<Staged, Error> 
         .chars()
         .filter(|c| !c.is_control() && !matches!(c,'\u{202a}'..='\u{202e}'|'\u{2066}'..='\u{2069}'))
         .collect::<String>();
+    let file = prepare_reader(
+        Box::new(input.try_clone().map_err(|_| Error::File)?),
+        name,
+        kind,
+        control,
+    )?;
+    if file.size != before.len() || !unchanged(&before, &input.metadata().map_err(|_| Error::File)?)
+    {
+        return Err(Error::Changed);
+    }
+    Ok(file)
+}
+fn prepare_reader(
+    mut input: Box<dyn Read>,
+    name: String,
+    kind: Kind,
+    control: &Control,
+) -> Result<Staged, Error> {
     let (mut width, mut height) = (0, 0);
     let mut thumbnail = Vec::new();
     let mut preview = None;
@@ -174,7 +221,7 @@ fn prepare(path: &Path, kind: Kind, control: &Control) -> Result<Staged, Error> 
     let reader: Box<dyn Read> = if let Some(bytes) = photo {
         Box::new(io::Cursor::new(bytes))
     } else {
-        Box::new(input.try_clone().map_err(|_| Error::File)?)
+        input
     };
     let info = whatsapp_rust::wacore::upload::encrypt_media_streaming(
         CheckRead {
@@ -195,11 +242,6 @@ fn prepare(path: &Path, kind: Kind, control: &Control) -> Result<Staged, Error> 
     cancelled(control)?;
     if info.file_length > attachments::MAX_BYTES {
         return Err(Error::Limit);
-    }
-    if info.file_length != before.len()
-        || !unchanged(&before, &input.metadata().map_err(|_| Error::File)?)
-    {
-        return Err(Error::Changed);
     }
     let encrypted_len = blob.metadata().map_err(|_| Error::File)?.len();
     Ok(Staged {

@@ -2,13 +2,58 @@
 use crate::message_content::{self, Content, Preview};
 use whatsapp_rust::prelude::{MessageExt, wa};
 
+pub fn album(message: &wa::Message) -> Option<message_content::Album> {
+    if message.is_view_once() {
+        return None;
+    }
+    let mut current = message;
+    // Context lives on the outer associated-child wrapper in modern albums,
+    // or directly beside the media in older envelopes. Do not infer albums.
+    for _ in 0..32 {
+        if let Some(a) = current.message_context_info.message_association.as_option()
+            && a.association_type == Some(wa::message_association::AssociationType::MEDIA_ALBUM)
+            && let Some(parent) = a
+                .parent_message_key
+                .id
+                .as_deref()
+                .filter(|id| !id.is_empty())
+        {
+            return Some(message_content::Album {
+                parent: parent.into(),
+                index: a.message_index.and_then(|n| u32::try_from(n).ok()),
+            });
+        }
+        let next = current
+            .device_sent_message
+            .as_option()
+            .and_then(|m| m.message.as_option())
+            .or_else(|| {
+                current
+                    .ephemeral_message
+                    .as_option()
+                    .and_then(|m| m.message.as_option())
+            })
+            .or_else(|| {
+                current
+                    .associated_child_message
+                    .as_option()
+                    .and_then(|m| m.message.as_option())
+            });
+        current = next?;
+    }
+    None
+}
+
 pub fn extract(message: &wa::Message) -> (Option<String>, Content, Vec<u8>) {
     let (text, mut content, thumbnail) = extract_body(message);
     if !message.is_view_once() && content.notice.is_none() {
         crate::protocol_actions::decorate(message, &mut content);
         let base = message.get_base_message();
         content.has_attachment = base.document_message.is_set()
-            || base.video_message.is_set()
+            || base
+                .video_message
+                .as_option()
+                .is_some_and(|v| v.view_once != Some(true))
             || base.sticker_message.is_set();
     }
     (text, content, thumbnail)
@@ -41,6 +86,47 @@ fn extract_body(message: &wa::Message) -> (Option<String>, Content, Vec<u8>) {
         return (Some(text), content, Vec::new());
     }
     let base = message.get_base_message();
+    if let Some(log) = base.call_log_messsage.as_option() {
+        let call = crate::protocol_calls::message(log);
+        return (
+            Some(call.label().into()),
+            Content {
+                notice: Some(message_content::Notice::Call(call)),
+                ..Default::default()
+            },
+            Vec::new(),
+        );
+    }
+    if let Some(video) = base.video_message.as_option() {
+        if video.view_once == Some(true) {
+            return (None, Content::default(), Vec::new());
+        }
+        let (width, height) = match (video.width, video.height) {
+            (Some(w), Some(h)) if w > 0 && h > 0 && w <= 65536 && h <= 65536 => (w, h),
+            _ => (640, 360),
+        };
+        let thumbnail = video
+            .jpeg_thumbnail
+            .as_ref()
+            .filter(|v| v.len() <= crate::message_thumbnails::MAX_ENCODED)
+            .cloned()
+            .unwrap_or_default();
+        return (
+            None,
+            Content {
+                body: Some(video.caption.clone().unwrap_or_default()),
+                video: Some(message_content::Video {
+                    width,
+                    height,
+                    seconds: video.seconds,
+                    size: video.file_length,
+                    gif: video.gif_playback.unwrap_or(false),
+                }),
+                ..Default::default()
+            },
+            thumbnail,
+        );
+    }
     if let Some(document) = base.document_message.as_option() {
         let thumbnail = document
             .jpeg_thumbnail

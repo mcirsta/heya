@@ -78,25 +78,27 @@ rustc --edition=2024 tools/bench/skia_text_coverage.rs \
 
 ## Isolated toolkit patch
 
-Slint 1.18.1 has no public setting for these surface properties. The minimal
-local patch is `patches/slint-skia-text-coverage.patch`, applied to the exact
-crates.io `i-slint-renderer-skia` 1.18.1 source in
-`vendor/i-slint-renderer-skia`. No Skia source or compile features change.
+Slint has no public setting for these surface properties. The minimal local
+patch is `patches/slint-skia-text-coverage.patch`, rebased onto
+`internal/renderers/skia` at Slint commit
+`a5a124bf80961966e875dc91d8d04271ec5885d8` (1.19.0 development snapshot).
+No Skia source or compile features change. The only manifest changes expand
+workspace dependencies and pin sibling crates to that same Git revision.
 
-- Base crate SHA256: `dc9c1cf02385f1d26fc1f423544e52390a8e5c2d89420a8042aa94b4fe109d1f`.
-- Base Slint commit: `372cf0ee5577c3dfec309a45e7b778ba4e81b734`.
-- Preserve all upstream headers and `LICENSES/`; the other source files and
-  normalized Cargo manifest are unchanged. Cargo packaging metadata, the
-  standalone lockfile and `Cargo.toml.orig` are omitted.
-- The patch hash and scope are recorded in `prep/upstreams.json`.
-- Local only; not submitted upstream. An upstream API for surface text
-  properties could replace this patch, leaving the policy in Heya.
+Upstream headers, `LICENSE.md` and `LICENSES/` are preserved. The patch hash and
+scope are in `prep/upstreams.json`. This remains local, not submitted upstream;
+a public API for surface text properties could replace it.
 
-To reproduce the vendored tree, extract the checksum-verified crates.io archive
-`https://static.crates.io/crates/i-slint-renderer-skia/i-slint-renderer-skia-1.18.1.crate`,
-omit the packaging files listed above, then apply the patch inside that crate
-with `patch -p1`. Runtime builds use the checked-in source and require no patch
-script or modification to Cargo's cache.
+To regenerate from a clean Slint checkout at the recorded revision:
+
+```sh
+python3 scripts/vendor-slint-renderer.py /path/to/slint-checkout
+```
+
+The script checks the revision and source cleanliness, copies the source and
+licenses, expands the manifest, and applies the patch. It uses Python's standard
+library. Runtime builds use the checked-in source without patch scripts or
+changes to Cargo's cache.
 
 ## Validation results
 

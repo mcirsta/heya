@@ -28,9 +28,15 @@ impl Archive {
         let table = match kind {
             Kind::Photo => "message_photos",
             Kind::Audio => "message_audio",
+            Kind::Video => "message_videos",
             _ => return Ok(None),
         };
         let (id, raw) = (request.id, request.raw.clone());
-        self.call(move|db|Ok(db.query_row(&format!("SELECT c.original FROM {table} c JOIN messages m ON m.id=c.message_id WHERE m.id=?1 AND m.raw=?2 AND length(c.original)>0 AND length(c.original)<=?3 AND {ELIGIBLE}"),params![id,raw,crate::photos::MAX_BYTES as i64],|r|r.get(0)).optional()?)).await
+        let limit = if kind == Kind::Video {
+            crate::video::MAX_BYTES
+        } else {
+            crate::photos::MAX_BYTES
+        };
+        self.call(move|db|Ok(db.query_row(&format!("SELECT c.original FROM {table} c JOIN messages m ON m.id=c.message_id WHERE m.id=?1 AND m.raw=?2 AND length(c.original)>0 AND length(c.original)<=?3 AND {ELIGIBLE}"),params![id,raw,limit as i64],|r|r.get(0)).optional()?)).await
     }
 }

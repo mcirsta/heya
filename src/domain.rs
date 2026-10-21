@@ -41,6 +41,33 @@ pub fn single_line_summary(text: &str) -> String {
     summary
 }
 
+/// A profile name is supplied by the participant, unlike a saved contact name.
+pub fn participant_name(name: &str, saved: bool, identity: &str) -> String {
+    if name.trim().is_empty() {
+        identity.split('@').next().unwrap_or(identity).into()
+    } else if saved {
+        name.into()
+    } else {
+        format!("~{name}")
+    }
+}
+
+#[test]
+fn participant_labels_distinguish_saved_profiles_and_numbers() {
+    assert_eq!(
+        participant_name("Alex", true, "15550000001@s.whatsapp.net"),
+        "Alex"
+    );
+    assert_eq!(
+        participant_name("Alex", false, "15550000001@s.whatsapp.net"),
+        "~Alex"
+    );
+    assert_eq!(
+        participant_name("  ", false, "15550000001@s.whatsapp.net"),
+        "15550000001"
+    );
+}
+
 /// Sidebar-only wording, shared by the archive and synthetic demo. The full
 /// message/caption stays untouched. A sender is supplied only for incoming groups.
 /// The open chat keeps its last-message preview: its draft is already visible
@@ -163,6 +190,8 @@ pub struct ChatSummary {
     pub initials: String,
     pub tint: u32,
     pub preview: String,
+    /// 0 ordinary summary, 1 voice/unknown call, 2 video call.
+    pub call_kind: i32,
     pub time: String,
     pub unread: usize,
     pub marked_unread: bool,
@@ -212,6 +241,20 @@ impl Chat {
             title: self.title.clone(),
             initials: self.initials.clone(),
             tint: self.tint,
+            call_kind: if self.id != selected && !self.draft.is_empty() {
+                0
+            } else {
+                match last.and_then(|m| m.content.notice) {
+                    Some(crate::message_content::Notice::Call(c)) => {
+                        if c.video == Some(true) {
+                            2
+                        } else {
+                            1
+                        }
+                    }
+                    _ => 0,
+                }
+            },
             preview: chat_preview(
                 &self.draft,
                 self.id == selected,

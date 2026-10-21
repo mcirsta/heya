@@ -12,10 +12,14 @@ use std::{
 };
 use tokio::{runtime::Runtime, sync::watch, task::JoinHandle};
 
+#[path = "presentation_album_benchmark.rs"]
+mod album_viewer;
 #[path = "presentation_archive_benchmark.rs"]
 mod archive_pipeline;
 #[path = "presentation_photo_benchmark.rs"]
 mod photo_archive;
+#[path = "presentation_video_benchmark.rs"]
+mod video_playback;
 
 const TICK: Duration = Duration::from_millis(16);
 const PHASE_SECONDS: u64 = 3;
@@ -50,7 +54,7 @@ fn percentile(values: &mut [f64], fraction: f64) -> f64 {
 fn report(name: &str, samples: &mut Samples) {
     let mut layout = super::timeline::take_samples();
     println!(
-        "UI benchmark {name}: frames={}, render CPU p50={:.2}ms p95={:.2}ms; frame interval p95={:.2}ms; timer lateness p95={:.2}ms max={:.2}ms; snapshot apply count={} p95={:.2}ms",
+        "UI benchmark {name}: frames={}, render CPU p50={:.2}ms p95={:.2}ms; frame interval p95={:.2}ms; timer lateness p95={:.2}ms max={:.2}ms; snapshot apply count={} p95={:.2}ms; render CPU max={:.2}ms",
         samples.render_ms.len(),
         percentile(&mut samples.render_ms, 0.5),
         percentile(&mut samples.render_ms, 0.95),
@@ -59,6 +63,7 @@ fn report(name: &str, samples: &mut Samples) {
         percentile(&mut samples.tick_late_ms, 1.0),
         samples.apply_ms.len(),
         percentile(&mut samples.apply_ms, 0.95),
+        percentile(&mut samples.render_ms, 1.0),
     );
     println!(
         "Timeline {name}: layout calls={}, p95={:.2}ms; measured rows={}",
@@ -98,6 +103,12 @@ pub fn start(
     ui: &AppWindow,
     runtime: &Runtime,
 ) -> Result<Benchmark, slint::SetRenderingNotifierError> {
+    if std::env::var_os("HEYA_BENCHMARK_ALBUM").is_some() {
+        return album_viewer::start(ui, runtime);
+    }
+    if std::env::var_os("HEYA_BENCHMARK_VIDEO_FILE").is_some() {
+        return video_playback::start(ui, runtime);
+    }
     if std::env::var_os("HEYA_BENCHMARK_ARCHIVE").is_some() {
         return archive_pipeline::start(ui, runtime);
     }
@@ -113,6 +124,19 @@ pub fn start(
     );
     super::timeline::take_samples();
     let mut state = fixtures::demo();
+    let group = std::env::var_os("HEYA_BENCHMARK_GROUP_AVATARS").is_some();
+    if group {
+        state.chats[5].is_group = true;
+        for (i, message) in state.chats[5].messages.iter_mut().enumerate() {
+            if !message.outgoing {
+                message.sender_id = format!("demo:participant-{}", (i / 4) % 8);
+                message.sender = format!("~Sample participant {}", (i / 4) % 8);
+            }
+        }
+        println!(
+            "Group avatar benchmark: eight participants, 10,000 messages; cached 128px thumbnails"
+        );
+    }
     if std::env::var_os("HEYA_BENCHMARK_CHAT_EMOJI").is_some() {
         for (i, message) in state.chats[5].messages.iter_mut().enumerate() {
             message.text = match i % 4 {
@@ -129,6 +153,10 @@ pub fn start(
         );
     }
     let notices = std::env::var_os("HEYA_BENCHMARK_NOTICES").is_some();
+    if std::env::var_os("HEYA_BENCHMARK_CALLS").is_some() {
+        fixtures::fill_calls(&mut state.chats[5].messages);
+        println!("Call benchmark: 10,000 saved call events; no calling/media service");
+    }
     if notices {
         for (index, message) in state.chats[5].messages.iter_mut().enumerate() {
             if index % 3 == 1 {
@@ -230,6 +258,7 @@ pub fn start(
                 &"Synthetic multiline preview 👩🏽‍💻\nSecond line\n".repeat(100),
             ),
             time: "14 Oct 12:00".into(),
+            call_kind: 0,
             unread: index as usize % 5,
             marked_unread: false,
             muted: false,
@@ -263,9 +292,21 @@ pub fn start(
     let avatar_count = if std::env::var_os("HEYA_BENCHMARK_NO_AVATARS").is_some() {
         0
     } else {
-        66
+        if group { 48 } else { 66 }
     };
-    crate::presentation_avatars::publish(ui, &fixtures::avatar_samples(0..avatar_count));
+    let mut avatar_samples = (*fixtures::avatar_samples(0..avatar_count)).clone();
+    if group && avatar_count > 0 {
+        for (target, photo) in fixtures::avatar_samples(0..8).iter() {
+            let crate::avatars::Target::Chat(id) = target else {
+                unreachable!()
+            };
+            avatar_samples.insert(
+                crate::avatars::Target::Participant(format!("demo:participant-{id}")),
+                photo.clone(),
+            );
+        }
+    }
+    crate::presentation_avatars::publish(ui, &Arc::new(avatar_samples));
     ui.window().set_size(slint::LogicalSize::new(1200., 800.));
     let emoji = std::env::var_os("HEYA_BENCHMARK_EMOJI").is_some();
     let downloads = std::env::var_os("HEYA_BENCHMARK_DOWNLOADS").is_some();

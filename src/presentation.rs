@@ -1,6 +1,9 @@
 //! The sole boundary between Slint models and application data.
 #[path = "presentation_benchmark.rs"]
 pub(crate) mod benchmark;
+#[cfg(test)]
+#[path = "presentation_call_tests.rs"]
+mod call_tests;
 #[path = "presentation_chat_list.rs"]
 pub(crate) mod chat_list;
 #[cfg(test)]
@@ -46,6 +49,7 @@ fn chat_row(chat: &domain::ChatSummary) -> ChatRow {
             chat.tint as u8,
         ),
         preview: domain::single_line_summary(&chat.preview).into(),
+        call_kind: chat.call_kind,
         time: chat.time.as_str().into(),
         unread: chat.unread.min(i32::MAX as usize) as i32,
         marked_unread: chat.marked_unread,
@@ -59,6 +63,7 @@ fn message_row(message: &domain::Message, previous: Option<&domain::Message>) ->
     let first_in_run = message.starts_run(previous);
     let sender_initials: String = message
         .sender
+        .trim_start_matches('~')
         .split_whitespace()
         .take(2)
         .filter_map(|word| word.chars().next())
@@ -85,7 +90,22 @@ fn message_row(message: &domain::Message, previous: Option<&domain::Message>) ->
             || message.content.metadata.pending.ends_with("pending")
             || message.content.metadata.pending.ends_with("unconfirmed"),
         system_notice: message.content.notice.is_some(),
+        call_kind: match message.content.notice {
+            Some(crate::message_content::Notice::Call(c)) => {
+                if c.video == Some(true) {
+                    2
+                } else {
+                    1
+                }
+            }
+            _ => 0,
+        },
+        call_details: match message.content.notice {
+            Some(crate::message_content::Notice::Call(c)) => c.details(message.outgoing).into(),
+            _ => Default::default(),
+        },
         has_attachment: message.content.has_attachment
+            || message.content.video.is_some()
             || message.content.photo.is_some()
             || message.content.document.is_some()
             || message.content.audio.is_some(),
@@ -108,6 +128,8 @@ fn message_row(message: &domain::Message, previous: Option<&domain::Message>) ->
         reaction_status: message.content.reaction_status.as_str().into(),
         id: message.id,
         sender: message.sender.as_str().into(),
+        sender_id: message.sender_id.as_str().into(),
+        sender_avatar: Default::default(),
         sender_initials: sender_initials.into(),
         text: text.into(),
         time: message.time.as_str().into(),
@@ -153,16 +175,34 @@ fn message_row(message: &domain::Message, previous: Option<&domain::Message>) ->
             .unwrap_or_else(|| "Audio".into())
             .into(),
         has_photo: message.content.photo.is_some(),
-        photo_width: message
+        has_video: message.content.video.is_some(),
+        video_duration: message
             .content
-            .photo
+            .video
             .as_ref()
-            .map_or(640., |p| p.width as f32),
-        photo_height: message
-            .content
-            .photo
-            .as_ref()
-            .map_or(480., |p| p.height as f32),
+            .map(|v| crate::presentation_audio::duration(f64::from(v.seconds.unwrap_or(0))))
+            .unwrap_or_default()
+            .into(),
+        photo_width: message.content.photo.as_ref().map_or_else(
+            || {
+                message
+                    .content
+                    .video
+                    .as_ref()
+                    .map_or(640., |v| v.width as f32)
+            },
+            |p| p.width as f32,
+        ),
+        photo_height: message.content.photo.as_ref().map_or_else(
+            || {
+                message
+                    .content
+                    .video
+                    .as_ref()
+                    .map_or(480., |v| v.height as f32)
+            },
+            |p| p.height as f32,
+        ),
         photo_image: Default::default(),
         photo_state: 0,
         photo_status: crate::photos::State::Idle.label().into(),
@@ -206,7 +246,8 @@ fn message_row(message: &domain::Message, previous: Option<&domain::Message>) ->
                 .content
                 .document
                 .as_ref()
-                .is_some_and(|d| d.has_thumbnail),
+                .is_some_and(|d| d.has_thumbnail)
+            || message.content.video.is_some(),
         thumbnail: Default::default(),
         actions: ModelRc::new(slint::VecModel::from(
             message
@@ -375,8 +416,16 @@ pub fn attach(
 ) -> JoinHandle<()> {
     let state = fixtures::demo();
     sidebar(ui, state.sidebar());
-    crate::presentation_avatars::publish(ui, &fixtures::avatar_samples([0, 1, 2, 3]));
     conversation(ui, &state.conversation(), true);
+    let mut avatars = (*fixtures::avatar_samples([0, 1, 2, 3])).clone();
+    for chat in state.chats.iter().filter(|c| c.is_group) {
+        avatars.extend(
+            fixtures::group_avatar_samples(&chat.messages)
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone())),
+        );
+    }
+    crate::presentation_avatars::publish(ui, &Arc::new(avatars));
     let image_demand = crate::presentation_content::bind_images(ui);
     let (image_updates, image_snapshots) =
         tokio::sync::watch::channel(crate::message_thumbnails::Snapshot::default());
@@ -455,6 +504,13 @@ pub fn attach(
     let photo_weak = ui.as_weak();
     let (audio_archive, audio_archive_rx) = tokio::sync::watch::channel(None);
     let (audio_source, audio_source_rx) = tokio::sync::watch::channel(None);
+    let video_task = crate::presentation_video::attach(
+        ui,
+        tokio::sync::watch::channel(None).1,
+        tokio::sync::watch::channel(None).1,
+        true,
+        preferences.clone(),
+    );
     let audio_task = crate::presentation_audio::attach(
         ui,
         audio_archive_rx,
@@ -492,6 +548,7 @@ pub fn attach(
                 crate::presentation_content::publish_images
             ),
             audio_task,
+            video_task,
             downloads,
             uploads,
             voice,
@@ -1158,8 +1215,10 @@ mod tests {
         crate::presentation_preferences::check_ui(&runtime);
         crate::presentation_content::check_ui();
         super::notice_tests::check_ui();
+        super::call_tests::check_ui();
         crate::presentation_photos::check_ui();
         crate::presentation_audio::check_ui();
+        crate::presentation_video::check_ui();
         crate::presentation_hover_tests::check_ui();
         crate::presentation_hover_tests::check_action_flows();
         crate::presentation_menu_tests::check_ui();
@@ -1168,6 +1227,7 @@ mod tests {
         crate::presentation_text::check_ui();
         crate::presentation_downloads::check_ui();
         crate::presentation_attachments::check_ui();
+        crate::presentation_clipboard::tests::check_ui();
         crate::presentation_voice::check_ui();
         crate::presentation_read_tests::check_ui();
         crate::presentation_navigation::check_ui();

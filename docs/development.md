@@ -1,5 +1,12 @@
 # Heya development preparation
 
+Current toolkit pin: Slint `a5a124bf80961966e875dc91d8d04271ec5885d8`
+(1.19.0 development), with winit 0.31.0-beta.3. Native accessibility is disabled
+upstream until its bridge supports winit 0.31. The dated measurements and
+1.18.1 tool-installation notes below describe their original environment;
+`Cargo.lock` and `prep/upstreams.json` are authoritative for current builds.
+
+
 The workspace contains a Cargo application with live text messaging, an encrypted archive and
 an offline Slint demo. Run `cargo run --release --locked` to resume a saved session
 or show the first-use connection screen, `cargo run --release --locked -- --offline`
@@ -1942,3 +1949,34 @@ The actual SQLCipher query plan is checked for use of `messages_timeline` rather
 than a per-chat full-history scan. Light/dark synthetic framebuffer captures
 verify the existing sidebar Text's layout. Evidence is ignored under
 `.prep/validation/hover-20261015/sidebar-*`; all UI checks ran offscreen.
+
+## Album headers — 21 October 2026
+
+A read-only inspection identified an unsupported bubble as an `AlbumMessage`
+header declaring two photos. The following photo referenced that header; the
+adjacent deleted item had a different identity. The header is metadata, so it
+must not become a message bubble, sidebar preview or unread increment.
+
+Live delivery and history import now classify album headers as invisible,
+retaining their encrypted envelopes and associations. Individual media and
+legitimate deleted-message placeholders keep their existing handling. The
+existing unsupported-message startup repair now accepts text/visibility results
+and advances its revision to 2. It hides previously misclassified headers,
+clears their unread flags and recounts affected chats in the same bounded
+100-row transaction. It preserves drafts, read positions and raw album metadata;
+a failed batch rolls back and resumes safely. Completion skips later rescans.
+No schema migration, new worker, UI control or protocol-library patch is added.
+
+Validation passed 266 default application tests plus encrypted storage, 248
+application tests without default media features, and strict all-target Clippy
+in both configurations (seven opt-in unit tests skipped). Synthetic regressions
+cover live/history imports, unknown/literal/view-once handling, retained album
+associations, timeline-cache invalidation, unread counts and previews, and
+205-header repair with batch rollback, reopening and replay. The native GUI
+startup/first-redraw/shutdown check ran offscreen. After installation and normal
+reopening, read-only verification confirmed that the reported saved header was
+hidden with its unread flag cleared, and the separate deletion and photo remained
+visible. No automated account message was sent.
+
+Album viewer development and its archive-backed offscreen benchmark are described
+in [photo albums](photo-albums.md).

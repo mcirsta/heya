@@ -278,7 +278,7 @@ async fn migration_recovers_legacy_edited_media_without_claiming_the_lost_captio
     )
     .await;
     db.blocking(|c|{
-        c.execute_batch("ALTER TABLE mutations DROP COLUMN raw; DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; DROP TABLE outgoing_receipts; DROP TABLE chat_settings; PRAGMA user_version=12;")?;
+        c.execute_batch("ALTER TABLE mutations DROP COLUMN raw; DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; DROP TABLE outgoing_receipts; DROP TABLE chat_settings; DROP INDEX messages_album; ALTER TABLE messages DROP COLUMN album_index; ALTER TABLE messages DROP COLUMN album; PRAGMA user_version=12;")?;
         c.execute("INSERT INTO mutations(chat_id,sender,wire_id,body,version,deleted) SELECT chat_id,sender,wire_id,'[Unsupported edited message]',20,0 FROM messages WHERE wire_id='legacy'",[])?;
         c.execute("UPDATE messages SET body='[Unsupported edited message]',content='',thumbnail=X'' WHERE wire_id='legacy'",[])?;
         Ok(())

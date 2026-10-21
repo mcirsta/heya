@@ -166,7 +166,7 @@ async fn photos_upgrade_reopen_encrypted_and_keep_exact_duplicate_cache() {
     old.content = Default::default();
     old.thumbnail.clear();
     insert(&db, vec![old]).await;
-    db.blocking(|c|{c.execute_batch("DROP TRIGGER discard_changed_document_preview; DROP TABLE document_previews; DROP TABLE outgoing_reads; DROP INDEX messages_action_wire; DROP TABLE reply_drafts; DROP TABLE reactions; DROP TRIGGER discard_changed_audio; DROP TABLE message_audio; DROP TRIGGER discard_changed_photo; DROP TABLE message_photos; DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; ALTER TABLE mutations DROP COLUMN raw; DROP TABLE outgoing_receipts; DROP TABLE chat_settings; PRAGMA user_version=5; INSERT OR REPLACE INTO metadata(key,value) VALUES('content_decoder_revision','1');")?;Ok(())}).unwrap();
+    db.blocking(|c|{c.execute_batch("DROP TRIGGER discard_changed_document_preview; DROP TABLE document_previews; DROP TABLE outgoing_reads; DROP INDEX messages_action_wire; DROP TABLE reply_drafts; DROP TABLE reactions; DROP TRIGGER discard_changed_audio; DROP TABLE message_audio; DROP TRIGGER discard_changed_photo; DROP TABLE message_photos; DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; ALTER TABLE mutations DROP COLUMN raw; DROP TABLE outgoing_receipts; DROP TABLE chat_settings; DROP INDEX messages_album; ALTER TABLE messages DROP COLUMN album_index; ALTER TABLE messages DROP COLUMN album; PRAGMA user_version=5; INSERT OR REPLACE INTO metadata(key,value) VALUES('content_decoder_revision','1');")?;Ok(())}).unwrap();
     drop(db);
     let db = Archive::open(files.clone(), KEY).unwrap();
     crate::protocol_messages::repair_text(&db).unwrap();
@@ -625,4 +625,146 @@ async fn attachment_menu_upgrade_preserves_cached_photo_fingerprint() {
         db.photo_candidates(vec![id]).await.unwrap(),
         vec![(id, State::Ready)]
     );
+}
+
+#[tokio::test]
+async fn copy_uses_original_and_rechecks_chat_visibility_and_deletion() {
+    let (_dir, db) = fixture();
+    let id = insert(&db, vec![photo_record("copy-photo")]).await[0];
+    let chat = db.create_chat(PN.into()).await.unwrap();
+    cached(&db, id, 1600, 1200).await;
+    let original = db.clipboard_photo(chat, id).await.unwrap().unwrap();
+    let pixels = decode(&original, u32::MAX).unwrap();
+    assert_eq!((pixels.width, pixels.height), (1600, 1200));
+    let wrong = db
+        .create_chat("15550000999@s.whatsapp.net".into())
+        .await
+        .unwrap();
+    assert!(db.clipboard_photo(wrong, id).await.unwrap().is_none());
+    db.call(move |c| {
+        c.execute("INSERT OR REPLACE INTO chat_settings(jid,kind,value) SELECT jid,2,1 FROM chats WHERE id=?1", [chat])?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    assert!(db.clipboard_photo(chat, id).await.is_err());
+    db.call(move |c| {
+        c.execute(
+            "DELETE FROM chat_settings WHERE kind=2 AND jid=(SELECT jid FROM chats WHERE id=?1)",
+            [chat],
+        )?;
+        c.execute("UPDATE messages SET deleted=1 WHERE id=?1", [id])?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    assert!(db.clipboard_photo(chat, id).await.unwrap().is_none());
+    db.call(move |c| {
+        c.execute("UPDATE messages SET deleted=0,expires=1 WHERE id=?1", [id])?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    assert!(db.clipboard_photo(chat, id).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn album_decode_coalesces_navigation_reuses_small_thumbnails_and_releases_closed_viewer() {
+    let (_temp, db) = fixture();
+    let ids = insert(
+        &db,
+        (0..10)
+            .map(|i| {
+                let mut r = photo_record(&format!("album-{i}"));
+                r.album = Some(crate::message_content::Album {
+                    parent: "explicit-parent".into(),
+                    index: Some(i),
+                });
+                r
+            })
+            .collect(),
+    )
+    .await;
+    for &id in &ids {
+        cached(&db, id, 900, 600).await;
+    }
+    let chat = db.create_chat(PN.into()).await.unwrap();
+    let (_archives, archive_rx) = watch::channel(Some(db.clone()));
+    let (demand, demand_rx) = watch::channel(Demand {
+        chat,
+        viewer: Some(ids[0]),
+        ..Default::default()
+    });
+    let (updates, mut snapshots) = watch::channel(Arc::new(Snapshot::default()));
+    let gate = Arc::new(Semaphore::new(0));
+    let held = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (started, mut started_rx) = mpsc::unbounded_channel();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let decode = {
+        let gate = gate.clone();
+        let held = held.clone();
+        let calls = calls.clone();
+        move |bytes: Vec<u8>, edge| {
+            let gate = gate.clone();
+            let hold = edge == VIEWER_EDGE && !held.swap(true, Ordering::SeqCst);
+            let started = started.clone();
+            let calls = calls.clone();
+            async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                if hold {
+                    started.send(()).unwrap();
+                    gate.acquire().await.unwrap().forget();
+                }
+                super::decode(&bytes, edge)
+            }
+        }
+    };
+    let worker = tokio::spawn(presentation::present_with_decode(
+        archive_rx, demand_rx, updates, decode,
+    ));
+    started_rx.recv().await.unwrap();
+    demand.send_modify(|d| d.viewer = Some(ids[1]));
+    demand.send_modify(|d| d.viewer = Some(ids[8]));
+    gate.add_permits(10);
+    let ready = snapshot(&mut snapshots, |s| {
+        s.viewer.as_ref().is_some_and(|v| v.0 == ids[8]) && s.thumbnails.len() == THUMB_COUNT
+    })
+    .await;
+    let gallery = ready.gallery.as_ref().unwrap();
+    assert_eq!(gallery.position, 8);
+    assert_eq!(gallery.members, ids);
+    assert!(
+        ready
+            .thumbnails
+            .values()
+            .all(|p| p.pixels.width <= THUMB_EDGE && p.pixels.height <= THUMB_EDGE)
+    );
+    assert_eq!(
+        ready.rows.len(),
+        1,
+        "other originals never join viewer demand"
+    );
+    let before = calls.load(Ordering::SeqCst);
+    db.changed();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(150), snapshots.changed())
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        before,
+        "unchanged notifications reuse decoded pixels"
+    );
+    demand.send_replace(Demand::default());
+    let closed = snapshot(&mut snapshots, |s| {
+        s.viewer.is_none() && s.rows.is_empty() && s.thumbnails.is_empty() && s.gallery.is_none()
+    })
+    .await;
+    assert!(closed.checked.is_none());
+    drop(demand);
+    tokio::time::timeout(Duration::from_secs(2), worker)
+        .await
+        .unwrap()
+        .unwrap();
 }

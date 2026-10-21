@@ -11,12 +11,15 @@ default = ["media-gstreamer"]
 media-gstreamer = ["dep:gstreamer", "dep:gstreamer-app"]
 
 [dependencies]
+arboard = { version = "=3.6.1", default-features = false, features = ["image-data", "wayland-data-control"] }
 emojis = "0.9"
 unicode-segmentation = "=1.13.3"
-slint = { version = "=1.18.1", default-features = false, features = ["std", "backend-winit", "accessibility", "compat-1-18", "unstable-winit-030"] }
-# Isolated in presentation_scroll: retain the wheel gesture phase, which the
-# public PointerScrolled event cannot carry in this exact Slint release.
-i-slint-core = { version = "=1.18.1", default-features = false }
+# Development snapshot for native Wayland drops. The native accessibility bridge
+# is disabled in this upstream branch; restore it when Slint supports winit 0.31.
+slint = { git = "https://github.com/slint-ui/slint", rev = "a5a124bf80961966e875dc91d8d04271ec5885d8", default-features = false, features = ["std", "backend-winit", "accessibility", "compat-1-18", "unstable-winit-031"] }
+# Version-specific input bridges: wheel phases in presentation_scroll and
+# undoable paste commits in presentation_clipboard (missing public APIs).
+i-slint-core = { git = "https://github.com/slint-ui/slint", rev = "a5a124bf80961966e875dc91d8d04271ec5885d8", default-features = false }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "process", "io-util"] }
 whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "0dc38af07632f48f0cf6c66df285f1643fc22b95", default-features = false, features = ["sqlite-storage", "tokio-transport", "tokio-runtime", "ureq-client", "tokio-native"] }
 rusqlite = "0.40"
@@ -52,14 +55,14 @@ gstreamer-app = { version = "0.25", optional = true }
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl"] }
 # Preserve the existing Linux renderer selection.
-slint = { version = "=1.18.1", default-features = false, features = ["renderer-software", "renderer-skia-vulkan", "renderer-skia-opengl"] }
+slint = { git = "https://github.com/slint-ui/slint", rev = "a5a124bf80961966e875dc91d8d04271ec5885d8", default-features = false, features = ["renderer-software", "renderer-skia-vulkan", "renderer-skia-opengl"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 rusqlite = { version = "0.40", features = ["bundled-sqlcipher"] }
 keyring = { version = "3.6", features = ["apple-native"] }
 ogg = "0.9"
 # Skia's platform renderer uses Metal on macOS.
-slint = { version = "=1.18.1", default-features = false, features = ["renderer-skia"] }
+slint = { git = "https://github.com/slint-ui/slint", rev = "a5a124bf80961966e875dc91d8d04271ec5885d8", default-features = false, features = ["renderer-skia"] }
 
 [target.'cfg(target_os = "macos")'.build-dependencies]
 cc = "1.8"
@@ -68,13 +71,13 @@ cc = "1.8"
 keyring = { version = "3.6", features = ["windows-native"] }
 
 [build-dependencies]
-slint-build = "=1.18.1"
+slint-build = { git = "https://github.com/slint-ui/slint", rev = "a5a124bf80961966e875dc91d8d04271ec5885d8" }
 
 [dev-dependencies]
 flate2 = "1"
-i-slint-backend-testing = "=1.18.1"
+i-slint-backend-testing = { git = "https://github.com/slint-ui/slint", rev = "a5a124bf80961966e875dc91d8d04271ec5885d8" }
 
-i-slint-renderer-skia = "=1.18.1"
+i-slint-renderer-skia = { git = "https://github.com/slint-ui/slint", rev = "a5a124bf80961966e875dc91d8d04271ec5885d8" }
 
 [profile.dev]
 debug = 1
@@ -104,6 +107,9 @@ wacore = { path = "vendor/wacore" }
 # Slint text shaping: prefer platform color emoji before monochrome text fallbacks.
 # Exact base and minimal diff: docs/color-emoji.md, patches/parley-color-emoji.patch.
 [patch.crates-io]
+# Standard Linux file-list framing; see patches/arboard-uri-list.patch.
+arboard = { path = "vendor/arboard" }
 parley = { path = "vendor/parley" }
-# Linux Skia text coverage; exact base/diff in docs/text-rendering.md.
+# Pinned text-coverage and opacity-layer patches; see patches/README.md.
+[patch."https://github.com/slint-ui/slint"]
 i-slint-renderer-skia = { path = "vendor/i-slint-renderer-skia" }
