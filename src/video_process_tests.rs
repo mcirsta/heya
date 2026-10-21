@@ -160,10 +160,14 @@ async fn malformed_video_fails_and_a_new_player_can_start() {
         updates.clone(),
     )
     .unwrap();
-    let error = tokio::time::timeout(Duration::from_secs(5), bad.finished())
+    // Both native backends allow 15 seconds for a first frame, then the parent
+    // waits up to two seconds to reap the child. AVFoundation may use that full
+    // startup window before rejecting malformed input.
+    let error = tokio::time::timeout(Duration::from_secs(20), bad.finished())
         .await
         .unwrap();
     assert!(error.is_err());
+    assert!(bad.task.is_finished(), "failure acknowledges decoder exit");
     let mut valid = Worker::start(2, Vec::new(), true, true, Default::default(), updates).unwrap();
     valid.stop().await;
     assert!(valid.task.is_finished());
