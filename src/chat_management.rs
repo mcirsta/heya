@@ -109,13 +109,18 @@ pub fn request(
     action: Action,
 ) -> Pending {
     Box::pin(async move {
-        let mut connection = sources.clone();
+        let mut connection = sources;
+        // The receiver may still have the initial Connected notification unread.
+        // Capture that client and only cancel for a later connection change.
+        let source = connection
+            .borrow_and_update()
+            .clone()
+            .ok_or(Failure::Offline)?;
         let work = async {
             let target = db
                 .chat_management_target(chat)
                 .await
                 .map_err(|_| Failure::Failed)?;
-            let source = sources.borrow().clone().ok_or(Failure::Offline)?;
             let update = source.change(target, action).await?;
             drop(source);
             db.save_chat_settings(vec![update])

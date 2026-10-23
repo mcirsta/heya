@@ -6,6 +6,8 @@ chevron, including the compact sidebar. It offers timed muting (8 hours or one
 week), indefinite muting, unmute, archive/unarchive, and Lock.
 
 Muted chats retain their real unread messages and remain in the current folder;
+the expanded sidebar shows a trailing mute icon and the compact sidebar shows
+a small mute marker beside the avatar. Both keep the unread count visible;
 the taskbar/Dock badge excludes them while their mute is active. Expiry is
 evaluated using the existing archive refresh interval, so the badge can take up
 to roughly 30 seconds to reflect an elapsed mute. Archived chats have their own
@@ -55,6 +57,9 @@ commands continue while it waits. Completion releases that future; there is no
 dedicated thread or new idle worker. Disconnect, source replacement or window
 closure cancels the operation and releases its client ownership. The normal
 shutdown fence clears the source watch before waiting for the SDK store to close.
+At submission it captures the current client and marks the connection notification
+seen. Only later connection changes cancel the action; an unread initial Connected
+notification must not reject a valid click as offline.
 An unconfirmed action does not optimistically change saved state or retry itself;
 subsequent authoritative updates can still report a change that reached WhatsApp.
 
@@ -64,8 +69,10 @@ Automated checks use synthetic SQLCipher archives, fake action sources, the real
 SDK event bus, headless Slint input/layout and the existing synthetic SDK shutdown
 test. They cover timestamp ordering, missing values, alias reconciliation,
 migration/restart, mute expiry, folder filtering, badge exclusions, lock guards,
-retained drafts/unread state, menu containment, keyboard activation, cancellation
-and source release. These do not establish live-account interoperability or
+retained drafts/unread state, menu containment, mouse/keyboard activation, mute
+indicator containment beside unread/call previews, late connection publication,
+delayed mute/unmute completion, cancellation and source release.
+These do not establish live-account interoperability or
 native macOS interaction.
 
 The archive benchmark can additionally populate 1,500 flags and 250 muted chats:

@@ -743,16 +743,16 @@ export component AppWindow inherits Window {
                                         height: 18px;
                                         max-lines: 1;
                                         wrap: no-wrap;
-                                        x: (chat.muted ? 94px : 76px) + (chat.call-kind > 0 ? 21px : 0px);
+                                        x: 76px + (chat.call-kind > 0 ? 21px : 0px);
                                         y: 38px;
-                                        width: max(0px, parent.width - self.x - 42px - ((chat.unread > 0 || chat.marked-unread) ? badge.width + 6px : 0px));
+                                        width: max(0px, parent.width - self.x - (chat.muted ? 66px : 42px) - ((chat.unread > 0 || chat.marked-unread) ? badge.width + 6px : 0px));
                                         text: chat.preview;
                                         color: (chat.unread > 0 || chat.marked-unread) ? Theme.secondary : Theme.dim;
                                         font-size: 13px;
                                         overflow: elide;
                                     }
                                     if chat.call-kind > 0: Image {
-                                        x: chat.muted ? 94px : 76px;y:39px;width:16px;height:16px;
+                                        x:76px;y:39px;width:16px;height:16px;
                                         source: chat.call-kind == 2 ? @image-url("icons/call-video.svg") : @image-url("icons/call-voice.svg");
                                         colorize: Theme.dim;
                                     }
@@ -774,11 +774,15 @@ export component AppWindow inherits Window {
                                             vertical-alignment: center;
                                         }
                                     }
-                                    if chat.muted:Image {x:76px;y:40px;width:14px;height:14px;source:@image-url("icons/muted.svg");colorize:Theme.dim;}
+                                    if chat.muted: chat-mute := Image {
+                                        x: parent.width - 60px - ((chat.unread > 0 || chat.marked-unread) ? badge.width + 6px : 0px);
+                                        y: 39px; width: 16px; height: 16px;
+                                        source: @image-url("icons/muted.svg"); colorize: Theme.dim;
+                                    }
                                 }
 
                                 accessible-role: button;
-                                accessible-label: chat.title + ": " + chat.preview;
+                                accessible-label: chat.title + (chat.muted ? ", muted" : "") + ": " + chat.preview;
                                 accessible-action-default => { root.select-chat(chat.id); root.show-conversation = true; }
                                 row-focus := FocusScope {
                                     key-pressed(event) => {

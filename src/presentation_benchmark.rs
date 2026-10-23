@@ -261,7 +261,7 @@ pub fn start(
             call_kind: 0,
             unread: index as usize % 5,
             marked_unread: false,
-            muted: false,
+            muted: index % 7 == 0,
             archived: false,
         })
         .collect();

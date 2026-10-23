@@ -15,6 +15,40 @@ synthetic chats. See the
 [README](../README.md) for controls and the [roadmap](roadmap.md) for the remaining
 M0 integration checks.
 
+## Connected chat-management actions — 24 October 2026
+
+Reproduced an enabled Mute always action returning "Connect to manage chats"
+before its source was called. The messaging receiver was created offline and
+still had the initial Connected notification unread. Cloning it into the action's
+disconnect watcher made `changed()` immediately ready, so the biased cancellation
+branch rejected the connected request. Existing tests started their watch with
+a connected client and missed this startup ordering.
+
+The action now captures the current client with `borrow_and_update()` before any
+await, then cancels only for subsequent connection changes. This is shared by
+mute, archive and lock controls. It preserves the existing one-future lifecycle,
+remote confirmation, cancellation and client release. A regression starts offline,
+publishes the connection, then submits; the real messaging worker also exercises
+delayed mute/unmute acknowledgements while preserving drafts and unread counts.
+
+The expanded sidebar places its mute icon beside the trailing controls instead
+of shifting the message preview. The compact sidebar adds a mute marker beside
+the avatar. Synthetic layout/input checks cover mouse and keyboard activation,
+call previews, 99+ unread counts, narrow windows and the compact layout. The
+500-chat rendering benchmark now includes muted rows.
+
+The Linux synthetic suites passed 315 tests with media and 296 without it (10
+and 9 intentional helper/device skips respectively). They do not establish
+live-account chat-setting synchronization or native macOS interaction.
+Strict all-target Clippy passed in both configurations. In an optimized private-X
+OpenGL run, 10,000-message scroll render CPU p95 was 13.36 ms versus the preceding
+12.94 ms; unchanged updates drew no frames and applied at 0.11 ms p95. Existing
+cold-frame and resize outliers remain (about 2 seconds and 443 ms respectively);
+this change does not address them. Offscreen close/reopen checks found no idle
+media thread and exited in 22–44 ms. These application/render measurements do
+not measure a desktop compositor or account delivery. Both sidebar layouts were
+also inspected using synthetic native framebuffer captures.
+
 ## Search and chat-management integration — 20 October 2026
 
 The pending changes were integrated with the incoming local-search and quote
