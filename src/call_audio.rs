@@ -21,6 +21,9 @@ struct Header {
     settings: Settings,
     synthetic: bool,
     unavailable: bool,
+    #[cfg(test)]
+    #[serde(default)]
+    stalled: bool,
 }
 pub struct Ports {
     pub microphone: async_channel::Receiver<Vec<i16>>,
@@ -51,6 +54,8 @@ impl Worker {
                 settings,
                 synthetic: matches!(input, Input::Synthetic),
                 unavailable: matches!(input, Input::Unavailable),
+                #[cfg(test)]
+                stalled: matches!(input, Input::Stalled),
             },
             ready,
             microphone,
@@ -71,12 +76,14 @@ impl Worker {
             },
         ))
     }
-    pub async fn ready(&mut self) -> Result<(), Error> {
-        self.ready
-            .take()
-            .ok_or(Error::Device)?
-            .await
-            .map_err(|_| Error::Device)?
+    pub fn ready(&mut self) -> impl std::future::Future<Output = Result<(), Error>> + Send + use<> {
+        let ready = self.ready.take();
+        async move {
+            ready
+                .ok_or(Error::Device)?
+                .await
+                .map_err(|_| Error::Device)?
+        }
     }
     pub async fn finished(&mut self) -> Result<(), Error> {
         let result = (&mut self.task).await;
@@ -167,37 +174,46 @@ async fn pump(
             let _ = ready.send(status);
             status?;
             loop {
-                match output.read_u8().await.map_err(|_| Error::Device)? {
-                    1 => {
-                        let count = output.read_u16_le().await.map_err(|_| Error::Device)? as usize;
-                        if count != SAMPLES {
-                            return Err(Error::Device);
+                // A muted/silent microphone still produces PCM. A missing
+                // frame means the device/plugin has stopped responding.
+                let receive = async {
+                    match output.read_u8().await.map_err(|_| Error::Device)? {
+                        1 => {
+                            let count =
+                                output.read_u16_le().await.map_err(|_| Error::Device)? as usize;
+                            if count != SAMPLES {
+                                return Err(Error::Device);
+                            }
+                            let mut raw = vec![0; count * 2];
+                            output
+                                .read_exact(&mut raw)
+                                .await
+                                .map_err(|_| Error::Device)?;
+                            let pcm = raw
+                                .as_chunks::<2>()
+                                .0
+                                .iter()
+                                .map(|p| i16::from_le_bytes([p[0], p[1]]))
+                                .collect();
+                            if let Err(async_channel::TrySendError::Full(pcm)) =
+                                microphone.try_send(pcm)
+                            {
+                                let _ = trim.try_recv();
+                                let _ = microphone.try_send(pcm);
+                            }
                         }
-                        let mut raw = vec![0; count * 2];
-                        output
-                            .read_exact(&mut raw)
-                            .await
-                            .map_err(|_| Error::Device)?;
-                        let pcm = raw
-                            .as_chunks::<2>()
-                            .0
-                            .iter()
-                            .map(|p| i16::from_le_bytes([p[0], p[1]]))
-                            .collect();
-                        if let Err(async_channel::TrySendError::Full(pcm)) =
-                            microphone.try_send(pcm)
-                        {
-                            let _ = trim.try_recv();
-                            let _ = microphone.try_send(pcm);
+                        2 => {
+                            return Err(crate::media_process::decode_error(
+                                output.read_u8().await.map_err(|_| Error::Device)?,
+                            ));
                         }
+                        _ => return Err(Error::Device),
                     }
-                    2 => {
-                        return Err(crate::media_process::decode_error(
-                            output.read_u8().await.map_err(|_| Error::Device)?,
-                        ));
-                    }
-                    _ => return Err(Error::Device),
-                }
+                    Ok::<(), Error>(())
+                };
+                tokio::time::timeout(Duration::from_secs(5), receive)
+                    .await
+                    .map_err(|_| Error::Unresponsive)??;
             }
         };
         let write = async {
@@ -304,18 +320,28 @@ fn run_child(out: &mut impl Write) -> Result<(), Error> {
             }
         })
         .map_err(|_| Error::Device)?;
+    #[cfg(test)]
+    if header.stalled {
+        if header.synthetic {
+            // A device that became ready, then stopped partway through a frame.
+            out.write_all(&[0, 1])
+                .and_then(|_| out.write_all(&(SAMPLES as u16).to_le_bytes()))
+                .and_then(|_| out.flush())
+                .map_err(|_| Error::Device)?;
+        }
+        loop {
+            std::thread::park();
+        }
+    }
     let mut device: Box<dyn Device> = if header.synthetic {
         synthetic()?
     } else {
         platform(header.settings)?
     };
-    let began = std::time::Instant::now();
+    // The parent owns the startup deadline, including platform initialization.
     let first = loop {
         if let Some(pcm) = device.capture()? {
             break pcm;
-        }
-        if began.elapsed() > Duration::from_secs(5) {
-            return Err(Error::Device);
         }
     };
     if first.len() != SAMPLES {
@@ -419,6 +445,44 @@ mod tests {
         assert_eq!(worker.ready().await, Err(Error::NoInput));
         assert_eq!(worker.finished().await, Err(Error::NoInput));
         assert!(worker.task.is_finished());
+    }
+    #[tokio::test]
+    async fn stalled_capture_times_out_even_in_the_middle_of_a_frame() {
+        let (ready, prepared) = oneshot::channel();
+        let (microphone, capture) = async_channel::bounded(3);
+        let (_speaker, playout) = async_channel::bounded(3);
+        let (_stop, stopped) = watch::channel(false);
+        let task = tokio::spawn(pump(
+            Header {
+                settings: Settings::default(),
+                synthetic: true,
+                unavailable: false,
+                stalled: true,
+            },
+            ready,
+            microphone,
+            capture.clone(),
+            playout,
+            stopped,
+        ));
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(3), prepared)
+                .await
+                .unwrap()
+                .unwrap(),
+            Ok(())
+        );
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(8), task)
+                .await
+                .unwrap()
+                .unwrap(),
+            Err(Error::Unresponsive)
+        );
+        assert!(
+            capture.is_closed(),
+            "completion follows helper exit and PCM channel release"
+        );
     }
     #[cfg(all(target_os = "linux", feature = "media-gstreamer"))]
     #[tokio::test]

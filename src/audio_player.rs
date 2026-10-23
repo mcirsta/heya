@@ -1,14 +1,14 @@
-//! One platform player on a thread created for playback, never by a chat row.
+//! One platform player in a finite helper, never on the UI or service runtime.
 //! Compressed data is fed from bounded memory; no plaintext temporary files.
 use crate::audio::{Error, Status};
 #[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
 use gstreamer::{self as gst, prelude::*};
 use std::sync::Arc;
 #[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::sync::{oneshot, watch};
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub enum Output {
     #[cfg_attr(
         not(all(feature = "media-gstreamer", target_os = "linux")),
@@ -32,12 +32,30 @@ impl Worker {
         updates: watch::Sender<Status>,
         output: Output,
     ) -> Result<Self, Error> {
-        Self::spawn(initial, updates, move |desired, updates| {
-            run(desired, updates, output)
+        if initial
+            .bytes
+            .as_ref()
+            .is_none_or(|b| b.is_empty() || b.len() > crate::audio::MAX_BYTES)
+        {
+            return Err(Error::Unavailable);
+        }
+        let generation = initial.generation;
+        let (control, desired) = watch::channel(initial);
+        let (finished, done) = oneshot::channel();
+        tokio::spawn(async move {
+            let result = crate::audio_process::run(desired, updates, output).await;
+            let _ = finished.send(result);
+        });
+        Ok(Self {
+            generation,
+            control,
+            done,
         })
     }
 
-    pub(super) fn spawn(
+    // Only the already isolated voice-preview helper and synthetic tests use
+    // a local thread. Normal received-message playback uses start().
+    pub(crate) fn spawn(
         initial: Desired,
         updates: watch::Sender<Status>,
         play: impl FnOnce(watch::Receiver<Desired>, watch::Sender<Status>) -> Status + Send + 'static,
@@ -216,7 +234,7 @@ impl Pipeline {
 /// Stop, completion and failure end the thread. Paused players wait for controls
 /// without polling; progress/preroll updates are at most 10 Hz.
 #[cfg(all(feature = "media-gstreamer", target_os = "linux"))]
-fn run(
+pub(crate) fn run(
     mut desired: watch::Receiver<Desired>,
     updates: watch::Sender<Status>,
     output: Output,
@@ -245,7 +263,6 @@ fn run(
         }
     };
     let mut ready = false;
-    let mut started = Instant::now();
     let mut applied_seek = None;
     let mut applied_speed = 1.;
     let mut applied_playing = None;
@@ -275,9 +292,6 @@ fn run(
                     }
                 }
             }
-            if !ready && started.elapsed() > Duration::from_secs(10) {
-                status.fail(Error::Playback);
-            }
             if ready && !matches!(status.phase, 0 | 4) {
                 status.duration = player
                     .0
@@ -301,7 +315,6 @@ fn run(
                         // publish a stale position or issue another seek until
                         // the new segment is ready (ASYNC_DONE).
                         ready = false;
-                        started = Instant::now();
                         status.phase = 1;
                     }
                     applied_seek = current.seek;
@@ -359,7 +372,7 @@ fn run(
 
 /// An explicit unavailable result for UI/domain-only builds, never fake playback.
 #[cfg(target_os = "macos")]
-fn run(
+pub(crate) fn run(
     desired: watch::Receiver<Desired>,
     updates: watch::Sender<Status>,
     output: Output,
@@ -371,7 +384,7 @@ fn run(
     target_os = "macos",
     all(feature = "media-gstreamer", target_os = "linux")
 )))]
-fn run(
+pub(crate) fn run(
     desired: watch::Receiver<Desired>,
     updates: watch::Sender<Status>,
     _output: Output,

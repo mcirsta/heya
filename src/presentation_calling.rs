@@ -284,6 +284,12 @@ pub(crate) fn check_ui() {
         Some(false),
         "a double click must not cancel the check or start another call"
     );
+    workflow_tests::click_button(&ui, "Cancel audio check");
+    assert!(
+        *stopped.borrow(),
+        "audio readiness can be cancelled without a call dialog"
+    );
+    assert!(requests.try_recv().is_err());
     publish(
         &ui,
         &Status {
@@ -317,6 +323,7 @@ pub(crate) fn check_ui() {
         calling::Error::Audio(crate::voice_recorder::Error::Permission),
         calling::Error::Audio(crate::voice_recorder::Error::Device),
         calling::Error::Audio(crate::voice_recorder::Error::Disabled),
+        calling::Error::Audio(crate::voice_recorder::Error::Unresponsive),
         calling::Error::Unavailable,
         calling::Error::Offline,
         calling::Error::Network,

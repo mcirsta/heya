@@ -38,6 +38,7 @@ impl Error {
             Self::Audio(AudioError::NoInput) => AudioError::NoInput.label(),
             Self::Audio(AudioError::Permission) => AudioError::Permission.label(),
             Self::Audio(AudioError::Disabled) => "Audio calling is disabled in this build.",
+            Self::Audio(AudioError::Unresponsive) => AudioError::Unresponsive.label(),
             Self::Audio(_) => {
                 "Call audio is unavailable. Check your microphone, speakers and audio settings."
             }
@@ -295,7 +296,9 @@ impl Controller {
         let mut open = true;
         let mut cancelled = false;
         let result = {
-            let ready = audio.ready();
+            // The deadline must include device discovery and opening the device:
+            // a plugin can block before it ever produces a microphone frame.
+            let ready = tokio::time::timeout(Duration::from_secs(8), audio.ready());
             let starting = provider.open(&target, offer.as_deref(), ports);
             tokio::pin!(ready, starting);
             let mut audio_ready = false;
@@ -312,9 +315,11 @@ impl Controller {
                     },
                     _=sources.changed()=>{cancelled=true;break Err(Error::Offline);},
                     result=&mut ready,if !audio_ready=>match result {
-                        Ok(())=>{audio_ready=true;status.phase=if offer.is_some(){4}else{3};publish(updates,status);},
-                        Err(error)=>break Err(Error::Audio(error)),
+                        Ok(Ok(()))=>{audio_ready=true;status.phase=if offer.is_some(){4}else{3};publish(updates,status);},
+                        Ok(Err(error))=>break Err(Error::Audio(error)),
+                        Err(_)=>break Err(Error::Audio(AudioError::Unresponsive)),
                     },
+                    result=audio.finished(),if audio_ready=>break Err(Error::Audio(result.err().unwrap_or(AudioError::Device))),
                     result=&mut starting,if audio_ready=>break result,
                     _=&mut deadline=>break Err(Error::Network),
                 }
@@ -323,6 +328,10 @@ impl Controller {
         let mut call = match result {
             Ok(call) => call,
             Err(error) => {
+                if !cancelled {
+                    // Fixed categories only: never log SDK errors or device/media data.
+                    eprintln!("Heya call setup failed: {error:?}");
+                }
                 audio.stop().await;
                 if cancelled && let Some(id) = &offer {
                     let _ =
@@ -330,10 +339,7 @@ impl Controller {
                 }
                 status.phase = if offer.is_none() {
                     0
-                } else if matches!(
-                    error,
-                    Error::Audio(AudioError::NoInput | AudioError::Permission)
-                ) {
+                } else if matches!(error, Error::Audio(_)) {
                     1
                 } else {
                     6

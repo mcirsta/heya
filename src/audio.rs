@@ -11,7 +11,7 @@ pub const SUPPORTED: bool = cfg!(any(
     target_os = "macos",
     all(feature = "media-gstreamer", target_os = "linux")
 ));
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Error {
     NotBuilt,
     Offline,
@@ -30,6 +30,7 @@ pub enum Error {
     )]
     Codec,
     Playback,
+    Unresponsive,
     #[cfg_attr(
         not(all(feature = "media-gstreamer", target_os = "linux")),
         allow(dead_code)
@@ -57,11 +58,12 @@ impl Error {
                 }
             }
             Self::Playback => "Could not play audio · check the format and audio output",
+            Self::Unresponsive => "Audio system did not respond · check your output and retry",
             Self::Seek => "Seeking or speed change is unavailable for this audio",
         }
     }
 }
-#[derive(Clone, Default, PartialEq)]
+#[derive(Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Status {
     pub generation: u64,
     pub id: i32,

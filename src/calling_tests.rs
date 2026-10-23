@@ -291,6 +291,31 @@ async fn outgoing_setup_errors_return_to_idle_without_a_call_ended_state() {
     }
 }
 #[tokio::test]
+async fn blocked_audio_setup_is_cancellable_and_times_out_before_any_signaling() {
+    let mut h = Harness::new(Input::Stalled).await;
+    state(&mut h.states, |s| s.available).await;
+    h.commands.send(Command::Start(h.chat)).await.unwrap();
+    state(&mut h.states, |s| s.phase == 2).await;
+    h.stop.send_replace(true);
+    let cancelled = state(&mut h.states, |s| s.phase == 0).await;
+    assert_eq!(cancelled.error, None);
+    h.stop.send_replace(false);
+    h.commands.send(Command::Start(h.chat)).await.unwrap();
+    let failed = tokio::time::timeout(
+        Duration::from_secs(11),
+        h.states
+            .wait_for(|s| s.phase == 0 && s.error == Some(Error::Audio(AudioError::Unresponsive))),
+    )
+    .await
+    .unwrap()
+    .unwrap()
+    .clone();
+    assert_eq!(failed.seconds, 0);
+    assert_eq!(h.network.opened.load(Ordering::Acquire), 0);
+    assert_eq!(h.network.preparing.load(Ordering::Acquire), 0);
+    h.finish().await;
+}
+#[tokio::test]
 async fn disconnect_and_closing_the_ui_end_an_active_call() {
     for disconnect in [true, false] {
         let mut h = Harness::new(Input::Synthetic).await;

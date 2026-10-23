@@ -995,6 +995,12 @@ export component AppWindow inherits Window {
                                         activated => { AudioCall.action(0); }
                                     }
 
+                                    if AudioCall.phase == 2 && AudioCall.offer == "": IconButton {
+                                        icon: @image-url("icons/close.svg");
+                                        label: @tr("Cancel audio check");
+                                        activated => { AudioCall.action(3); }
+                                    }
+
                                     IconButton {
                                         icon: @image-url("icons/search.svg");
                                         label: @tr("Search saved messages in conversation");

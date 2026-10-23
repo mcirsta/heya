@@ -20,6 +20,7 @@ pub enum Error {
     Playback,
     NoInput,
     Permission,
+    Unresponsive,
 }
 impl Error {
     pub fn label(self) -> &'static str {
@@ -40,6 +41,9 @@ impl Error {
             Self::Limit => "The voice message reached the recording limit.",
             Self::Cancelled => "Recording discarded.",
             Self::Playback => "Could not play the recording. Check your audio output.",
+            Self::Unresponsive => {
+                "The audio system did not respond. Check your microphone and audio output, then try again."
+            }
             Self::NoInput => "No microphone was found. Connect a microphone and try again.",
             Self::Permission => {
                 #[cfg(target_os = "macos")]
@@ -78,6 +82,8 @@ pub enum Input {
     Synthetic,
     /// Synthetic missing-device fixture; never opens a hardware source.
     Unavailable,
+    #[cfg(test)]
+    Stalled,
 }
 pub struct Worker(crate::media_process::Worker);
 impl Worker {
@@ -145,6 +151,8 @@ pub(crate) fn capture(
         Input::Microphone => crate::audio_devices::element(true, &settings.input.id)?,
         Input::Synthetic => make("audiotestsrc")?,
         Input::Unavailable => return Err(Error::NoInput),
+        #[cfg(test)]
+        Input::Stalled => return Err(Error::Device),
     };
     let pipeline = Pipeline(gst::Pipeline::new());
     if matches!(input, Input::Synthetic) {

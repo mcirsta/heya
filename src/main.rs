@@ -5,6 +5,7 @@ mod attachments;
 mod audio;
 mod audio_devices;
 mod audio_player;
+mod audio_process;
 mod avatars;
 mod call_audio;
 mod calling;
@@ -231,6 +232,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if std::env::args().nth(1).as_deref() == Some("--heya-call-audio-worker") {
         call_audio::child_main();
+    }
+    if std::env::args().nth(1).as_deref() == Some("--heya-audio-worker") {
+        audio_process::child_main();
     }
     // A short-lived media helper must never initialize the UI or account services.
     if std::env::args().nth(1).as_deref() == Some("--heya-media-worker") {

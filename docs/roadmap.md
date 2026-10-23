@@ -284,7 +284,7 @@ Synthetic tests cover storage/lifecycle/layout; live received-photo compatibilit
 still requires the owner's check. Received audio now has a single GStreamer
 player, authenticated on-demand downloads, encrypted cache, waveform seeking,
 pause/resume and speed changes. Automated playback uses synthetic Opus/WAV and a
-silent sink. Playback threads are created only when audio is ready and exit on
+silent sink. Playback helpers are created only when audio is ready and exit on
 stop/completion/failure; tests cover idle/download paths, rapid replacement and
 teardown, retry and replay. Real audio-device/account validation remains open.
 Voice recording/sending now has on-demand GStreamer Ogg/Opus capture, pause/resume,

@@ -337,11 +337,13 @@ cycle the speed chip through 1×, 1.5× and 2×. Keyboard focus supports Enter/S
 on buttons and arrow keys on the waveform. Clicking during loading cancels it.
 Only one clip plays at a time; changing chats or closing the conversation stops
 playback. Downloaded audio is stored in the encrypted archive and works offline.
-GStreamer reads bounded memory on a worker, without plaintext temporary files.
-No playback thread is created at startup or while downloading. A thread starts
+The platform player reads bounded memory in a finite helper process, without plaintext temporary files.
+No playback helper is created at startup or while downloading. It starts
 when audio bytes are ready and exits on stop, completion or failure. Pause keeps
 the existing player for resume without polling for playback progress. Replacing a clip waits
 for the previous player to finish teardown before starting another.
+An unresponsive audio stack produces a retryable error after ten seconds;
+cancelling or closing terminates and reaps the helper even if a plugin blocks.
 Audio is downloaded only on demand, with a 20 MiB limit. View-once audio stays
 unopened. Sending voice notes is described above. Played receipts, automatic
 next-clip playback and video playback remain pending. Codec and output failures are

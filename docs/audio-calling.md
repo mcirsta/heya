@@ -12,7 +12,17 @@ Failed checks show an audio error popup without a preparing/ended call dialog.
 Once audio is ready, Calling appears while signaling starts, rather than hiding
 the network wait. Initial signaling failures close the panel and show the error
 popup. The header shows Checking audio during the brief readiness check, with
-repeated starts ignored. The call panel handles ringing,
+repeated starts ignored.
+
+An outgoing audio check has a Cancel button and an eight-second deadline covering
+device discovery, device opening and the first microphone frame. Failure restores
+the header and shows an audio error, without starting signaling. During setup and
+an active call, five seconds without a complete microphone frame fails the audio
+operation too; a silent or muted microphone still supplies PCM. These deadlines
+run in the parent, so a blocked platform call cannot bypass them. The existing
+pipe-close/kill/reap path releases the helper before publishing the result.
+
+The call panel handles ringing,
 connection progress and later failures normally. Incoming offers remain visible
 before answering, without opening the microphone merely to ring.
 Mute is enabled once the SDK returns a call handle; hangup is available during
@@ -104,3 +114,9 @@ establish real microphone/speaker quality, acoustic echo cancellation, macOS
 device/permission interoperability, or successful calls to an official client.
 Those require deliberate manual calls with suitable hardware. Heya never places
 an account call as part of its automated tests.
+
+Audio failure regressions also stall a synthetic helper before device opening
+and midway through a PCM frame. The playback fixtures stall startup or an active
+player; the recording fixture reports status without capturing samples. These
+exercise parent deadlines, cancellation, retry and helper reaping independently
+of physical audio devices. They do not diagnose or repair the host audio server.

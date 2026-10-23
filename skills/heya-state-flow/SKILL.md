@@ -31,6 +31,10 @@ and the protocol SDK.
   needed, release protocol/device ownership, and join finite media workers.
   Do not add idle threads, polling timers, generic dispatch layers or retry
   frameworks to repair a local ordering defect.
+- Put device deadlines outside blocking platform calls, covering discovery and
+  opening too. Require actual media progress rather than a worker heartbeat.
+  Use the existing finite-helper pattern when a plugin cannot be interrupted;
+  close its pipe and reap it before publishing completion or starting a replacement.
 
 Reproduce the observable failure with synthetic services, then make the smallest
 fix or remove the conflicting state. Test delayed responses, double clicks,

@@ -387,8 +387,11 @@ chats and invalidating messages release playback. Source generations reject stal
 results, and archive guards reject late writes after mutation. The SDK transport
 shares a bounded authenticated writer with received photos.
 The coordinator is an async task on the shared runtime; it reserves no playback
-thread at startup or during downloads. Ready audio starts one `heya-audio` thread.
-Stop/EOS/failure tears down the pipeline and completes that thread. A completion
+thread at startup or during downloads. Ready audio starts a finite helper process
+running the existing platform player. Startup, playing and seek/resume responses
+have a ten-second parent deadline; paused players wait without a timer. Pipe
+closure exits the helper independently of the device thread, with a bounded
+kill/reap fallback. Stop/EOS/failure releases the helper. A completion
 channel gates replacements, and generation checks reject late results from the
 previous player. Pause waits for control changes without polling. Closing cancels
 any download before waiting for playback teardown.

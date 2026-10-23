@@ -84,6 +84,8 @@ async fn pump(
         Mode::Capture(Input::Microphone, _) => "record",
         Mode::Capture(Input::Synthetic, _) => "record-synthetic",
         Mode::Capture(Input::Unavailable, _) => "record-unavailable",
+        #[cfg(test)]
+        Mode::Capture(Input::Stalled, _) => "record-stalled",
         Mode::Preview { silent: true, .. } => "preview-silent",
         Mode::Preview { silent: false, .. } => "preview",
         Mode::Devices => "devices",
@@ -117,36 +119,50 @@ async fn pump(
     }
     // Keep the reader future alive across control changes: read_exact is not
     // cancellation safe halfway through a frame.
+    let mut samples = progress.subscribe();
     let read = read_output(output, progress);
     tokio::pin!(read);
     let mut deadline = if matches!(name, "devices") {
         Some(tokio::time::Instant::now() + Duration::from_secs(5))
     } else {
-        None
+        Some(tokio::time::Instant::now() + Duration::from_secs(10))
     };
+    let mut requested = Desired::Record;
+    let mut last_seconds = 0.;
     let mut controls_open = true;
     let result = loop {
         tokio::select! {
             result = &mut read => break result,
+            changed = samples.changed(), if !matches!(name, "devices") => {
+                let seconds = samples.borrow_and_update().seconds;
+                // A live status loop is not proof that capture/playback works.
+                if changed.is_ok() && requested == Desired::Record && seconds > last_seconds {
+                    last_seconds = seconds;
+                    deadline = Some(tokio::time::Instant::now() + Duration::from_secs(10));
+                }
+            }
             changed = controls.changed(), if controls_open => {
                 controls_open = changed.is_ok();
                 let desired = if changed.is_err() { Desired::Cancel } else { *controls.borrow_and_update() };
+                requested = desired;
                 let byte = match desired { Desired::Record=>0, Desired::Pause=>1, Desired::Finish=>2, Desired::Cancel=>3 };
                 if input.write_all(&[byte]).await.is_err() { break Err(Error::Device); }
                 if desired == Desired::Cancel { deadline=Some(tokio::time::Instant::now()+Duration::from_secs(2)); }
                 else if desired == Desired::Finish { deadline=Some(tokio::time::Instant::now()+Duration::from_secs(7)); }
+                else if desired == Desired::Pause { deadline=None; }
+                else { deadline=Some(tokio::time::Instant::now()+Duration::from_secs(10)); }
             }
-            _ = async { match deadline { Some(d)=>tokio::time::sleep_until(d).await, None=>std::future::pending().await } } => break Err(Error::Cancelled),
+            _ = async { match deadline { Some(d)=>tokio::time::sleep_until(d).await, None=>std::future::pending().await } } => break Err(if requested == Desired::Cancel { Error::Cancelled } else { Error::Unresponsive }),
         }
     };
     // A finished operation acknowledges process exit, including all device and
     // plugin threads. EOF also stops the helper if the parent disappears.
     drop(input);
     match tokio::time::timeout(Duration::from_secs(2), child.wait()).await {
-        Ok(Ok(status)) if status.success() => result,
+        Ok(Ok(status)) if status.success() || result.is_err() => result,
         _ => {
             let _ = child.kill().await;
-            Err(Error::Device)
+            Err(result.err().unwrap_or(Error::Device))
         }
     }
 }
@@ -254,6 +270,7 @@ pub(crate) fn decode_error(code: u8) -> Error {
         5 => Error::Playback,
         7 => Error::NoInput,
         8 => Error::Permission,
+        9 => Error::Unresponsive,
         _ => Error::Device,
     }
 }
@@ -268,6 +285,7 @@ pub(crate) fn error_code(e: Error) -> u8 {
         Error::Device => 6,
         Error::NoInput => 7,
         Error::Permission => 8,
+        Error::Unresponsive => 9,
     }
 }
 fn publish(out: &mut impl Write, p: Progress) {
@@ -322,6 +340,20 @@ fn child_run(mode: &str, out: &mut impl Write) -> Result<Outcome, Error> {
     }
     if mode == "probe-input" {
         return crate::voice_recorder::probe_input().map(|()| Outcome::End);
+    }
+    #[cfg(test)]
+    if mode == "record-stalled" {
+        loop {
+            // Responsive plugin, but no captured samples or advancing clock.
+            publish(
+                out,
+                Progress {
+                    seconds: 0.,
+                    levels: vec![0; 64],
+                },
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
     }
     let capture = match mode {
         "record" => Some(Input::Microphone),
@@ -406,23 +438,24 @@ fn preview(
         .map_err(|_| Error::Playback)?;
     runtime.block_on(async {
         let (tx, mut status) = watch::channel(crate::audio::Status::default());
-        let mut player = crate::audio_player::Worker::start(
-            crate::audio_player::Desired {
-                generation: 1,
-                id: 1,
-                bytes: Some(bytes),
-                playing: true,
-                speed: 1.,
-                seek: None,
-            },
-            tx,
-            if silent {
-                crate::audio_player::Output::Silent
-            } else {
-                crate::audio_player::Output::Desktop(settings)
-            },
-        )
-        .map_err(|_| Error::Playback)?;
+        let initial = crate::audio_player::Desired {
+            generation: 1,
+            id: 1,
+            bytes: Some(bytes),
+            playing: true,
+            speed: 1.,
+            seek: None,
+        };
+        let output = if silent {
+            crate::audio_player::Output::Silent
+        } else {
+            crate::audio_player::Output::Desktop(settings)
+        };
+        let mut player =
+            crate::audio_player::Worker::spawn(initial, tx, move |desired, updates| {
+                crate::audio_player::run(desired, updates, output)
+            })
+            .map_err(|_| Error::Playback)?;
         loop {
             tokio::select! {
                 result=player.finished() => {
@@ -471,7 +504,7 @@ mod tests {
         if let Ok(mode) = std::env::var("HEYA_TEST_MEDIA_MODE") {
             assert!(matches!(
                 mode.as_str(),
-                "record-synthetic" | "record-unavailable" | "preview-silent"
+                "record-synthetic" | "record-unavailable" | "record-stalled" | "preview-silent"
             ));
             child_main(&mode);
         }
@@ -519,6 +552,23 @@ mod tests {
             read_output(&MAGIC[..MAGIC.len() - 1], tx).await,
             Err(Error::Device)
         ));
+    }
+    #[cfg(any(
+        target_os = "macos",
+        all(target_os = "linux", feature = "media-gstreamer")
+    ))]
+    #[tokio::test]
+    async fn an_unresponsive_recording_helper_times_out_and_is_reaped() {
+        let (tx, _) = watch::channel(Progress::default());
+        let mut worker =
+            Worker::start(Mode::Capture(Input::Stalled, Default::default()), tx).unwrap();
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(15), worker.finished())
+                .await
+                .unwrap(),
+            Err(Error::Unresponsive)
+        ));
+        assert!(worker.task.is_finished());
     }
     #[cfg(any(
         target_os = "macos",
