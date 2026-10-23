@@ -25,7 +25,14 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Linux build and runtime dependencies
+        timeout-minutes: 15
         run: |
+          # The Azure mirror has stalled package downloads at tens of kB/s.
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.sources; do
+            if [ -f "$source" ]; then
+              sudo sed -i -E 's|https?://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$source"
+            fi
+          done
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
             build-essential clang libclang-dev cmake ninja-build pkg-config \
