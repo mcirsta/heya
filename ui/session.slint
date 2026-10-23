@@ -41,8 +41,10 @@ export component SessionButton inherits Rectangle {
 // Card dimensions, spacing and shadow follow ZapFast's ui/login.rs at the pin.
 // The connection states and controls are Heya's implementation.
 export component SessionView inherits Rectangle {
+    in property <bool> encrypted: true;
     callback open-settings();
     in property <int> state;
+    in property <bool> waiting-key-store;
     in property <string> error;
     in property <bool> blocked;
     in property <bool> can-relink;
@@ -114,7 +116,7 @@ export component SessionView inherits Rectangle {
                 }
 
                 status := Text {
-                    text: root.state == 0 ? @tr("Connect to WhatsApp") : root.state == 1 ? @tr("Opening your saved session…") : root.state == 2 ? @tr("Connecting…") : root.state == 3 ? @tr("Link your phone") : root.state == 4 ? @tr("Finishing pairing…") : root.state == 5 ? @tr("Connected to WhatsApp") : root.state == 6 ? @tr("Reconnecting…") : root.state == 7 ? @tr("Saving and disconnecting…") : root.state == 8 ? @tr("Disconnected") : @tr("Connection needs attention");
+                    text: root.state == 0 ? @tr("Connect to WhatsApp") : root.state == 1 ? (root.waiting-key-store ? @tr("Waiting for the OS key store…") : @tr("Opening your saved session…")) : root.state == 2 ? @tr("Connecting…") : root.state == 3 ? @tr("Link your phone") : root.state == 4 ? @tr("Finishing pairing…") : root.state == 5 ? @tr("Connected to WhatsApp") : root.state == 6 ? @tr("Reconnecting…") : root.state == 7 ? @tr("Saving and disconnecting…") : root.state == 8 ? @tr("Disconnected") : @tr("Connection needs attention");
                     color: Theme.text;
                     font-size: 17px;
                     font-weight: 600;
@@ -164,7 +166,7 @@ export component SessionView inherits Rectangle {
                     horizontal-alignment: center;
                 }
                 if root.state == 0 || root.state == 8: Text {
-                    text: @tr("Connect to resume a saved session or link your phone. Your session is encrypted and its key is kept in the desktop keyring.");
+                    text: @tr("Connect to resume a saved session or link your phone.");
                     color: Theme.secondary;
                     font-size: 14.5px;
                     wrap: word-wrap;
@@ -184,7 +186,7 @@ export component SessionView inherits Rectangle {
                 }
 
                 Text {
-                    text: @tr("Your session and chat archive are encrypted on this device.");
+                    text: root.encrypted ? @tr("Your saved session, chats and cached media are encrypted on this device.") : @tr("Local storage is unencrypted. Heya does not use the OS key store.");
                     color: Theme.dim;
                     font-size: 12px;
                     wrap: word-wrap;

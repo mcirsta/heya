@@ -36,6 +36,66 @@ async fn until(rx: &mut watch::Receiver<Snapshot>, test: impl Fn(&Snapshot) -> b
     .await
     .unwrap()
 }
+
+#[tokio::test]
+async fn empty_new_chat_allows_explicit_fetch_and_timeout_does_not_exhaust_its_history() {
+    struct NoReply(mpsc::UnboundedSender<Anchor>);
+    #[async_trait::async_trait]
+    impl Source for NoReply {
+        async fn fetch(&self, anchor: &Anchor) -> Result<String, Failure> {
+            self.0.send(anchor.clone()).unwrap();
+            Err(Failure::Timeout)
+        }
+    }
+    let (_temp, db) = fixture();
+    let (archives, archive_rx) = watch::channel(None);
+    let (commands, command_rx) = mpsc::channel(8);
+    let (updates, mut views) = watch::channel(Snapshot::empty());
+    let (sent, mut requests) = mpsc::unbounded_channel();
+    let (_sources, source_rx) = watch::channel(Some(Arc::new(NoReply(sent)) as Arc<dyn Source>));
+    let worker = tokio::spawn(run_with_history(archive_rx, command_rx, updates, source_rx));
+    archives.send_replace(Some(db.clone()));
+    until(&mut views, |s| s.view.is_some()).await;
+    commands
+        .send(Command::NewChat {
+            phone: "+15550000001".into(),
+            previous: 0,
+            draft: String::new(),
+            draft_version: 0,
+            revision: 1,
+        })
+        .await
+        .unwrap();
+    let empty = until(&mut views, |s| s.revision == 1 && s.phone.available).await;
+    let view = empty.view.unwrap();
+    let conversation = view.conversation.as_ref().unwrap();
+    let chat = conversation.chat.id;
+    assert!(conversation.messages.is_empty());
+    assert!(view.phone_more);
+    assert!(empty.notice.is_empty());
+    assert!(requests.try_recv().is_err());
+    commands
+        .send(Command::FetchPhone { chat, revision: 1 })
+        .await
+        .unwrap();
+    let anchor = requests.recv().await.unwrap();
+    assert_eq!(anchor.chat, chat);
+    assert!(anchor.wire.is_empty());
+    assert_eq!(anchor.known, 0);
+    until(&mut views, |s| s.notice == Failure::Timeout.message()).await;
+    assert!(
+        db.view(chat, 100, String::new(), false, false)
+            .await
+            .unwrap()
+            .phone_more
+    );
+    drop(commands);
+    tokio::time::timeout(std::time::Duration::from_secs(3), worker)
+        .await
+        .unwrap()
+        .unwrap();
+}
+
 #[tokio::test]
 async fn phone_requests_coalesce_without_blocking_drafts_navigation_or_shutdown() {
     let (_temp, db) = fixture();

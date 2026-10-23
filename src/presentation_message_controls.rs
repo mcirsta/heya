@@ -98,6 +98,9 @@ pub fn bind(ui: &AppWindow, submit: Rc<impl Fn(Command) -> bool + 'static>) -> R
                 }
                 ui.set_action_summary(format!("{} selected messages", ids.len()).into());
                 *selected.forward.borrow_mut() = ids;
+                ui.set_forward_query("".into());
+                ui.set_action_destinations(Default::default());
+                ui.set_action_all_destinations(Default::default());
                 ui.set_message_dialog(2);
                 crate::presentation_actions::request(&ui, &sender, |request| {
                     Command::Destinations { request }

@@ -31,6 +31,7 @@ import { VideoViewer, VideoPlayback } from "video.slint";
 export { VideoPlayback }
 import { MessageBubble, MessageRow, MessageActionRow } from "message.slint";
 import { SystemNotice } from "system-notice.slint";
+import { StorageDialog } from "storage.slint";
 import { SessionView } from "session.slint";
 import { TimelineItem, TimelineRow } from "timeline-item.slint";
 import {
@@ -133,7 +134,7 @@ export component AppWindow inherits Window {
     out property <int> composer-anchor: composer.anchor;
     out property <int> composer-cursor: composer.cursor;
     public pure function can-import() -> bool {
-        return !AudioCall.shown && root.selected-id>0 && (root.demo-mode || root.live-can-send) && !root.settings-open && !root.new-chat-open && root.account-dialog==0 && root.photo-viewer-id==0 && !root.video-expanded && root.message-dialog==0 && root.attachment-phase==0 && root.voice-phase==0 && !root.microphone-dialog && !root.selection-active && (!root.narrow || root.show-conversation);
+        return !AudioCall.shown && root.selected-id>0 && (root.demo-mode || root.live-can-send) && !root.storage-dialog && !root.settings-open && !root.new-chat-open && root.account-dialog==0 && root.photo-viewer-id==0 && !root.video-expanded && root.message-dialog==0 && root.attachment-phase==0 && root.voice-phase==0 && !root.microphone-dialog && !root.selection-active && (!root.narrow || root.show-conversation);
     }
     callback attachment-control(int,int,string);
 
@@ -209,6 +210,12 @@ export component AppWindow inherits Window {
     public function set-composer-cursor(position:int) {composer.set-cursor(position);}
     in property <[ForwardDestination]> action-destinations;
     in property <[ForwardDestination]> action-all-destinations;
+    in-out property <string> forward-query;
+    in-out property <int> forward-avatar-first;
+    in-out property <int> forward-avatar-count;
+    changed forward-avatar-first => { root.request-avatars(); }
+    changed forward-avatar-count => { root.request-avatars(); }
+    changed message-dialog => { root.request-avatars(); }
     in property <int> reply-id;
     in property <string> reply-sender;
     in property <string> reply-text;
@@ -217,7 +224,7 @@ export component AppWindow inherits Window {
     callback react-message(string);
     callback forward-message(int);
     public function focus-composer() {
-        if !root.settings-open && !root.new-chat-open && root.account-dialog==0
+        if !root.storage-dialog && !root.settings-open && !root.new-chat-open && root.account-dialog==0
             && root.photo-viewer-id==0 && !root.video-expanded && root.message-dialog==0 && !root.attachment-modal
             && root.voice-phase==0 && !root.microphone-dialog && !root.selection-active && root.show-conversation && !AudioCall.shown {
             composer.focus-editor();
@@ -239,6 +246,15 @@ export component AppWindow inherits Window {
     callback navigate-photo(int);
     changed photo-viewer-id => { if root.photo-viewer-id==0 {root.reset-photo-gallery();} root.request-photos(); }
     in-out property <bool> show-shortcut-hint: true;
+    in-out property <bool> storage-encrypted: true;
+    in-out property <bool> storage-first-run;
+    in-out property <bool> storage-dialog;
+    in-out property <bool> storage-target: true;
+    in-out property <bool> storage-busy;
+    in-out property <string> storage-error;
+    callback open-storage-choice(bool);
+    callback confirm-storage-choice();
+    callback close-storage-choice();
     callback preference-changed(string, int);
     callback search-settings(string);
     callback refresh-settings();
@@ -251,6 +267,8 @@ export component AppWindow inherits Window {
         root.search-settings("");
     }
     in property <int> connection-state;
+    in property <bool> connection-waiting-key-store;
+    changed connection-waiting-key-store => { root.refresh-settings(); }
     in property <string> connection-error;
     in property <bool> connection-blocked;
     in property <bool> connection-can-relink;
@@ -273,7 +291,7 @@ export component AppWindow inherits Window {
     out property <int> read-visible-message: !root.demo-mode && root.live-chat-view
         && !root.message-search-open && !root.browsing-history && root.navigation-request==root.navigation-shown
         && root.read-window-active && !root.read-window-occluded && !root.minimized
-        && !root.settings-open && !root.new-chat-open && root.account-dialog==0
+        && !root.storage-dialog && !root.settings-open && !root.new-chat-open && root.account-dialog==0
         && root.photo-viewer-id==0 && !root.video-expanded && root.message-dialog==0 && !root.attachment-modal && !root.microphone-dialog
         && (!root.narrow || root.show-conversation)
         && root.live-revision==root.live-shown-revision ? root.read-tail : 0;
@@ -300,6 +318,8 @@ export component AppWindow inherits Window {
     in-out property <int> avatar-first;
     in-out property <int> avatar-count: 16;
     callback request-avatars();
+    in property <int> avatar-revision;
+    pure callback cached-avatar(int,int) -> image;
     changed avatar-first => { root.request-avatars(); }
     changed avatar-count => { root.request-avatars(); }
     changed selected-id => { root.paste-generation += 1; root.message-search-open=false;root.message-search-query="";root.browsing-history=false;root.highlighted-message=0; if root.message-dialog==8 {root.close-message-info();} root.selection-control(0); if root.voice-phase>0 && root.voice-phase!=5 {root.voice-control(1);} root.attachment-menu=false; root.message-dialog=0; root.audio-control(0,3,0);root.video-control(0,3,0); root.photo-viewer-id = 0; root.request-avatars(); }
@@ -425,6 +445,7 @@ export component AppWindow inherits Window {
     app-focus := FocusScope {
         init => { Theme.sync-widgets(); self.focus(); }
         key-pressed(event) => {
+            if root.storage-dialog { return reject; }
             if root.microphone-dialog {
                 if event.text==Key.Escape || event.text==Key.Return {root.close-microphone-dialog();}
                 return accept;
@@ -865,6 +886,7 @@ export component AppWindow inherits Window {
                         visible: !root.demo-mode && root.connection-state != 5;
                         height: self.visible ? self.preferred-height : 0px;
                         state: root.connection-state;
+                        waiting-key-store: root.connection-waiting-key-store;
                         error: root.connection-error;
                         blocked: root.connection-blocked;
                         can-relink: root.connection-can-relink;
@@ -1092,13 +1114,36 @@ export component AppWindow inherits Window {
                                 enter-sends: root.enter-sends;
                                 show-hint <=> root.show-shortcut-hint;
                                 hint-dismissed => { root.preference-changed("show_shortcut_hint",0); }
-                                enabled: !AudioCall.shown && !root.selection-active && !root.microphone-dialog && !root.settings-open && !root.new-chat-open && root.account-dialog == 0 && (root.demo-mode || (root.selected-id > 0 && root.live-revision == root.live-shown-revision));
+                                enabled: !root.storage-dialog && !AudioCall.shown && !root.selection-active && !root.microphone-dialog && !root.settings-open && !root.new-chat-open && root.account-dialog == 0 && (root.demo-mode || (root.selected-id > 0 && root.live-revision == root.live-shown-revision));
                                 can-send: !root.action-pending && (root.demo-mode || (root.connection-state == 5 && root.live-can-send && !root.send-pending));
                                 saving: root.send-pending;
                                 send => { root.send-message(root.selected-id,root.draft); }
                                 edited(text) => { root.draft-edited(text); }
                             }
                             if root.selection-active:SelectionBar {count:root.selection-count;busy:root.action-pending;control(action)=>{root.selection-control(action);}}
+                        }
+
+                        if root.selected-id > 0 && root.messages.length == 0
+                            && !root.phone-history-loading && !root.browsing-history
+                            && (root.demo-mode || root.live-revision == root.live-shown-revision): empty-history := Rectangle {
+                            width: min(parent.width - 32px, empty-history-text.preferred-width + 32px);
+                            height: 36px;
+                            x: (parent.width - self.width) / 2;
+                            y: timeline.absolute-position.y - parent.absolute-position.y
+                                + max(0px, (timeline.visible-height - self.height) / 2);
+                            border-radius: 8px;
+                            background: Theme.panel;
+                            empty-history-text := Text {
+                                width: parent.width;
+                                height: parent.height;
+                                text: @tr("No messages yet");
+                                accessible-role: text;
+                                accessible-label: self.text;
+                                color: Theme.secondary;
+                                font-size: 13px;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
                         }
 
                         if root.selected-id == 0: empty-conversation := Rectangle {
@@ -1200,7 +1245,9 @@ export component AppWindow inherits Window {
             }
 
             if !root.demo-mode && !root.live-chat-view: session := SessionView {
+                encrypted: root.storage-encrypted;
                 state: root.connection-state;
+                waiting-key-store: root.connection-waiting-key-store;
                 error: root.connection-error;
                 blocked: root.connection-blocked;
                 can-relink: root.connection-can-relink;
@@ -1262,6 +1309,10 @@ export component AppWindow inherits Window {
             busy:root.action-pending;available:root.demo-mode||root.connection-state==5;
             error:root.action-error;summary:root.action-summary;
             destinations:root.action-destinations;
+            query <=> root.forward-query;
+            avatar-revision:root.avatar-revision;
+            avatar(id,revision)=>{return root.cached-avatar(id,revision);}
+            avatar-range(first,count)=>{root.forward-avatar-first=first;root.forward-avatar-count=count;}
             close=>{root.message-dialog=0;app-focus.focus();}
             search(query)=>{root.search-message-actions(query);}
             forward(id)=>{root.forward-message(id);}
@@ -1373,5 +1424,14 @@ export component AppWindow inherits Window {
             close=>{root.chat-menu-id=0;app-focus.focus();}
             choose(action)=>{let chat=root.chat-menu-id;root.chat-menu-id=0;root.manage-chat(chat,action);app-focus.focus();}
         }
+        if root.storage-dialog: StorageDialog {
+            first-run: root.storage-first-run;
+            encrypted <=> root.storage-target;
+            busy: root.storage-busy;
+            error: root.storage-error;
+            confirm => {root.confirm-storage-choice();}
+            close => {root.close-storage-choice();}
+        }
+
     }
 }

@@ -3,7 +3,7 @@
 set -euo pipefail
 
 usage() {
-    echo "Usage: $0 {--screenshot|--framebuffer} /tmp/heya.png [--size WIDTHxHEIGHT] [--light|--dark] [--demo-chat ID] [--click XxY (framebuffer only)] [--hover XxY (framebuffer only)] | --ui-benchmark | --call-audio-check | --video-check | --wheel-check | --close-check | --startup-check | --clipboard-check | --wayland-clipboard-check | --wayland-drop-check | --clipboard-ui-check OUTPUT_PREFIX" >&2
+    echo "Usage: $0 {--screenshot|--framebuffer} /tmp/heya.png [--size WIDTHxHEIGHT] [--light|--dark] [--demo-chat ID] [--click XxY (framebuffer only)] [--hover XxY (framebuffer only)] | --ui-benchmark | --call-audio-check | --video-check | --wheel-check | --close-check | --startup-check | --clipboard-check | --wayland-clipboard-check | --wayland-drop-check | --clipboard-ui-check OUTPUT_PREFIX | --storage-check OUTPUT_PREFIX" >&2
     exit 2
 }
 
@@ -23,7 +23,7 @@ case "${1:-}" in
                     shift 2
                     ;;
                 --demo-chat)
-                    [[ $# -ge 2 && "$2" =~ ^([1-9]|10|11|12|13|14|15)$ ]] || usage
+                    [[ $# -ge 2 && "$2" =~ ^([1-9]|1[0-6])$ ]] || usage
                     heya_args+=("$1" "$2")
                     shift 2
                     ;;
@@ -42,7 +42,7 @@ case "${1:-}" in
             esac
         done
         ;;
-    --clipboard-ui-check)
+    --clipboard-ui-check|--storage-check)
         [[ $# == 2 && -n "$2" ]] || usage
         heya_args+=("$2")
         ;;
@@ -91,6 +91,12 @@ if [[ "${heya_args[0]}" == --clipboard-ui-check ]]; then
         command -v "$program" >/dev/null || { echo "Clipboard UI check needs $program." >&2; exit 1; }
     done
     heya_command=(bash "$heya_root/scripts/ui-clipboard-check.sh" "$heya_binary" "${heya_args[1]}" "$heya_root")
+fi
+if [[ "${heya_args[0]}" == --storage-check ]]; then
+    for program in python3 xdotool import; do
+        command -v "$program" >/dev/null || { echo "Storage check needs $program." >&2; exit 1; }
+    done
+    heya_command=(python3 "$heya_root/scripts/ui-storage-check.py" "$heya_binary" "${heya_args[1]}")
 fi
 if [[ "${heya_args[0]}" == --clipboard-check ]]; then
     command -v xclip >/dev/null || { echo "Install xclip with pacman." >&2; exit 1; }

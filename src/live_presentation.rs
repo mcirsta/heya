@@ -54,7 +54,7 @@ pub(crate) async fn present_latest<T: Clone + Send + Sync + 'static>(
 pub(crate) fn publish(ui: &AppWindow, snapshot: &Snapshot) {
     let state = match snapshot.phase {
         Phase::Idle => 0,
-        Phase::Opening => 1,
+        Phase::Opening | Phase::WaitingForKeyStore => 1,
         Phase::Connecting => 2,
         Phase::Qr => 3,
         Phase::Pairing => 4,
@@ -72,6 +72,12 @@ pub(crate) fn publish(ui: &AppWindow, snapshot: &Snapshot) {
         snapshot.phase,
         Phase::Failed(Failure::LoggedOut | Failure::ArchiveIdentity)
     ));
+    if matches!(snapshot.phase, Phase::Opening | Phase::WaitingForKeyStore)
+        && ui.get_connection_waiting_key_store() != (snapshot.phase == Phase::WaitingForKeyStore)
+    {
+        eprintln!("Heya storage: {:?}", snapshot.phase);
+    }
+    ui.set_connection_waiting_key_store(snapshot.phase == Phase::WaitingForKeyStore);
     ui.set_connection_state(state);
     if state != 5 {
         crate::presentation_presence::clear(ui);
@@ -118,6 +124,8 @@ pub(crate) fn bind(ui: &AppWindow, requests: watch::Sender<Request>) {
         move || {
             if let Some(ui) = weak.upgrade()
                 && !ui.get_connection_blocked()
+                && !ui.get_storage_first_run()
+                && !ui.get_storage_busy()
                 && !matches!(ui.get_connection_state(), 1..=7)
             {
                 requests.send_replace(Request::Connect);
@@ -164,8 +172,9 @@ pub fn attach(
     runtime: &Runtime,
     offline: bool,
     preferences: watch::Receiver<crate::preferences::Preferences>,
+    change_storage: Option<crate::storage::Mode>,
 ) -> JoinHandle<()> {
-    let (requests, receiver) = watch::channel(Request::Idle);
+    let (requests, mut receiver) = watch::channel(Request::Idle);
     requests.send_replace(Request::startup(
         offline,
         preferences.borrow().connect_automatically,
@@ -247,11 +256,32 @@ pub fn attach(
     let message_weak = weak.clone();
     let avatar_weak = weak.clone();
     runtime.spawn(async move {
+        if let Some(mode) = change_storage {
+            let result = crate::local_worker::run(move || crate::storage::change_mode(mode))
+                .await
+                .unwrap_or(Err(crate::connection::Failure::StorageConversion));
+            let state = crate::local_worker::run(crate::storage::status)
+                .await
+                .unwrap_or(Err(crate::connection::Failure::DataDirectory));
+            let succeeded = result.is_ok();
+            let update = weak.clone();
+            let _ = update.upgrade_in_event_loop(move |ui| {
+                if let Ok(state) = state {
+                    ui.set_storage_encrypted(state.mode == crate::storage::Mode::Encrypted);
+                }
+                crate::presentation_storage::complete(&ui, result.map(|s| s.mode));
+            });
+            if !succeeded {
+                // Do not automatically open or send anything after a failed conversion.
+                receiver.borrow_and_update();
+            }
+        }
         let presentation = present_latest(weak, snapshots, move |ui, snapshot| {
             if matches!(*desired.borrow(), Request::Disconnect | Request::Logout)
                 && matches!(
                     snapshot.phase,
                     Phase::Opening
+                        | Phase::WaitingForKeyStore
                         | Phase::Connecting
                         | Phase::Qr
                         | Phase::Pairing

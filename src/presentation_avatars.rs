@@ -51,6 +51,17 @@ impl Images {
 pub fn bind(ui: &AppWindow) -> watch::Receiver<Vec<avatars::Target>> {
     // Establish the model before either the archive or avatar snapshot arrives.
     crate::presentation::sidebar(ui, std::sync::Arc::from([]));
+    let weak = ui.as_weak();
+    ui.on_cached_avatar(move |id, _revision| {
+        weak.upgrade()
+            .and_then(|ui| {
+                let rows = ui.get_chats();
+                rows.as_any()
+                    .downcast_ref::<ChatListModel>()
+                    .map(|model| model.avatar(id))
+            })
+            .unwrap_or_default()
+    });
     let (demand, receiver) = watch::channel(vec![avatars::Target::Chat(0)]);
     let weak = ui.as_weak();
     ui.on_request_avatars(move || {
@@ -76,7 +87,21 @@ pub fn bind(ui: &AppWindow) -> watch::Receiver<Vec<avatars::Target>> {
         if ui.get_selected_id() > 0 && ui.get_selected_id() != call {
             ids.push(avatars::Target::Chat(ui.get_selected_id()));
         }
-        if ui.get_chat_is_group() && ui.get_history_active() {
+        if ui.get_message_dialog() == 2 {
+            // The chooser covers the transcript. Request its visible contacts,
+            // including archived/search-filtered chats absent from the sidebar.
+            for row in ui
+                .get_action_destinations()
+                .iter()
+                .skip(ui.get_forward_avatar_first().max(0) as usize)
+                .take(ui.get_forward_avatar_count().clamp(0, 16) as usize)
+            {
+                let target = avatars::Target::Chat(row.id);
+                if !ids.contains(&target) && ids.len() < avatars::MAX_DEMAND {
+                    ids.push(target);
+                }
+            }
+        } else if ui.get_chat_is_group() && ui.get_history_active() {
             for row in ui.get_timeline_rows().iter().take(avatars::MAX_DEMAND) {
                 let m = row.message;
                 if m.outgoing || !m.first_in_run || m.system_notice || m.sender_id.is_empty() {
@@ -110,7 +135,9 @@ pub fn bind(ui: &AppWindow) -> watch::Receiver<Vec<avatars::Target>> {
 pub fn publish(ui: &AppWindow, snapshot: &avatars::Snapshot) {
     let model = ui.get_chats();
     if let Some(model) = model.as_any().downcast_ref::<ChatListModel>() {
-        model.update_avatars(snapshot);
+        if model.update_avatars(snapshot) {
+            ui.set_avatar_revision(ui.get_avatar_revision().wrapping_add(1));
+        }
         refresh(ui);
     }
     crate::presentation::timeline::avatars(ui, snapshot);

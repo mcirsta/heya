@@ -215,5 +215,72 @@ pub(crate) fn check_ui() {
         9,
         "a silent phone cannot cause a layout retry loop"
     );
+
+    // Unknown phone history does not mean an empty chat needs automatic paging.
+    ui.set_show_conversation(true);
+    let mut empty = short.clone();
+    empty.messages = Arc::from([]);
+    empty.transcript = "".into();
+    empty.draft = "Keep this draft 👋".into();
+    requests.borrow_mut().clear();
+    publish(&empty, true);
+    for (width, height) in [(1200., 800.), (520., 480.), (620., 600.)] {
+        ui.window().set_size(slint::LogicalSize::new(width, height));
+        for _ in 0..20 {
+            layout(&ui);
+        }
+        assert!(
+            requests.borrow().is_empty(),
+            "an empty conversation must not ask the phone for history automatically"
+        );
+        let label = i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+            &ui,
+            "No messages yet",
+        )
+        .next()
+        .unwrap();
+        let p = label.absolute_position();
+        let size = label.size();
+        let viewport =
+            i_slint_backend_testing::ElementHandle::find_by_element_id(&ui, "AppWindow::timeline")
+                .next()
+                .unwrap();
+        assert!(p.x >= 0. && p.x + size.width <= width);
+        assert!(p.y >= ui.get_timeline_top());
+        assert!(p.y + size.height <= ui.get_timeline_top() + viewport.size().height);
+        assert_eq!(ui.get_draft(), empty.draft);
+    }
+    assert!(
+        ui.get_phone_history_available(),
+        "manual fetching stays available"
+    );
+    let (commands, mut commands_rx) = tokio::sync::mpsc::channel(8);
+    crate::live_presentation::bind_messages(&ui, commands);
+    ui.invoke_fetch_phone_history();
+    assert!(matches!(
+        commands_rx.try_recv().unwrap(),
+        crate::messaging::Command::FetchPhone {chat, ..} if chat == empty.chat.id
+    ));
+    ui.set_phone_history_loading(true);
+    layout(&ui);
+    assert_eq!(
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(&ui, "No messages yet")
+            .count(),
+        0,
+        "an explicit fetch shows progress instead of the empty label"
+    );
+    ui.set_phone_history_loading(false);
+    // A received/imported message restores normal paging and removes the label.
+    publish(&short, false);
+    assert_eq!(ui.get_draft(), empty.draft);
+    assert_eq!(
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(&ui, "No messages yet")
+            .count(),
+        0
+    );
+    assert!(matches!(
+        commands_rx.try_recv().unwrap(),
+        crate::messaging::Command::Older {chat, ..} if chat == empty.chat.id
+    ));
     ui.hide().unwrap();
 }

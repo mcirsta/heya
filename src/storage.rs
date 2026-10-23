@@ -7,19 +7,31 @@ use std::{
 };
 use zeroize::Zeroizing;
 
+#[path = "storage_mode.rs"]
+mod mode;
+pub use mode::{Mode, Status, change_mode, configure, status};
+
 pub trait SecretVault {
     fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>, Failure>;
     fn write(&self, key: &[u8]) -> Result<(), Failure>;
 }
 
-struct DesktopVault(keyring::Entry);
+struct DesktopVault<'a> {
+    service: &'a str,
+    name: &'a str,
+}
+impl DesktopVault<'_> {
+    fn entry(&self) -> Result<keyring::Entry, Failure> {
+        keyring::Entry::new(self.service, self.name).map_err(keyring_failure)
+    }
+}
 
-impl SecretVault for DesktopVault {
+impl SecretVault for DesktopVault<'_> {
     fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>, Failure> {
-        match self.0.get_secret() {
+        match self.entry()?.get_secret() {
             Ok(key) => decode_key(Zeroizing::new(key)).map(Some),
             Err(keyring::Error::NoEntry) => Ok(None),
-            Err(_) => Err(Failure::Keyring),
+            Err(error) => Err(keyring_failure(error)),
         }
     }
 
@@ -28,10 +40,51 @@ impl SecretVault for DesktopVault {
         // as text/plain. KDE rejects non-UTF-8 bytes (and can leave an empty
         // item behind). Store an explicit text encoding without reducing entropy.
         // Use the byte API on both sides: set_password uses UTF-16 on Windows.
-        self.0
+        self.entry()?
             .set_secret(encode_key(key)?.as_bytes())
-            .map_err(|_| Failure::Keyring)
+            .map_err(keyring_failure)
     }
+}
+
+// Retry transport/service readiness, never an unlock cancellation or bad key.
+fn keyring_failure(error: keyring::Error) -> Failure {
+    #[cfg(target_os = "linux")]
+    if let keyring::Error::PlatformFailure(cause) = &error {
+        use dbus_secret_service::Error;
+        let unavailable = match cause.downcast_ref::<Error>() {
+            Some(Error::Unavailable) => true,
+            Some(Error::Dbus(error)) => matches!(
+                error.name(),
+                Some(
+                    "org.freedesktop.DBus.Error.ServiceUnknown"
+                        | "org.freedesktop.DBus.Error.NameHasNoOwner"
+                        | "org.freedesktop.DBus.Error.NoServer"
+                        | "org.freedesktop.DBus.Error.FileNotFound"
+                        | "org.freedesktop.DBus.Error.Disconnected"
+                        | "org.freedesktop.DBus.Error.NoReply"
+                        | "org.freedesktop.DBus.Error.Timeout"
+                        | "org.freedesktop.DBus.Error.TimedOut"
+                        | "org.freedesktop.DBus.Error.Spawn.ServiceNotFound"
+                        | "org.freedesktop.DBus.Error.Spawn.ChildExited"
+                )
+            ),
+            _ => false,
+        };
+        if unavailable {
+            return Failure::KeyringUnavailable;
+        }
+    }
+    #[cfg(target_os = "macos")]
+    if let keyring::Error::NoStorageAccess(cause) | keyring::Error::PlatformFailure(cause) = &error
+        && cause
+            .downcast_ref::<security_framework::base::Error>()
+            .is_some_and(|error| matches!(error.code(), -25291 | -25308))
+    // errSecNotAvailable / errSecInteractionNotAllowed; cancellation stays terminal.
+    {
+        return Failure::KeyringUnavailable;
+    }
+    let _ = error;
+    Failure::Keyring
 }
 
 const KEY_PREFIX: &str = "heya-key-v1:";
@@ -86,20 +139,36 @@ pub struct SessionFiles {
 const PROFILE_DIRECTORY: &str = "default-v2";
 
 pub fn prepare() -> Result<Arc<SessionFiles>, Failure> {
-    let project =
-        directories::ProjectDirs::from("org", "heya", "Heya").ok_or(Failure::DataDirectory)?;
-    let vault = DesktopVault(
-        keyring::Entry::new("org.heya.Heya", "master-v1").map_err(|_| Failure::Keyring)?,
-    );
-    prepare_at(&project.data_local_dir().join(PROFILE_DIRECTORY), &vault)
+    prepare_at(&profile_directory()?, &desktop_vault())
+}
+
+fn desktop_vault() -> DesktopVault<'static> {
+    DesktopVault {
+        service: "org.heya.Heya",
+        name: "master-v1",
+    }
+}
+fn profile_directory() -> Result<PathBuf, Failure> {
+    directories::ProjectDirs::from("org", "heya", "Heya")
+        .map(|p| p.data_local_dir().join(PROFILE_DIRECTORY))
+        .ok_or(Failure::DataDirectory)
 }
 
 /// Startup probes only file presence. A first launch does not create keys or a
 /// database until the user chooses Connect.
 pub fn has_session() -> Result<bool, Failure> {
-    let project =
-        directories::ProjectDirs::from("org", "heya", "Heya").ok_or(Failure::DataDirectory)?;
-    databases_exist(&project.data_local_dir().join(PROFILE_DIRECTORY))
+    let root = profile_directory()?;
+    let state = mode::read(&root)?;
+    databases_exist(&state.directory(&root))
+}
+
+#[cfg(test)]
+pub(crate) fn change_mode_at(
+    directory: &Path,
+    target: Mode,
+    vault: &impl SecretVault,
+) -> Result<Status, Failure> {
+    mode::change_at(directory, target, vault)
 }
 
 pub(crate) fn private_file(path: &Path) -> Result<File, Failure> {
@@ -124,6 +193,30 @@ pub(crate) fn prepare_at(
     directory: &Path,
     vault: &impl SecretVault,
 ) -> Result<Arc<SessionFiles>, Failure> {
+    let lock = lock_directory(directory)?;
+    let state = mode::read(directory)?;
+    mode::cleanup(directory, &state)?;
+    let directory = state.directory(directory);
+    let path = directory.join("session.db");
+    let (key_sql, archive_key_sql) = if state.mode == Mode::Encrypted {
+        let master = load_master_key(&directory, vault)?;
+        (
+            derive_database_key(&master, b"session-v1")?,
+            derive_database_key(&master, b"archive-v1")?,
+        )
+    } else {
+        (Zeroizing::new(String::new()), Zeroizing::new(String::new()))
+    };
+    private_file(&path)?;
+    Ok(Arc::new(SessionFiles {
+        path,
+        key_sql,
+        archive_key_sql,
+        _lock: lock,
+    }))
+}
+
+fn lock_directory(directory: &Path) -> Result<File, Failure> {
     fs::create_dir_all(directory).map_err(|_| Failure::DataDirectory)?;
     #[cfg(unix)]
     {
@@ -136,23 +229,13 @@ pub(crate) fn prepare_at(
         std::fs::TryLockError::WouldBlock => Failure::AlreadyRunning,
         std::fs::TryLockError::Error(_) => Failure::DataDirectory,
     })?;
-    let path = directory.join("session.db");
-    let master = load_master_key(directory, vault)?;
-    let key_sql = derive_database_key(&master, b"session-v1")?;
-    let archive_key_sql = derive_database_key(&master, b"archive-v1")?;
-    private_file(&path)?;
-    Ok(Arc::new(SessionFiles {
-        path,
-        key_sql,
-        archive_key_sql,
-        _lock: lock,
-    }))
+    Ok(lock)
 }
 
 fn databases_exist(directory: &Path) -> Result<bool, Failure> {
     let mut exists = false;
     for database in ["session.db", "archive.db"] {
-        for suffix in ["", "-wal", "-shm"] {
+        for suffix in ["", "-wal", "-shm", "-journal"] {
             exists |= directory
                 .join(format!("{database}{suffix}"))
                 .try_exists()
@@ -166,7 +249,9 @@ fn load_master_key(
     directory: &Path,
     vault: &impl SecretVault,
 ) -> Result<Zeroizing<Vec<u8>>, Failure> {
-    let exists = databases_exist(directory)?;
+    master_key(databases_exist(directory)?, vault)
+}
+fn master_key(exists: bool, vault: &impl SecretVault) -> Result<Zeroizing<Vec<u8>>, Failure> {
     match vault.read()? {
         Some(key) if key.len() == 32 => Ok(key),
         Some(key) if !key.is_empty() || exists => Err(Failure::InvalidKey),
@@ -188,16 +273,22 @@ fn load_master_key(
 }
 
 fn derive_database_key(master: &[u8], context: &[u8]) -> Result<Zeroizing<String>, Failure> {
+    Ok(Zeroizing::new(format!(
+        "PRAGMA key = \"{}\";",
+        database_key(master, context)?.as_str()
+    )))
+}
+fn database_key(master: &[u8], context: &[u8]) -> Result<Zeroizing<String>, Failure> {
     let mut key = Zeroizing::new([0u8; 32]);
     hkdf::Hkdf::<sha2::Sha256>::new(Some(b"org.heya.Heya database keys v1"), master)
         .expand(context, key.as_mut())
         .map_err(|_| Failure::InvalidKey)?;
-    let mut key_sql = Zeroizing::new(String::from("PRAGMA key = \"x'"));
+    let mut key_sql = Zeroizing::new(String::from("x'"));
     use std::fmt::Write;
     for byte in key.iter() {
         write!(key_sql, "{byte:02x}").map_err(|_| Failure::InvalidKey)?;
     }
-    key_sql.push_str("'\";");
+    key_sql.push('\'');
     Ok(key_sql)
 }
 
@@ -353,10 +444,14 @@ pub(crate) mod tests {
             }
         }
         let cleanup = Cleanup(keyring::Entry::new(service, &name).unwrap());
-        let vault = DesktopVault(keyring::Entry::new(service, &name).unwrap());
+        let vault = DesktopVault {
+            service,
+            name: &name,
+        };
         // Simulate the exact empty first-write residue returned by ksecretd.
         vault
-            .0
+            .entry()
+            .unwrap()
             .set_password("")
             .expect("could not create disposable empty entry");
         let temp = tempfile::tempdir().unwrap();
@@ -364,7 +459,8 @@ pub(crate) mod tests {
         let path = files.path.clone();
         let stored = Zeroizing::new(
             vault
-                .0
+                .entry()
+                .unwrap()
                 .get_secret()
                 .expect("could not read disposable entry"),
         );
@@ -378,7 +474,10 @@ pub(crate) mod tests {
         drop(files);
         // A fresh keyring handle/session and a fresh SQLCipher connection must
         // recover the persisted bytes without relying on a fake vault/cache.
-        let reopened = DesktopVault(keyring::Entry::new(service, &name).unwrap());
+        let reopened = DesktopVault {
+            service,
+            name: &name,
+        };
         let files = prepare_at(temp.path(), &reopened).unwrap();
         let db = rusqlite::Connection::open(&path).unwrap();
         assert!(db.execute_batch(&files.key_sql).is_ok());
@@ -427,6 +526,45 @@ pub(crate) mod tests {
             Err(Failure::MissingKey)
         ));
         assert!(vault.0.borrow().is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unavailable_key_store_retries_but_refused_prompts_do_not() {
+        use dbus_secret_service::Error;
+        assert_eq!(
+            keyring_failure(keyring::Error::PlatformFailure(Box::new(
+                Error::Unavailable
+            ))),
+            Failure::KeyringUnavailable
+        );
+        for cause in [Error::Prompt, Error::Locked, Error::NoResult, Error::Parse] {
+            assert_eq!(
+                keyring_failure(keyring::Error::PlatformFailure(Box::new(cause))),
+                Failure::Keyring
+            );
+        }
+        assert_eq!(
+            keyring_failure(keyring::Error::NoStorageAccess(Box::new(Error::Prompt))),
+            Failure::Keyring
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn unavailable_keychain_retries_but_cancelled_or_denied_prompts_do_not() {
+        for (code, expected) in [
+            (-25291, Failure::KeyringUnavailable),
+            (-25308, Failure::KeyringUnavailable),
+            (-128, Failure::Keyring),
+            (-25293, Failure::Keyring),
+        ] {
+            let error = security_framework::base::Error::from_code(code);
+            assert_eq!(
+                keyring_failure(keyring::macos::decode_error(error)),
+                expected
+            );
+        }
     }
 
     #[test]

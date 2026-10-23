@@ -519,7 +519,9 @@ impl Timeline {
             history.retry_blocked = false;
         }
         if !near_top
-            || (state.source.is_empty() && !ui.get_phone_history_available())
+            // An empty chat is not evidence of missing history. The explicit
+            // conversation-menu action can still ask the phone for it.
+            || state.source.is_empty()
             || (older == 0 && !ui.get_phone_history_available())
             || !active
             || history.chat != chat

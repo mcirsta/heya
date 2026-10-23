@@ -1,0 +1,90 @@
+import { Theme } from "theme.slint";
+import { SoftButton, Switch } from "settings.slint";
+import { SessionButton } from "session.slint";
+import { ScrollView } from "std-widgets.slint";
+
+export component StorageDialog inherits Rectangle {
+    in property <bool> first-run;
+    in-out property <bool> encrypted: true;
+    in property <bool> busy;
+    in property <string> error;
+    callback confirm();
+    callback close();
+    background: #00000080;
+    TouchArea {}
+    FocusScope {
+        init => { self.focus(); }
+        key-pressed(event) => {
+            if event.text == Key.Escape { if !root.busy { root.close(); } return accept; }
+            return reject;
+        }
+        dialog := Rectangle {
+            width: min(460px, parent.width - 32px);
+            height: min(parent.height - 32px, content.preferred-height);
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            border-radius: 16px;
+            background: Theme.panel;
+            drop-shadow-offset-y: 8px;
+            drop-shadow-blur: 32px;
+            drop-shadow-color: Theme.modal-shadow;
+            TouchArea {}
+            ScrollView {
+                width: parent.width; height: parent.height;
+                content-width: self.visible-width;
+                content-height: content.preferred-height;
+                content := VerticalLayout {
+                    width: parent.visible-width; height: self.preferred-height;
+                    padding: 24px; spacing: 18px;
+                    HorizontalLayout {
+                        spacing: 14px;
+                        Rectangle {
+                            width: 44px; height: 44px; border-radius: 22px;
+                            background: Theme.accent.with-alpha(0.12);
+                            Image {
+                                x: 11px; y: 11px; width: 22px; height: 22px;
+                                source: @image-url("icons/info.svg"); colorize: Theme.accent;
+                            }
+                        }
+                        Text {
+                            text: root.busy ? @tr("Updating local data…") : root.first-run ? @tr("Local data protection") : root.encrypted ? @tr("Turn encryption on?") : @tr("Turn encryption off?");
+                            color: Theme.text; font-size: 20px; font-weight: 600;
+                            vertical-alignment: center; wrap: word-wrap; horizontal-stretch: 1;
+                        }
+                    }
+                    notice := Text {
+                        text: root.error != "" ? root.error : root.busy ? @tr("Your saved data is being converted safely.") : root.first-run ? (root.encrypted ? @tr("Encryption protects your saved chats and sign-in details using the OS key store.") : @tr("Unencrypted data needs no key store, but anyone with access to Heya’s data folder can read it.")) : root.encrypted ? @tr("Heya will restart and encrypt your saved chats and sign-in details using the OS key store.") : @tr("Heya will restart and store your chats and sign-in details without encryption.");
+                        color: Theme.secondary; font-size: 14.5px; wrap: word-wrap;
+                        accessible-role: text; accessible-label: self.text;
+                    }
+                    if root.first-run && !root.busy && root.error == "": Rectangle {
+                        height: 60px; border-radius: 12px; background: Theme.surface;
+                        Text {
+                            x: 16px; width: parent.width - 88px; height: parent.height;
+                            text: @tr("Encrypt local data"); color: Theme.text;
+                            vertical-alignment: center; font-size: 14px; font-weight: 500;
+                        }
+                        encryption := Switch {
+                            x: parent.width - self.width - 16px; y: (parent.height - self.height)/2;
+                            checked: root.encrypted; label: @tr("Encrypt local data");
+                            toggled => { root.encrypted = !root.encrypted; }
+                        }
+                    }
+                    if !root.busy: HorizontalLayout {
+                        spacing: 12px;
+                        SoftButton {
+                            height: 38px; border-radius: 19px;
+                            text: root.first-run ? @tr("Quit") : root.error != "" ? @tr("Close") : @tr("Cancel");
+                            activated => { root.close(); }
+                        }
+                        if root.error == "": confirm := SessionButton {
+                            label: root.first-run ? @tr("Continue") : @tr("Restart Heya");
+                            horizontal-stretch: 1;
+                            activated => { root.confirm(); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

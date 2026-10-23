@@ -436,6 +436,7 @@ pub fn attach(
             },
         );
     }
+    let _ = crate::presentation_avatars::bind(ui);
     sidebar(ui, state.sidebar());
     conversation(ui, &state.conversation(), true);
     let mut avatars = (*fixtures::avatar_samples([0, 1, 2, 3])).clone();
@@ -1235,6 +1236,7 @@ mod tests {
         super::chat_management_tests::check_ui();
         crate::presentation_avatars::check_ui();
         crate::presentation_preferences::check_ui(&runtime);
+        crate::presentation_storage::check_ui();
         crate::presentation_content::check_ui();
         super::notice_tests::check_ui();
         super::call_tests::check_ui();
@@ -1245,6 +1247,7 @@ mod tests {
         crate::presentation_video::check_ui();
         crate::presentation_hover_tests::check_ui();
         crate::presentation_hover_tests::check_action_flows();
+        crate::presentation_hover_tests::check_forward_chooser();
         crate::presentation_menu_tests::check_ui();
         crate::presentation_message_controls::tests::check_ui();
         crate::presentation_emoji_tests::check_ui();

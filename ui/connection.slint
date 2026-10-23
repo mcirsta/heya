@@ -3,6 +3,7 @@ import { SoftButton } from "settings.slint";
 
 export component ConnectionBanner inherits Rectangle {
     in property <int> state;
+    in property <bool> waiting-key-store;
     in property <string> error;
     in property <bool> blocked;
     in property <bool> can-relink;
@@ -15,7 +16,7 @@ export component ConnectionBanner inherits Rectangle {
         padding: 12px;
         spacing: 6px;
         Text {
-            text: root.state == 9 ? root.error : root.state == 1 ? @tr("Opening your encrypted chats…") : root.state == 2 ? @tr("Connecting… Your saved chats are available.") : root.state == 6 ? @tr("Connection lost. Reconnecting automatically…") : root.state == 7 ? @tr("Saving and disconnecting…") : @tr("Offline. Your saved chats and drafts are available.");
+            text: root.state == 9 ? root.error : root.state == 1 ? (root.waiting-key-store ? @tr("Waiting for the OS key store…") : @tr("Opening your saved chats…")) : root.state == 2 ? @tr("Connecting… Your saved chats are available.") : root.state == 6 ? @tr("Connection lost. Reconnecting automatically…") : root.state == 7 ? @tr("Saving and disconnecting…") : @tr("Offline. Your saved chats and drafts are available.");
             color: Theme.secondary;
             wrap: word-wrap;
             font-size: 13px;
@@ -76,7 +77,7 @@ export component AccountDialog inherits Rectangle {
                 }
 
                 Text {
-                    text: root.unlink ? @tr("Heya will ask WhatsApp to remove this linked device. Your encrypted chats and drafts stay on this computer. To reconnect afterwards, scan a new QR code with the same account.") : @tr("The previous session credentials will be replaced. Your encrypted chats and drafts stay on this computer. Scan the new QR code with the same WhatsApp account. Remove the old Heya entry from Linked devices on your phone if it is still listed.");
+                    text: root.unlink ? @tr("Heya will ask WhatsApp to remove this linked device. Your saved chats and drafts stay on this computer. To reconnect afterwards, scan a new QR code with the same account.") : @tr("The previous session credentials will be replaced. Your saved chats and drafts stay on this computer. Scan the new QR code with the same WhatsApp account. Remove the old Heya entry from Linked devices on your phone if it is still listed.");
                     color: Theme.secondary;
                     wrap: word-wrap;
                 }

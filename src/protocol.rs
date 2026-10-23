@@ -18,6 +18,9 @@ use whatsapp_rust::{
 };
 use zeroize::Zeroizing;
 
+#[path = "protocol_startup.rs"]
+mod startup;
+
 #[derive(diesel::QueryableByName)]
 struct CipherVersion {
     #[diesel(sql_type = diesel::sql_types::Text)]
@@ -657,24 +660,25 @@ pub async fn run(
         }
         updates.send_replace(Snapshot::new(Phase::Opening));
         if prepared.is_none() {
-            let result = tokio::task::spawn_blocking(|| {
-                let files = storage::prepare()?;
-                let archive = Archive::open(files.clone(), &files.archive_key_sql)
-                    .map_err(archive_failure)?;
-                protocol_messages::repair_text(&archive).map_err(archive_failure)?;
-                Ok::<_, Failure>((files, archive))
+            let result = startup::prepare(&mut requests, &updates, || async {
+                crate::local_worker::run(|| {
+                    let files = storage::prepare()?;
+                    let archive = Archive::open(files.clone(), &files.archive_key_sql)
+                        .map_err(archive_failure)?;
+                    protocol_messages::repair_text(&archive).map_err(archive_failure)?;
+                    Ok((files, archive))
+                })
+                .await
+                .unwrap_or(Err(Failure::Archive))
             })
             .await;
             match result {
-                Ok(Ok((files, archive))) => {
+                Ok(Some((files, archive))) => {
                     archives.send_replace(Some(archive.clone()));
                     prepared = Some((files, archive));
                 }
-                result => {
-                    let error = result
-                        .ok()
-                        .and_then(Result::err)
-                        .unwrap_or(Failure::Archive);
+                Ok(None) => continue,
+                Err(error) => {
                     updates.send_replace(Snapshot::new(Phase::Failed(error)));
                     continue;
                 }
@@ -738,6 +742,48 @@ pub async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn protocol_session_survives_decryption_and_reencryption_without_relinking() {
+        use crate::storage::{Mode, change_mode_at, prepare_at, tests::MemoryVault};
+        use whatsapp_rust::store::traits::DeviceStore;
+        let temp = tempfile::tempdir().unwrap();
+        let vault = MemoryVault::default();
+        let files = prepare_at(temp.path(), &vault).unwrap();
+        let store = open_store(files.clone()).await.unwrap();
+        store.create().await.unwrap();
+        let mut device = store.load().await.unwrap().unwrap();
+        device.pn = Some(crate::archive::tests::PN.parse().unwrap());
+        device.push_name = "Synthetic saved session".into();
+        store.save(&device).await.unwrap();
+        let released = Arc::downgrade(&files);
+        drop(store);
+        drop(files);
+        timeout(Duration::from_secs(3), async {
+            while released.upgrade().is_some() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        for mode in [Mode::Unencrypted, Mode::Encrypted] {
+            change_mode_at(temp.path(), mode, &vault).unwrap();
+            let files = prepare_at(temp.path(), &vault).unwrap();
+            let released = Arc::downgrade(&files);
+            let store = open_store(files).await.unwrap();
+            let restored = store.load().await.unwrap().unwrap();
+            assert_eq!(restored.pn, device.pn);
+            assert_eq!(restored.push_name, device.push_name);
+            drop(store);
+            timeout(Duration::from_secs(3), async {
+                while released.upgrade().is_some() {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .unwrap();
+        }
+    }
 
     #[tokio::test]
     async fn relink_resets_only_protocol_credentials_and_preserves_archive_identity() {

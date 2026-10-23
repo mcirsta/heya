@@ -37,8 +37,11 @@ connection is disabled in preferences. With that setting off, it waits for Conne
 without touching the keyring or archive. A first launch also waits for Connect
 before creating files or keys. `--offline` explicitly opens an existing archive
 regardless of the preference; it needs the keyring but starts no network or outbox.
-Lifecycle events update a
-latest-value watch channel inline. Message durability hooks commit supported
+Startup retries typed temporary key-store availability failures after 2, 4, 8,
+16 and then 30 seconds, using the existing lifecycle task and finite blocking
+attempts. Disconnect or window close cancels its sleep; refused unlock prompts
+and missing/invalid keys remain terminal. The UI shows the waiting phase without
+blocking other controls. Lifecycle events update a latest-value watch channel inline. Message durability hooks commit supported
 batches before returning; history capture persists compressed chunks separately.
 Receipt and recovery events use a bounded synchronous handoff; overflow stops
 the connection with an error instead of silently dropping events. SDK recovery
@@ -47,7 +50,16 @@ QR encoding, keyring, archive I/O and history decoding stay off Slint's event lo
 Each connection owns its event channels and workers. Terminal failures survive
 trailing disconnect events; neither raw SDK errors nor private content is logged.
 
-The session key is 32 random bytes stored and read back through the OS keyring
+Local storage is chosen on first run, with encryption selected by default.
+Existing profiles retain encryption. The System settings switch saves and
+restarts Heya before converting; no active database is converted underneath a
+worker. Both databases are exported and verified under the existing profile
+lock, then one atomically replaced manifest selects their new location and mode.
+Startup cleans incomplete/obsolete conversions before opening the active files.
+Plaintext mode uses ordinary SQLite and bypasses the key store entirely. See
+[local storage](local-storage.md) for failure, recovery and validation details.
+
+In encrypted mode, the session key is 32 random bytes stored and read back through the OS keyring
 before the database is created. A missing key for an existing file is an error.
 Every SDK pool connection applies the raw SQLCipher key, checks SQLCipher is
 present and verifies the schema before migrations/pragmas. Writes use FULL
@@ -426,6 +438,12 @@ revalidates the source, expiry and destination permissions inside the transactio
 that persists the outgoing envelope. Quoted drafts persist per chat; enqueueing
 a reply atomically consumes its text and quoted target. Forwarding preserves the
 recipient's unrelated draft. Merging distinct drafts clears their ambiguous quote.
+
+The forwarding chooser uses the shared avatar cache, including writable chats
+absent from the filtered sidebar. Its viewport replaces transcript-sender demand
+while open; closing restores normal demand. Only cached texture lookup runs on
+the UI thread. Search preserves selection and pending search text; sending stays
+explicit and uses the existing request-matched forwarding command.
 
 The isolated protocol action module uses the pinned SDK's quote/forward helpers
 and reaction builder. It strips nested quote context on forwarding and retains

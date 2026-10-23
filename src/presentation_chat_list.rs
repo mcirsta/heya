@@ -80,7 +80,7 @@ impl ChatListModel {
         self.rows.borrow().photos.get(&id.into())
     }
 
-    pub fn update_avatars(&self, snapshot: &crate::avatars::Snapshot) {
+    pub fn update_avatars(&self, snapshot: &crate::avatars::Snapshot) -> bool {
         let mut rows = self.rows.borrow_mut();
         let changed_photos = rows.photos.update(snapshot, false);
         let changed: Vec<_> = rows
@@ -96,6 +96,7 @@ impl ChatListModel {
         for index in changed {
             self.notify.row_changed(index);
         }
+        !changed_photos.is_empty()
     }
 }
 

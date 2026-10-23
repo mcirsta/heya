@@ -107,6 +107,10 @@ pub fn attach(
             let Some(ui) = weak.upgrade() else {
                 return;
             };
+            if key == "encrypt_local_data" {
+                ui.invoke_open_storage_choice(value == 1);
+                return;
+            }
             if key == "connection" {
                 if matches!(ui.get_connection_state(), 1..=6) {
                     ui.invoke_disconnect_account();
@@ -418,7 +422,8 @@ fn refresh_audio(ui: &AppWindow, p: &Preferences) {
 }
 fn refresh(ui: &AppWindow, p: &Preferences) {
     let connection = match ui.get_connection_state() {
-        1 => "Opening encrypted archive…",
+        1 if ui.get_connection_waiting_key_store() => "Waiting for the OS key store…",
+        1 => "Opening saved chats…",
         2 => "Connecting…",
         3 => "Scan the QR code to link this computer.",
         4 => "Pairing…",
@@ -589,6 +594,16 @@ fn refresh(ui: &AppWindow, p: &Preferences) {
         (
             "System",
             vec![
+                toggle(
+                    "encrypt_local_data",
+                    "Encrypt local data",
+                    if ui.get_storage_encrypted() {
+                        "Protect saved chats and sign-in details using the OS key store."
+                    } else {
+                        "Chats and sign-in details are stored unencrypted without the OS key store."
+                    },
+                    ui.get_storage_encrypted(),
+                ),
                 pending(
                     "Keep running when the window closes",
                     "Continue in the tray; closing the window currently quits Heya.",
@@ -606,7 +621,7 @@ fn refresh(ui: &AppWindow, p: &Preferences) {
                 toggle(
                     "connect_automatically",
                     "Connect automatically on startup",
-                    "Use your saved session when Heya starts. Your OS may ask you to unlock the keyring. When off, saved chats stay closed until you connect. Applies on the next launch.",
+                    "Use your saved session on startup, waiting for the OS key store if needed.",
                     p.connect_automatically,
                 ),
                 if ui.get_demo_mode()
@@ -654,7 +669,7 @@ fn refresh(ui: &AppWindow, p: &Preferences) {
                         ..row(
                             "unlink",
                             "Unlink this computer",
-                            "Remove this linked device from WhatsApp. Your encrypted chats and drafts stay here.",
+                            "Remove this linked device from WhatsApp. Your saved chats and drafts stay here.",
                             4,
                         )
                     }
@@ -669,10 +684,6 @@ fn refresh(ui: &AppWindow, p: &Preferences) {
         (
             "Files",
             vec![
-                info(
-                    "Message archive",
-                    "The session and chat archive are encrypted on this device; their key is kept in the OS keyring.",
-                ),
                 SettingRow {
                     action: "Choose…".into(),
                     ..row(
@@ -826,6 +837,18 @@ pub(crate) fn check_ui(runtime: &tokio::runtime::Runtime) {
     .unwrap();
     settings.invoke_accessible_default_action();
     assert!(ui.get_settings_open());
+    let sections = ui.get_settings_sections();
+    let storage_sections: Vec<_> = sections
+        .iter()
+        .filter(|section| {
+            section
+                .rows
+                .iter()
+                .any(|row| row.key == "encrypt_local_data")
+        })
+        .collect();
+    assert_eq!(storage_sections.len(), 1);
+    assert_eq!(storage_sections[0].title, "System");
     assert!(current.borrow().connect_automatically);
     ui.set_settings_query("Connect automatically".into());
     ui.invoke_search_settings(ui.get_settings_query());

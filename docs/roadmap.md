@@ -141,6 +141,13 @@ controller and finite duplex audio helper; see [audio calling](audio-calling.md)
 See [call events](call-events.md); the owner confirmed a real event in both the
 sidebar and conversation. Actual call interoperability is still unverified.
 
+Local storage now offers an initial encrypted/unencrypted choice and a Files
+settings switch. Mode conversion uses normal shutdown/restart, verified exports
+and an atomic manifest, preserving the session and archive together. Plaintext
+startup does not access the key store. Synthetic conversion, interruption and UI
+checks are described in [local storage](local-storage.md); OS/account validation
+on other machines remains open.
+
 The first slice now implements Connect/Cancel/Disconnect, QR rotation/expiry,
 encrypted single-session storage with a desktop keyring key, configurable saved
 session resume, offline archive opening, SDK reconnection states and bounded
@@ -195,7 +202,9 @@ reaches the top, and fills short viewports without a load button. The existing
 message-identity anchor preserves the viewed content while prepending. One
 request at a time, navigation revisions and matching completion tokens bound
 work during scroll/update bursts; query failure leaves the previous page size
-intact and retries on a fresh approach or chat reopen. This pages the encrypted
+intact and retries on a fresh approach or chat reopen. Empty chats show “No
+messages yet” and skip automatic paging; explicit phone fetch remains available
+without marking unknown history exhausted. This pages the encrypted
 archive first, then can request up to 50 additional messages through the SDK's
 public phone-history API. Captured chunks and request IDs are correlated only
 after import completes; duplicates, aliases, terminal transfer flags, timeout,

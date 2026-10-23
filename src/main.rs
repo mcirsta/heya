@@ -75,6 +75,7 @@ mod presentation_presence;
 mod presentation_read_tests;
 mod presentation_scroll;
 mod presentation_settings_io;
+mod presentation_storage;
 mod presentation_text;
 mod presentation_video;
 mod presentation_voice;
@@ -135,6 +136,7 @@ struct Options {
     startup_trace: Option<PathBuf>,
     software_rendering: bool,
     startup_check: bool,
+    change_storage: Option<storage::Mode>,
 }
 
 fn options_from(args: impl IntoIterator<Item = String>) -> Result<Option<Options>, String> {
@@ -149,6 +151,13 @@ fn options_from(args: impl IntoIterator<Item = String>) -> Result<Option<Options
             "--ui-benchmark" => options.ui_benchmark = true,
             "--software-rendering" => options.software_rendering = true,
             "--startup-check" => options.startup_check = true,
+            "--change-storage" => {
+                options.change_storage = Some(match args.next().as_deref() {
+                    Some("encrypted") => storage::Mode::Encrypted,
+                    Some("unencrypted") => storage::Mode::Unencrypted,
+                    _ => return Err("--change-storage needs encrypted or unencrypted".into()),
+                });
+            }
             "--startup-trace" => {
                 options.startup_trace = Some(
                     args.next()
@@ -180,16 +189,19 @@ fn options_from(args: impl IntoIterator<Item = String>) -> Result<Option<Options
             }
             "--help" | "-h" => {
                 println!(
-                    "Heya\n\nUsage: heya [--demo | --offline] [--light | --dark] [--size WIDTHxHEIGHT] [--demo-chat ID] [--screenshot FILE.png] [--ui-benchmark] [--software-rendering] [--startup-trace FILE.log] [--startup-check]\n\nSaved sessions resume automatically unless disabled in Settings → Account. On first use, click Connect to link WhatsApp.\n--offline opens saved chats without connecting, regardless of that setting; keyring access is still required. Connect remains available.\n--demo uses synthetic chats without opening account files or the network.\n--demo-chat selects a synthetic chat (1–15); 7 demonstrates message cards; 8 dates and spacing; 9 received photos; 10 received audio; 11 received documents; 12 pin/unpin notices; 13 color emoji; 14 received videos; 15 call history.\n--screenshot requires --demo and exits after capturing the synthetic UI.\n--ui-benchmark requires --demo, measures synthetic updates/resizing and exits; it cannot be combined with --screenshot.\n--software-rendering uses Skia's CPU renderer for GUI troubleshooting.\n--startup-trace writes bounded GUI checkpoints, without account content. macOS logs startup automatically under ~/Library/Logs/Heya.\n--startup-check requires --demo and exits after the first native redraw returns; do not combine it with screenshots or benchmarks."
+                    "Heya\n\nUsage: heya [--demo | --offline] [--light | --dark] [--size WIDTHxHEIGHT] [--demo-chat ID] [--screenshot FILE.png] [--ui-benchmark] [--software-rendering] [--startup-trace FILE.log] [--startup-check]\n\nSaved sessions resume automatically unless disabled in Settings → Account. On first use, click Connect to link WhatsApp.\n--offline opens saved chats without connecting, regardless of that setting; encrypted storage still requires the OS key store. Connect remains available.\n--demo uses synthetic chats without opening account files or the network.\n--demo-chat selects a synthetic chat (1–16); 7 demonstrates message cards; 8 dates and spacing; 9 received photos; 10 received audio; 11 received documents; 12 pin/unpin notices; 13 color emoji; 14 received videos; 15 call history; 16 an empty conversation.\n--screenshot requires --demo and exits after capturing the synthetic UI.\n--ui-benchmark requires --demo, measures synthetic updates/resizing and exits; it cannot be combined with --screenshot.\n--software-rendering uses Skia's CPU renderer for GUI troubleshooting.\n--startup-trace writes bounded GUI checkpoints, without account content. macOS logs startup automatically under ~/Library/Logs/Heya.\n--startup-check requires --demo and exits after the first native redraw returns; do not combine it with screenshots or benchmarks."
                 );
                 return Ok(None);
             }
             other => return Err(format!("Unknown option {other}. Use --help.")),
         }
     }
-    if options.demo_chat.is_some() && (!options.demo || !matches!(options.demo_chat, Some(1..=15)))
+    if options.demo && options.change_storage.is_some() {
+        return Err("Storage conversion cannot be combined with --demo".into());
+    }
+    if options.demo_chat.is_some() && (!options.demo || !matches!(options.demo_chat, Some(1..=16)))
     {
-        return Err("--demo-chat requires --demo and a chat ID from 1 to 15".into());
+        return Err("--demo-chat requires --demo and a chat ID from 1 to 16".into());
     }
     if options.screenshot.is_some() && !options.demo {
         return Err(
@@ -272,27 +284,28 @@ fn run(options: Options, trace: &startup::Trace) -> Result<(), Box<dyn std::erro
     trace.record("runtime_create", "ok");
     let demo = options.demo;
     let worker_trace = trace.clone();
-    let (preferences, wallpaper) = runtime.block_on(runtime.spawn_blocking(move || {
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
-        {
-            worker_trace.record("emoji_probe", "begin");
-            #[cfg(target_os = "macos")]
-            macos::prepare_emoji_support();
-            #[cfg(target_os = "linux")]
-            linux_emoji::prepare_emoji_support();
-            worker_trace.record("emoji_probe", "ok");
-        }
-        worker_trace.record("preferences_load", "begin");
-        let preferences = presentation_preferences::prepare(demo);
-        worker_trace.record("preferences_load", "ok");
-        worker_trace.record("wallpaper_decode", "begin");
-        let wallpaper = presentation::wallpaper_pixels();
-        worker_trace.record(
-            "wallpaper_decode",
-            if wallpaper.is_ok() { "ok" } else { "failed" },
-        );
-        (preferences, wallpaper)
-    }))?;
+    let (preferences, wallpaper, storage_status) =
+        runtime.block_on(runtime.spawn_blocking(move || {
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            {
+                worker_trace.record("emoji_probe", "begin");
+                #[cfg(target_os = "macos")]
+                macos::prepare_emoji_support();
+                #[cfg(target_os = "linux")]
+                linux_emoji::prepare_emoji_support();
+                worker_trace.record("emoji_probe", "ok");
+            }
+            worker_trace.record("preferences_load", "begin");
+            let preferences = presentation_preferences::prepare(demo);
+            worker_trace.record("preferences_load", "ok");
+            worker_trace.record("wallpaper_decode", "begin");
+            let wallpaper = presentation::wallpaper_pixels();
+            worker_trace.record(
+                "wallpaper_decode",
+                if wallpaper.is_ok() { "ok" } else { "failed" },
+            );
+            (preferences, wallpaper, (!demo).then(storage::status))
+        }))?;
     let (mut preferences, preferences_path, preferences_status) = preferences;
     let wallpaper = wallpaper?;
     if let Some(theme) = options.theme {
@@ -341,6 +354,15 @@ fn run(options: Options, trace: &startup::Trace) -> Result<(), Box<dyn std::erro
             preferences_status,
         );
     presentation_content::bind_actions(&ui, &runtime);
+    let (storage_restart, storage_task) = presentation_storage::attach(
+        &ui,
+        &runtime,
+        storage_status,
+        options.change_storage.is_some(),
+    );
+    if let Some(mode) = options.change_storage {
+        ui.set_storage_target(mode == storage::Mode::Encrypted);
+    }
     let service = if options.demo
         && options.ui_benchmark
         && std::env::var_os("HEYA_BENCHMARK_ALBUM").is_some()
@@ -351,7 +373,13 @@ fn run(options: Options, trace: &startup::Trace) -> Result<(), Box<dyn std::erro
     } else if options.demo {
         presentation::attach(&ui, &runtime, current_preferences.clone())
     } else {
-        live_presentation::attach(&ui, &runtime, options.offline, current_preferences.clone())
+        live_presentation::attach(
+            &ui,
+            &runtime,
+            options.offline,
+            current_preferences.clone(),
+            options.change_storage,
+        )
     };
     trace.record("presentation_attach", "ok");
     if let Some(id) = options.demo_chat {
@@ -418,6 +446,7 @@ fn run(options: Options, trace: &startup::Trace) -> Result<(), Box<dyn std::erro
     let hidden = ui.hide();
     drop(ui); // Releases all command senders before joining the service.
     runtime.block_on(async {
+        let _ = storage_task.await;
         let mut settings_operations=settings_operations;
         if tokio::time::timeout(Duration::from_secs(5), &mut settings_operations).await.is_err(){settings_operations.abort();let _=settings_operations.await;}
         if let Some(mut saver) = preference_saver
@@ -461,6 +490,23 @@ fn run(options: Options, trace: &startup::Trace) -> Result<(), Box<dyn std::erro
     if let Some(error) = capture_error.borrow_mut().take() {
         return Err(std::io::Error::other(error).into());
     }
+    if let Some(mode) = storage_restart.0.get() {
+        let mut restart = std::process::Command::new(std::env::current_exe()?);
+        restart.arg("--change-storage").arg(match mode {
+            storage::Mode::Encrypted => "encrypted",
+            storage::Mode::Unencrypted => "unencrypted",
+        });
+        if options.offline {
+            restart.arg("--offline");
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            return Err(restart.exec().into());
+        }
+        #[cfg(not(unix))]
+        restart.spawn()?;
+    }
     Ok(())
 }
 
@@ -471,6 +517,10 @@ mod option_tests {
     #[test]
     fn live_is_default_and_only_synthetic_screenshots_are_allowed() {
         assert!(!options_from(Vec::new()).unwrap().unwrap().demo);
+        assert!(
+            options_from(["--demo", "--change-storage", "unencrypted"].map(String::from)).is_err()
+        );
+        assert!(options_from(["--change-storage", "invalid"].map(String::from)).is_err());
         assert!(options_from(["--screenshot", "/tmp/heya-live.png"].map(String::from)).is_err());
         let options =
             options_from(["--demo", "--screenshot", "/tmp/heya-synthetic.png"].map(String::from))
@@ -480,7 +530,7 @@ mod option_tests {
         assert!(options.screenshot.is_some());
         assert!(options_from(["--ui-benchmark"].map(String::from)).is_err());
         assert!(options_from(["--demo-chat", "7"].map(String::from)).is_err());
-        assert!(options_from(["--demo", "--demo-chat", "16"].map(String::from)).is_err());
+        assert!(options_from(["--demo", "--demo-chat", "17"].map(String::from)).is_err());
         assert_eq!(
             options_from(["--demo", "--demo-chat", "7"].map(String::from))
                 .unwrap()

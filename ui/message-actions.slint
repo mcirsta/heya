@@ -1,69 +1,203 @@
 import { ListView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { IconButton } from "components.slint";
-import { SoftButton } from "settings.slint";
+import { Avatar, IconButton } from "components.slint";
 import { ContentTarget } from "message-content.slint";
 
+export struct ForwardDestination { id: int, title: string, initials: string }
 
-export struct ForwardDestination {id:int,title:string}
-
-// One transient picker/dialog for the window, never one per message row.
+// One transient chooser for the window. Avatar lookup only clones cached textures;
+// the viewport supplies demand to the existing background avatar worker.
 export component MessageOperationDialog inherits Rectangle {
     in property <bool> busy;
     in property <bool> available;
     in property <string> error;
     in property <string> summary;
     in property <[ForwardDestination]> destinations;
-    private property <int> destination;
+    in property <int> avatar-revision;
+    private property <ForwardDestination> destination;
+    pure callback avatar(int,int) -> image;
+    in-out property <string> query;
+    callback avatar-range(int,int);
     callback close();
     callback search(string);
     callback forward(int);
-    background: #0005;
-    TouchArea {clicked=>{root.close();}}
+    background: #0007;
+    TouchArea { clicked => { root.close(); } }
     FocusScope {
-        width: min(420px,root.width - 24px);
-        height: min(500px,root.height - 24px);
+        width: min(480px,root.width - 32px);
+        height: min(620px,root.height - 32px);
         x: (root.width - self.width)/2;
         y: (root.height - self.height)/2;
-        init=>{search-field.focus();}
-        key-pressed(event)=>{if event.text==Key.Escape {root.close();return accept;} return reject;}
+        init => { search-field.focus(); }
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.close(); return accept; }
+            return reject;
+        }
         panel := Rectangle {
-            x:0px;y:0px;width:parent.width;height:parent.height;
-            background: Theme.overlay; border-radius: 12px;
-            drop-shadow-offset-y: 6px; drop-shadow-blur: 20px; drop-shadow-color: Theme.modal-shadow;
+            width: parent.width; height: parent.height;
+            background: Theme.panel; border-radius: 16px; clip: true;
+            drop-shadow-offset-y: 8px; drop-shadow-blur: 32px; drop-shadow-color: Theme.modal-shadow;
             TouchArea {}
             VerticalLayout {
-                padding: 12px; spacing: 8px;
-                HorizontalLayout {
-                    height: 28px;
-                    Text {text:@tr("Forward message");color:Theme.text;font-size:16px;font-weight:600;vertical-alignment:center;horizontal-stretch:1;}
-                    IconButton {icon:@image-url("icons/close.svg");label:@tr("Close message actions");activated=>{root.close();}}
-                }
-                Text {height:32px;text:root.summary;color:Theme.secondary;font-size:12px;wrap:word-wrap;overflow:elide;max-lines:2;}
+                padding: 0px; spacing: 0px;
                 Rectangle {
-                    height:34px;background:Theme.surface;border-radius:8px;
-                    Text {x:10px;y:0px;height:parent.height;text:@tr("Search chats");visible:search-field.text=="";color:Theme.dim;vertical-alignment:center;}
-                    search-field := TextInput {
-                        x:10px;y:0px;width:parent.width - 20px;height:parent.height;single-line:true;
-                        color:Theme.text;vertical-alignment:center;
-                        accessible-label:@tr("Search forwarding destinations");
-                        edited=>{root.destination=0;root.search(self.text);}
+                    height: 76px;
+                    IconButton {
+                        x: 18px; y: (parent.height - self.height)/2;
+                        icon: @image-url("icons/close.svg");
+                        label: @tr("Close message actions");
+                        activated => { root.close(); }
+                    }
+                    Text {
+                        x: 66px; width: parent.width - self.x - 24px; height: parent.height;
+                        text: @tr("Forward message to"); color: Theme.text;
+                        font-size: 20px; font-weight: 600; vertical-alignment: center;
+                        overflow: elide;
                     }
                 }
-                ListView {
-                    for item in root.destinations: Rectangle {
-                        height:44px;border-radius:8px;background:root.destination==item.id ? Theme.selected : transparent;
-                        Text {x:10px;y:0px;width:parent.width - 20px;height:44px;text:item.title;color:Theme.text;font-size:14px;vertical-alignment:center;overflow:elide;}
-                        ContentTarget {label:item.title;enabled:!root.busy;activated=>{root.destination=item.id;}}
+                Rectangle {
+                    height: 52px;
+                    Rectangle {
+                        x: 24px; width: parent.width - 48px; height: 38px;
+                        background: Theme.surface; border-radius: 19px;
+                        border-width: search-field.has-focus ? 1px : 0px;
+                        border-color: Theme.accent.with-alpha(0.5);
+                        Image {
+                            x: 14px; y: 10px; width: 18px; height: 18px;
+                            source: @image-url("icons/search.svg"); colorize: Theme.secondary;
+                        }
+                        Text {
+                            x: 44px; height: parent.height; width: parent.width - self.x - 12px;
+                            text: @tr("Search chats"); visible: search-field.text == "";
+                            color: Theme.dim; vertical-alignment: center; font-size: 14px;
+                        }
+                        search-field := TextInput {
+                            x: 44px; width: parent.width - self.x - (self.text == "" ? 12px : 38px);
+                            height: parent.height; single-line: true;
+                            color: Theme.text; font-size: 14px; vertical-alignment: center;
+                            text <=> root.query;
+                            accessible-label: @tr("Search forwarding destinations");
+                            edited => { recipients.content-y = 0px; root.search(self.text); }
+                        }
+                        if search-field.text != "": IconButton {
+                            x: parent.width - self.width - 6px; y: (parent.height - self.height)/2;
+                            icon: @image-url("icons/close.svg"); icon-size: 14px;
+                            label: @tr("Clear forwarding search");
+                            activated => { search-field.text = ""; recipients.content-y = 0px; root.search(""); search-field.focus(); }
+                        }
                     }
                 }
-                if root.busy || root.error!="" || !root.available: Text {
-                    text:root.error!="" ? root.error : root.busy ? @tr("Please wait…") : @tr("Connect to send.");
-                    color:Theme.secondary;wrap:word-wrap;font-size:12px;
+                Rectangle {
+                    height: 36px;
+                    Image {
+                        x: 26px; y: 6px; width: 16px; height: 16px;
+                        source: @image-url("icons/forward.svg"); colorize: Theme.secondary;
+                    }
+                    Text {
+                        x: 50px; width: parent.width - self.x - 24px; height: 26px;
+                        text: root.summary; color: Theme.secondary; font-size: 12px;
+                        vertical-alignment: center; overflow: elide; max-lines: 1;
+                    }
                 }
-                SoftButton {
-                    text:@tr("Forward");enabled:root.destination>0&&!root.busy&&root.available;
-                    activated=>{root.forward(root.destination);}
+                Rectangle { height: 1px; background: Theme.outline; }
+                Rectangle {
+                    height: 40px;
+                    Text {
+                        x: 26px; width: parent.width - 52px; height: parent.height;
+                        text: search-field.text == "" ? @tr("Chats") : @tr("Search results");
+                        color: Theme.accent; font-size: 13px; font-weight: 600; vertical-alignment: center;
+                    }
+                }
+                list-area := Rectangle {
+                    vertical-stretch: 1;
+                    recipients := ListView {
+                        width: parent.width; height: parent.height;
+                        private property <int> first: max(0, floor(-self.content-y / 64px));
+                        private property <int> count: ceil(self.visible-height / 64px) + 1;
+                        function request-avatars() { root.avatar-range(self.first,self.count); }
+                        init => { self.request-avatars(); }
+                        changed first => { self.request-avatars(); }
+                        changed count => { self.request-avatars(); }
+                        for item in root.destinations: contact := Rectangle {
+                            height: 64px;
+                            background: root.destination.id == item.id ? Theme.accent.with-alpha(0.09) : transparent;
+                            Avatar {
+                                x: 24px; y: 10px; width: 44px;
+                                picture: root.avatar(item.id,root.avatar-revision);
+                                initials: item.initials; tint: #91d6bc;
+                            }
+                            Text {
+                                x: 84px; width: parent.width - self.x - 62px; height: parent.height;
+                                text: item.title; color: Theme.text; font-size: 16px;
+                                vertical-alignment: center; overflow: elide; max-lines: 1;
+                            }
+                            Rectangle {
+                                x: parent.width - 46px; y: 21px; width: 22px; height: 22px; border-radius: 11px;
+                                border-width: root.destination.id == item.id ? 0px : 1.5px;
+                                border-color: Theme.secondary.with-alpha(0.55);
+                                background: root.destination.id == item.id ? Theme.accent : transparent;
+                                if root.destination.id == item.id: Image {
+                                    x: 3px; y: 3px; width: 16px; height: 16px;
+                                    source: @image-url("icons/check.svg"); colorize: Theme.on-accent;
+                                }
+                            }
+                            ContentTarget {
+                                label: item.title; enabled: !root.busy;
+                                activated => { root.destination = root.destination.id == item.id ? {id:0,title:"",initials:""} : item; }
+                            }
+                        }
+                    }
+                    if root.destinations.length == 0: VerticalLayout {
+                        alignment: center; padding-left: 32px; padding-right: 32px; spacing: 8px;
+                        Text {
+                            text: root.busy ? @tr("Loading chats…") : search-field.text != "" ? @tr("No chats found") : @tr("No chats available");
+                            color: Theme.text; font-size: 16px; horizontal-alignment: center;
+                        }
+                        Text {
+                            text: search-field.text != "" ? @tr("Try another name or number.") : @tr("Your available conversations will appear here.");
+                            visible: !root.busy; color: Theme.secondary; font-size: 13px;
+                            horizontal-alignment: center; wrap: word-wrap;
+                        }
+                    }
+                }
+                if root.error != "" || !root.available || (root.busy && root.destinations.length > 0): Rectangle {
+                    height: status.preferred-height + 20px;
+                    status := Text {
+                        x: 24px; y: 10px; width: parent.width - 48px;
+                        text: root.error != "" ? root.error : root.busy ? @tr("Please wait…") : @tr("Connect to send.");
+                        color: Theme.secondary; wrap: word-wrap; font-size: 12px;
+                    }
+                }
+                Rectangle { height: 1px; background: Theme.outline; }
+                footer := Rectangle {
+                    height: 84px;
+                    if root.destination.id == 0: Text {
+                        x: 24px; width: parent.width - 116px; height: parent.height;
+                        text: @tr("Select a chat to forward to"); color: Theme.secondary; font-size: 13px;
+                        vertical-alignment: center; wrap: word-wrap;
+                    }
+                    if root.destination.id > 0: Rectangle {
+                        x: 24px; y: 24px; height: 36px; width: min(name.preferred-width + 48px,parent.width - 116px);
+                        background: Theme.accent.with-alpha(0.1); border-radius: 18px;
+                        name := Text {
+                            x: 14px; width: parent.width - 46px; height: parent.height;
+                            text: root.destination.title; color: Theme.text; font-size: 14px;
+                            vertical-alignment: center; overflow: elide;
+                        }
+                        IconButton {
+                            x: parent.width - self.width - 5px; y: (parent.height - self.height)/2;
+                            icon: @image-url("icons/close.svg"); icon-size: 14px; enabled: !root.busy;
+                            label: @tr("Remove forwarding recipient");
+                            activated => { root.destination = {id:0,title:"",initials:""}; }
+                        }
+                    }
+                    confirm := IconButton {
+                        x: parent.width - 72px; y: 18px; width: 48px; icon-size: 22px;
+                        icon: @image-url("icons/send.svg"); label: @tr("Forward"); filled: true;
+                        enabled: root.destination.id > 0 && !root.busy && root.available;
+                        background: !self.enabled ? Theme.surface : self.hovered ? Theme.accent-hover : Theme.accent;
+                        activated => { root.forward(root.destination.id); }
+                    }
                 }
             }
         }

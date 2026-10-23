@@ -6,6 +6,7 @@ pub enum Failure {
     DataDirectory,
     AlreadyRunning,
     Keyring,
+    KeyringUnavailable,
     MissingKey,
     InvalidKey,
     Database,
@@ -19,13 +20,21 @@ pub enum Failure {
     Archive,
     ArchiveIdentity,
     LogoutUnconfirmed,
+    StorageConversion,
+    StorageCleanup,
 }
 
 impl Failure {
     pub fn message(self) -> &'static str {
         match self {
+            Self::StorageConversion => {
+                "Could not convert saved data; check free space and folder permissions, then try again."
+            }
+            Self::StorageCleanup => {
+                "Could not finish storage cleanup; check folder permissions and restart Heya."
+            }
             Self::Archive => {
-                "The encrypted chat archive could not be opened or saved. Check the keyring, free space and permissions before reconnecting. Unconfirmed sends have been retained."
+                "The chat archive could not be opened or saved. Check free space, permissions and the keyring if encryption is enabled. Unconfirmed sends have been retained."
             }
             Self::ArchiveIdentity => {
                 "This archive belongs to a different account. The connection has been stopped and the archive left intact."
@@ -36,6 +45,7 @@ impl Failure {
             Self::AlreadyRunning => {
                 "This session is already open in another Heya window. Close that window before reconnecting."
             }
+            Self::KeyringUnavailable => "The OS key store is not ready; please try again shortly.",
             Self::Keyring => {
                 "The desktop keyring is unavailable or locked. Unlock it, then try again."
             }
@@ -46,7 +56,7 @@ impl Failure {
                 "The saved encryption key is invalid. Your saved data has been left untouched."
             }
             Self::Database => {
-                "The encrypted session could not be opened. Check the keyring, disk space and folder permissions. The session has not been reset."
+                "The saved session could not be opened. Check disk space, folder permissions and the keyring if encryption is enabled. The session has not been reset."
             }
             Self::Protocol => {
                 "The connection stopped. Check your internet connection, then try again."
@@ -108,6 +118,7 @@ impl Request {
 pub enum Phase {
     Idle,
     Opening,
+    WaitingForKeyStore,
     Connecting,
     Qr,
     Pairing,

@@ -674,7 +674,7 @@ impl Archive {
                 );
                 Ok(domain::ChatSummary {
                     id: r.get(0)?,
-                    initials: initials(&title),
+                    initials: domain::initials(&title),
                     title,
                     tint: 0x91d6bc,
                     preview,
@@ -725,19 +725,6 @@ fn time(stamp: i64) -> String {
                 .to_string()
         })
         .unwrap_or_default()
-}
-fn initials(title: &str) -> String {
-    let mut letters = title
-        .split(|c: char| c.is_whitespace() || c == '-')
-        .filter_map(|word| word.chars().find(|c| c.is_alphanumeric()));
-    let Some(first) = letters.next() else {
-        return "#".into();
-    };
-    let mut result: String = first.to_uppercase().collect();
-    if let Some(last) = letters.next_back() {
-        result.extend(last.to_uppercase());
-    }
-    result
 }
 fn delivery_label(status: &str, group: bool) -> &str {
     match status {

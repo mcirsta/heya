@@ -432,6 +432,17 @@ pub fn demo() -> DemoState {
         .collect();
     fill_calls(&mut calls.messages);
     chats.push(calls);
+    chats.push(Chat {
+        id: 16,
+        title: "New conversation".into(),
+        initials: "NC".into(),
+        tint: 0xa1c9df,
+        is_group: false,
+        unread: 0,
+        messages: Vec::new(),
+        draft: String::new(),
+        visible_count: PAGE_SIZE,
+    });
     DemoState::new(chats)
 }
 

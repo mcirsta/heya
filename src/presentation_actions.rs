@@ -117,8 +117,10 @@ pub fn bind(ui: &AppWindow, submit: impl Fn(Command) -> bool + 'static) {
                     }
                 }
                 2 => {
-                    ui.set_message_dialog(2);
+                    ui.set_forward_query("".into());
                     ui.set_action_destinations(ModelRc::default());
+                    ui.set_action_all_destinations(ModelRc::default());
+                    ui.set_message_dialog(2);
                     request(&ui, &submit, |request| Command::Destinations { request });
                 }
                 MENU | 17 => {
@@ -600,17 +602,20 @@ pub(crate) fn request(
     }
 }
 fn search(ui: &AppWindow, query: &str) {
+    let input = query;
     let query = query.chars().take(128).collect::<String>().to_lowercase();
     if matches!(ui.get_message_dialog(), 1 | 4) {
         ui.set_emoji_query(query.into());
         ui.invoke_request_emojis();
     } else {
+        ui.set_forward_query(input.into());
         let values = ui
             .get_action_all_destinations()
             .iter()
             .filter(|d| d.title.to_lowercase().contains(&query))
             .collect::<Vec<_>>();
         ui.set_action_destinations(ModelRc::new(VecModel::from(values)));
+        ui.invoke_request_avatars();
     }
 }
 pub fn publish(ui: &AppWindow, result: Option<&OperationReply>, destinations: &Arc<[Destination]>) {
@@ -661,10 +666,11 @@ pub fn publish(ui: &AppWindow, result: Option<&OperationReply>, destinations: &A
                 .map(|d| crate::ui::ForwardDestination {
                     id: d.id,
                     title: d.title.as_str().into(),
+                    initials: crate::domain::initials(&d.title).into(),
                 })
                 .collect::<Vec<_>>(),
         )));
-        search(ui, "");
+        search(ui, &ui.get_forward_query());
     } else if matches!(result.kind, 1 | 2 | 4 | 5 | 6) {
         ui.invoke_close_message_actions();
         if matches!(result.kind, 2 | 6) && ui.get_selection_active() {

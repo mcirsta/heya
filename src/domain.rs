@@ -20,6 +20,20 @@ pub fn phone_number(value: &str) -> Option<String> {
     ((7..=15).contains(&digits.len()) && !digits.starts_with('0')).then_some(digits)
 }
 
+pub fn initials(title: &str) -> String {
+    let mut letters = title
+        .split(|c: char| c.is_whitespace() || c == '-')
+        .filter_map(|word| word.chars().find(|c| c.is_alphanumeric()));
+    let Some(first) = letters.next() else {
+        return "#".into();
+    };
+    let mut result: String = first.to_uppercase().collect();
+    if let Some(last) = letters.next_back() {
+        result.extend(last.to_uppercase());
+    }
+    result
+}
+
 pub fn single_line_summary(text: &str) -> String {
     let mut chars = text.chars();
     let mut summary = String::new();

@@ -341,3 +341,180 @@ pub(crate) fn check_action_flows() {
     assert!(pending.borrow().is_empty());
     ui.hide().unwrap();
 }
+
+pub(crate) fn check_forward_chooser() {
+    use crate::message_actions::{Command, Destination, OperationReply};
+    use std::cell::RefCell;
+    let ui = AppWindow::new().unwrap();
+    ui.set_demo_mode(true);
+    ui.set_show_conversation(true);
+    let demand = crate::presentation_avatars::bind(&ui);
+    let demo = fixtures::demo();
+    presentation::sidebar(&ui, demo.sidebar());
+    presentation::conversation(&ui, &demo.conversation(), true);
+    let accepted = Rc::new(Cell::new(true));
+    let commands = Rc::new(RefCell::new(Vec::new()));
+    crate::presentation_actions::bind(&ui, {
+        let accepted = accepted.clone();
+        let commands = commands.clone();
+        move |command| {
+            if !accepted.get() {
+                return false;
+            }
+            commands.borrow_mut().push(command);
+            true
+        }
+    });
+    ui.window().set_size(slint::LogicalSize::new(900., 760.));
+    ui.show().unwrap();
+    ui.invoke_layout_timeline();
+    let message = ui.get_timeline_rows().row_data(0).unwrap().message.id;
+    ui.invoke_message_action(message, 2, 0., 0.);
+    assert!(matches!(
+        commands.borrow_mut().pop(),
+        Some(Command::Destinations { .. })
+    ));
+    // Typing while destinations load must survive the delayed response.
+    ui.invoke_search_message_actions("Ångström".into());
+    let destinations: Arc<[_]> = (0..5000)
+        .map(|i| Destination {
+            id: 10000 + i,
+            title: if i == 0 {
+                "Ångström 東京 · Family".into()
+            } else {
+                format!("Synthetic contact {i:04}")
+            },
+        })
+        .collect();
+    crate::presentation_actions::publish(
+        &ui,
+        Some(&OperationReply {
+            request: ui.get_action_request(),
+            kind: 3,
+            saved: true,
+            ..Default::default()
+        }),
+        &destinations,
+    );
+    assert_eq!(ui.get_forward_query(), "Ångström");
+    assert_eq!(ui.get_action_destinations().row_count(), 1);
+    let recipient = ui.get_action_destinations().row_data(0).unwrap();
+    assert_eq!(recipient.initials, "ÅF");
+    ui.set_forward_avatar_first(0);
+    ui.set_forward_avatar_count(8);
+    ui.invoke_request_avatars();
+    // This contact is absent from the sidebar, but uses the same bounded cache.
+    assert!(demand.borrow().contains(&recipient.id.into()));
+    assert!(demand.borrow().len() <= crate::avatars::MAX_DEMAND);
+    let photos = fixtures::avatar_samples([recipient.id]);
+    crate::presentation_avatars::publish(&ui, &photos);
+    let revision = ui.get_avatar_revision();
+    let image = ui.invoke_cached_avatar(recipient.id, revision);
+    assert_eq!(image.size().width, 128);
+    crate::presentation_avatars::publish(&ui, &photos);
+    assert_eq!(
+        revision,
+        ui.get_avatar_revision(),
+        "unchanged pixels must not invalidate the chooser"
+    );
+    assert_eq!(image, ui.invoke_cached_avatar(recipient.id, revision));
+    let contact = ElementHandle::find_by_accessible_label(&ui, &recipient.title)
+        .next()
+        .unwrap();
+    click(&ui, center(&contact));
+    assert!(commands.borrow().is_empty(), "selection never sends");
+    ui.invoke_search_message_actions("nothing matches".into());
+    assert_eq!(ui.get_action_destinations().row_count(), 0);
+    let confirm = ElementHandle::find_by_accessible_label(&ui, "Forward")
+        .next()
+        .unwrap();
+    accepted.set(false);
+    click(&ui, center(&confirm));
+    assert!(!ui.get_action_pending());
+    assert!(!ui.get_action_error().is_empty());
+    assert!(commands.borrow().is_empty());
+    accepted.set(true);
+    // Search and queue rejection retain the intended recipient.
+    click(&ui, center(&confirm));
+    assert!(
+        matches!(commands.borrow_mut().pop(), Some(Command::Forward { message: id, destination: to, .. }) if id == message && to == recipient.id)
+    );
+    assert!(ui.get_action_pending());
+    click(&ui, center(&confirm));
+    assert!(
+        commands.borrow().is_empty(),
+        "pending clicks cannot forward twice"
+    );
+    crate::presentation_actions::publish(
+        &ui,
+        Some(&OperationReply {
+            request: ui.get_action_request(),
+            kind: 2,
+            saved: false,
+            error: "Synthetic forwarding failure".into(),
+            ..Default::default()
+        }),
+        &destinations,
+    );
+    ui.invoke_search_message_actions("".into());
+    assert_eq!(ui.get_action_destinations().row_count(), 5000);
+    let model = ui.get_action_destinations();
+    crate::presentation_avatars::publish(&ui, &Default::default());
+    assert_eq!(
+        model,
+        ui.get_action_destinations(),
+        "avatar changes must reuse the list"
+    );
+    assert_eq!(
+        ui.invoke_cached_avatar(recipient.id, ui.get_avatar_revision())
+            .size()
+            .width,
+        0
+    );
+    for dark in [false, true] {
+        ui.global::<Theme>().set_dark(dark);
+        for (width, height) in [(1200., 900.), (520., 480.), (360., 480.)] {
+            ui.window().set_size(slint::LogicalSize::new(width, height));
+            let dialog = ElementHandle::find_by_element_type_name(&ui, "MessageOperationDialog")
+                .next()
+                .unwrap();
+            let panel = child(&dialog, "MessageOperationDialog::panel");
+            let list = child(&dialog, "MessageOperationDialog::list-area");
+            let footer = child(&dialog, "MessageOperationDialog::footer");
+            let send = child(&dialog, "MessageOperationDialog::confirm");
+            for element in [&panel, &footer, &send] {
+                let p = element.absolute_position();
+                let s = element.size();
+                assert!(
+                    p.x >= 0.
+                        && p.y >= 0.
+                        && p.x + s.width <= width + 1.
+                        && p.y + s.height <= height + 1.
+                );
+            }
+            assert!(list.size().height >= 96.);
+            assert!(
+                list.absolute_position().y + list.size().height <= footer.absolute_position().y
+            );
+            assert!(ui.get_forward_avatar_count() < 16);
+        }
+    }
+    let remove = ElementHandle::find_by_accessible_label(&ui, "Remove forwarding recipient")
+        .next()
+        .unwrap();
+    click(&ui, center(&remove));
+    click(&ui, center(&confirm));
+    assert!(commands.borrow().is_empty());
+    ui.invoke_close_message_actions();
+    slint::platform::update_timers_and_animations();
+    assert!(!demand.borrow().contains(&recipient.id.into()));
+    // Resizing can move the original source outside the materialized transcript.
+    let visible_message = ui.get_timeline_rows().row_data(0).unwrap().message.id;
+    ui.invoke_message_action(visible_message, 2, 0., 0.);
+    assert_eq!(ui.get_message_dialog(), 2);
+    assert_eq!(ui.get_forward_query(), "");
+    assert_eq!(ui.get_action_all_destinations().row_count(), 0);
+    assert_eq!(ui.get_action_destinations().row_count(), 0);
+    ui.invoke_close_message_actions();
+    ui.hide().unwrap();
+}

@@ -89,18 +89,28 @@ Saved sessions resume automatically on a normal launch. Turn off **Settings →
 Account → Connect automatically on startup** to wait for **Connect** instead;
 this also leaves saved chats closed and avoids accessing the keyring at startup.
 The setting takes effect on the next launch and does not disconnect an active session.
-If the OS keyring is locked, connecting may show its unlock prompt. Cancelling
-or failing that prompt leaves Heya disconnected; unlock the keyring and click
-**Connect** to retry. Heya does not store the keyring's password.
-On first use, click
+If the OS key store is still starting, Heya waits and retries automatically
+with increasing delays (2 seconds up to 30 seconds), keeping the window responsive.
+Cancel connection or close Heya to stop waiting. A locked store may show its unlock
+prompt; dismissing that prompt stops automatic retries until you click **Connect**. Heya does not store the keyring's password.
+On first use, choose encrypted or unencrypted local storage, then click
 **Connect** to display a QR code and scan it from WhatsApp's **Linked devices →
-Link a device** screen. To open the real encrypted archive without connecting,
+Link a device** screen. To open the saved archive without connecting,
 run `cargo run --release --locked -- --offline`; **Connect** remains available.
 This explicit offline launch opens saved chats regardless of the automatic
-connection setting and still needs the key from the OS keyring.
+connection setting; encrypted storage still needs the key from the OS keyring.
 **Disconnect** closes the connection and retains the session. The SDK handles
 temporary network interruptions while the connection is active, and a banner
 shows the connection state without hiding cached conversations.
+
+**Settings → System → Encrypt local data** changes how the saved session, chats,
+drafts and cached media are stored. Encryption is recommended and selected by
+default on the first-run choice. Unencrypted storage never accesses the key
+store, but anyone who can read Heya’s data folder can read conversations and copy
+login credentials. Switching saves and restarts Heya, converts and verifies both
+databases, then atomically selects the replacement. Existing profiles keep their
+current encrypted storage until you change it. Downloads and backups are outside
+this setting. See [local storage choices and recovery](docs/local-storage.md).
 
 **Settings → Account → Unlink** asks for confirmation before requesting remote
 unlinking. It preserves saved chats. A revoked or successfully unlinked session
@@ -135,10 +145,14 @@ last-message preview while the saved draft remains in the composer.
 Scrolling near the top automatically expands saved history in pages of 100,
 keeping the viewed message in place. Short pages fill the available space
 automatically. Failed page loads retry when you approach the top again or reopen
-the chat. Once cached history is exhausted, a connected Heya requests up to 50
-older messages from the primary phone. The conversation menu also offers **Fetch
-older messages from phone**. Keep WhatsApp available on the phone; a sent request
-is not proof that the phone has answered. Replies become available only after
+the chat. Empty conversations show **No messages yet** and do not automatically
+request phone history. Once a nonempty chat's cached history is exhausted, a
+connected Heya requests up to 50 older messages from the primary phone.
+The conversation menu also offers **Fetch older messages from phone**, including
+for empty conversations. The empty label describes Heya's saved history, not
+whether messages have ever existed on another device. Keep WhatsApp available
+on the phone; a sent request is not proof that the phone has answered.
+Replies become available only after
 their matching captured chunk has been imported. A silent phone times out after
 45 seconds, with a 30-second retry cooldown; it is not marked exhausted. A phone
 that reports no more accessible history stops further requests. Navigation,
@@ -386,8 +400,10 @@ Hovering a message reveals React, Reply and Forward. Incoming controls sit to
 its right; outgoing controls sit to its left, and controls that cannot fit are
 hidden. React opens a searchable emoji picker; selecting your current reaction
 removes it. Reply prepares a quoted composer draft; sending remains explicit.
-Forward opens a searchable list of existing writable chats and requires choosing
-a recipient and pressing Forward. Received photos/audio retain their media
+Forward opens a contact chooser with photos (or initials), search, and the selected
+recipient in its footer. It lists existing writable chats and requires choosing a recipient
+and pressing Forward. Search keeps the selection; only visible contacts request
+avatars through the existing bounded cache. Received photos/audio retain their media
 references; business cards forward as their readable text. View-once, expired
 and deleted sources cannot be used. Reply drafts and pending operations survive
 restart in the encrypted archive. Reactions do not become separate chat bubbles.
@@ -496,6 +512,7 @@ link previews and business actions, including synthetic thumbnail textures.
 Use `HEYA_BENCHMARK_PHOTOS=1` for received-photo rows and worker-published pixels;
 `--demo --demo-chat 9` provides the small photo layout fixture.
 `--demo --demo-chat 10` shows received audio; demo playback uses a silent output.
+`--demo --demo-chat 16` shows an empty conversation without accessing an account.
 `HEYA_BENCHMARK_AUDIO=1` measures 10,000 audio rows with silent GStreamer playback.
 `--demo --demo-chat 11` shows synthetic document cards, including a file without a
 thumbnail. `HEYA_BENCHMARK_DOCUMENTS=1 scripts/ui-offscreen.sh --ui-benchmark`
