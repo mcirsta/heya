@@ -2,10 +2,21 @@
 
 The direct-chat header has a phone button. Incoming one-to-one audio offers show
 the caller, cached photo, Answer and Decline. The active panel shows connection
-state, elapsed time, mute and hangup. No microphone/device opens while idle or
-merely ringing. A missing microphone is reported through the existing dialog;
+state, elapsed time, mute and hangup. No microphone opens while idle or merely
+ringing. A missing microphone is reported through the existing dialog;
 the incoming offer remains answerable until it expires. Group/video calls, call
-waiting, ringtones and OS call integration are separate work.
+waiting and OS call integration are separate work.
+
+Outgoing calls play a gentle repeating ringback after the SDK sends the offer;
+incoming offers play a distinct chime. Both are original synthesized sounds,
+with no downloaded assets or additional runtime dependency. They use the selected
+audio output and volume through the same finite helper as received audio.
+Answering stops and reaps the ringtone before microphone setup. Ringback stops
+on acceptance/connection; ending, declining, expiry, disconnect and close stop
+and reap the relevant helper too. No sound worker remains at idle. Automated
+checks use a silent output rather than the owner's speakers or microphone.
+Queued answers/failures take priority over starting ringback, and a failed
+answer does not automatically restart the incoming ringtone.
 
 Outgoing microphone/permission/device checks complete before the call panel opens.
 Failed checks show an audio error popup without a preparing/ended call dialog.
@@ -114,6 +125,15 @@ establish real microphone/speaker quality, acoustic echo cancellation, macOS
 device/permission interoperability, or successful calls to an official client.
 Those require deliberate manual calls with suitable hardware. Heya never places
 an account call as part of its automated tests.
+
+Call diagnostics record fixed setup stages (offer/answer sent, peer accepted,
+relay ready) and numeric media counters when the call closes. They contain no
+phone numbers, call IDs, packet contents or raw SDK errors. Calling is shown
+while signaling starts; it does not establish that a recipient is ringing.
+Queued SDK failures take precedence
+over the sticky end notification, so failed relay setup is reported as an error
+rather than an ordinary hangup. Synthetic tests cover both notifications becoming
+ready together and distinguish transport failure from a normal termination.
 
 Audio failure regressions also stall a synthetic helper before device opening
 and midway through a PCM frame. The playback fixtures stall startup or an active

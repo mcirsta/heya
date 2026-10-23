@@ -192,11 +192,13 @@ for supported inputs and validation limits.
 
 The phone button in a direct conversation starts a voice call. Incoming voice
 calls have Answer/Decline controls; an active call has mute and hangup controls.
+Outgoing ringback and an incoming-call chime use the same finite playback helper
+and selected output as audio messages, stopping when the call changes state.
 Linux reuses GStreamer device selection and volume settings; macOS uses native
 AVAudioEngine/Core Audio. The pinned SDK supplies signaling, encryption, codecs
-and media transport through its public calling API. Devices open only when
-placing or answering a call and close when it ends or Heya closes. Group/video
-calling, call waiting and ringtones are outside this first slice. See
+and media transport through its public calling API. The microphone opens only when
+placing or answering a call; devices close when it ends or Heya closes. Group/video
+calling and call waiting are outside this first slice. See
 [audio calling](docs/audio-calling.md) for tests and hardware/account validation limits.
 
 Contact, group and account avatars load on demand for visible chats and the open

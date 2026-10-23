@@ -8,6 +8,7 @@ mod audio_player;
 mod audio_process;
 mod avatars;
 mod call_audio;
+mod call_tones;
 mod calling;
 #[cfg(test)]
 mod calling_tests;

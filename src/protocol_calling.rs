@@ -4,13 +4,15 @@ use crate::{
     call_audio::Ports,
     calling::{Error, Event, Network, Offer, Session, Target},
 };
+use futures_util::{Stream, StreamExt};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, watch};
 use whatsapp_rust::{
-    Client,
+    CallError, Client,
     prelude::Event as SdkEvent,
     voip::{CallEvent, CallEvents, CallHandle},
     wacore::types::call::{CallAction, IncomingCall},
+    wacore::voip_control::MediaCloseReason,
     wacore_binary::Jid,
 };
 
@@ -221,6 +223,7 @@ impl Network for Calling {
                 .clone()
                 .filter(|o| o.action.call_id() == id)
         });
+        eprintln!("Heya call signaling: starting");
         let handle = if let Some(id) = offer {
             let incoming = incoming.ok_or(Error::Unavailable)?;
             if incoming.action.call_id() != id {
@@ -238,13 +241,20 @@ impl Network for Calling {
         };
         let handle = match handle {
             Ok(h) => h,
-            Err(_) => {
+            Err(error) => {
+                // SDK error strings may contain account/network data. Log only
+                // the fixed category, never the raw error or call identifiers.
+                eprintln!("Heya call signaling failed: {}", setup_failure(&error));
                 if let Some(id) = offer {
                     self.clear_offer(id);
                 }
                 return Err(Error::Network);
             }
         };
+        eprintln!(
+            "Heya call signaling: {} sent",
+            if offer.is_some() { "answer" } else { "offer" }
+        );
         let Some(events) = handle.take_events() else {
             let _ = handle.terminate().await;
             return Err(Error::Network);
@@ -276,6 +286,23 @@ impl Network for Calling {
         self.clear_offer(id);
     }
 }
+fn setup_failure(error: &CallError) -> &'static str {
+    match error {
+        CallError::NoDevices => "no recipient devices",
+        CallError::MissingDeviceIdentity => "missing device identity",
+        CallError::Setup(_) => "device or session setup",
+        CallError::Send(_) => "signaling send",
+        CallError::Connect(_) => "relay connection",
+        CallError::Decrypt(_) => "offer decryption",
+        CallError::Media(_) | CallError::MissingAudio | CallError::AudioFormatNotOffered(_) => {
+            "media configuration"
+        }
+        CallError::CallEndedDuringSetup => "ended during setup",
+        CallError::ResponseTimeout => "service timeout",
+        CallError::Response(_) => "service response",
+        _ => "unsupported call setup",
+    }
+}
 struct Active {
     handle: CallHandle,
     events: CallEvents,
@@ -286,8 +313,48 @@ struct Active {
     relay: bool,
     reported: bool,
 }
+// Sticky completion and a queued failure can become ready together. Preserve the
+// SDK's terminal event before falling back to its completion notification.
+async fn receive_media(
+    events: &mut (impl Stream<Item = CallEvent> + Unpin),
+    ended: impl std::future::Future<Output = ()>,
+) -> Option<CallEvent> {
+    tokio::select! {
+        biased;
+        event = events.next() => event,
+        _ = ended => None,
+    }
+}
+fn media_failure(event: &CallEvent) -> Option<&'static str> {
+    match event {
+        CallEvent::RelayAllocateFailed(_) => Some("relay rejected allocation"),
+        CallEvent::RelayAllocateTimedOut => Some("relay allocation timeout"),
+        CallEvent::RelayReconnectTimedOut => Some("relay reconnect timeout"),
+        CallEvent::MediaSetupFailed(_) | CallEvent::Closed(MediaCloseReason::SetupFailed(_)) => {
+            Some("media setup")
+        }
+        CallEvent::Closed(MediaCloseReason::SendFailed(_)) => Some("media send"),
+        CallEvent::Closed(MediaCloseReason::RelayDisconnected) => Some("relay disconnected"),
+        CallEvent::AudioFormatMismatch { .. } | CallEvent::AudioCodecSourceIsFixed { .. } => {
+            Some("audio format")
+        }
+        _ => None,
+    }
+}
 impl Drop for Active {
     fn drop(&mut self) {
+        let stats = self.handle.media_stats();
+        eprintln!(
+            "Heya call media: received={} decoded={} opus_decoded={} auth_failed={} missing_decoder={} sink_dropped={}",
+            stats.rtp_received,
+            stats.audio_frames_decoded,
+            stats.foreign_frames_decoded,
+            stats
+                .srtp_unprotect_failed
+                .saturating_add(stats.sframe_decrypt_failed),
+            stats.audio_frames_without_decoder,
+            stats.audio_sink_dropped
+        );
         let id = self.handle.call_id();
         let mut pending = self.pending.lock().unwrap();
         if pending.active.as_deref() == Some(id) {
@@ -310,6 +377,7 @@ impl Session for Active {
         loop {
             if self.accepted && self.relay && !self.reported {
                 self.reported = true;
+                eprintln!("Heya call signaling: connected");
                 return Event::Connected;
             }
             tokio::select! {
@@ -318,15 +386,19 @@ impl Session for Active {
                     Some(signal) if signal.id==self.handle.call_id()=>{
                         if signal.declined{return Event::Failed(Error::Declined);}
                         if signal.ended{return Event::Ended;}
-                        if signal.accepted&&!self.accepted {self.accepted=true;if !self.relay{return Event::Accepted;}}
+                        if signal.accepted&&!self.accepted {eprintln!("Heya call signaling: accepted");self.accepted=true;if !self.relay{return Event::Accepted;}}
                     },
                     Some(_)=>{},None=>return Event::Failed(Error::Offline),
                 },
-                _=self.handle.wait_ended()=>return Event::Ended,
-                event=self.events.recv()=>match event {
-                    Ok(CallEvent::RelayAllocated)=>self.relay=true,
-                    Ok(CallEvent::Closed(_))|Err(_)=>return Event::Ended,
-                    Ok(CallEvent::RelayAllocateFailed(_)|CallEvent::RelayAllocateTimedOut|CallEvent::RelayReconnectTimedOut|CallEvent::MediaSetupFailed(_)|CallEvent::AudioFormatMismatch{..}|CallEvent::AudioCodecSourceIsFixed{..})=>return Event::Failed(Error::Network),
+                event=receive_media(&mut self.events, self.handle.wait_ended())=>match event {
+                    Some(event) if media_failure(&event).is_some()=>{
+                        eprintln!("Heya call media failed: {}", media_failure(&event).unwrap());
+                        return Event::Failed(Error::Network);
+                    },
+                    Some(CallEvent::RelayAllocated)=>{self.relay=true;eprintln!("Heya call signaling: relay ready");},
+                    Some(CallEvent::Closed(_))|None=>return Event::Ended,
+                    Some(CallEvent::AudioSilent{dominant_reason,..}) if self.reported=>eprintln!("Heya call media: silent ({dominant_reason:?})"),
+                    Some(CallEvent::AudioReceptionStalled{..}) if self.reported=>eprintln!("Heya call media: reception stalled"),
                     _=>{},
                 }
             }
@@ -352,6 +424,55 @@ mod tests {
         store::{SqliteDatabase, SqliteDatabaseConfig},
         wacore::types::call::{CallEndedElsewhere, ElsewhereOutcome},
     };
+
+    #[tokio::test]
+    async fn queued_media_failure_precedes_sticky_completion() {
+        let mut events = futures_util::stream::iter([CallEvent::MediaSetupFailed(
+            "Synthetic relay refusal".into(),
+        )]);
+        assert!(
+            matches!(
+                receive_media(&mut events, std::future::ready(())).await,
+                Some(CallEvent::MediaSetupFailed(_))
+            ),
+            "completion must not hide the SDK's already queued setup failure"
+        );
+        assert!(
+            receive_media(&mut events, std::future::ready(()))
+                .await
+                .is_none()
+        );
+        let mut empty = futures_util::stream::pending();
+        assert!(
+            receive_media(&mut empty, std::future::ready(()))
+                .await
+                .is_none(),
+            "completion must still wake a call with no diagnostic events"
+        );
+    }
+
+    #[test]
+    fn failure_categories_preserve_transport_errors_without_logging_sdk_text() {
+        assert_eq!(
+            setup_failure(&CallError::Setup("Private SDK details".into())),
+            "device or session setup"
+        );
+        for event in [
+            CallEvent::MediaSetupFailed("Private SDK details".into()),
+            CallEvent::Closed(MediaCloseReason::SetupFailed("Private SDK details".into())),
+            CallEvent::Closed(MediaCloseReason::SendFailed("Private SDK details".into())),
+            CallEvent::Closed(MediaCloseReason::RelayDisconnected),
+            CallEvent::RelayAllocateFailed(500),
+            CallEvent::RelayAllocateTimedOut,
+            CallEvent::RelayReconnectTimedOut,
+        ] {
+            let category =
+                media_failure(&event).expect("transport failure is not an ordinary hangup");
+            assert!(!category.contains("Private"));
+        }
+        assert!(media_failure(&CallEvent::Closed(MediaCloseReason::Local)).is_none());
+        assert!(media_failure(&CallEvent::RelayAllocated).is_none());
+    }
 
     async fn fixture() -> (tempfile::TempDir, Calling) {
         let (temp, archive) = crate::archive::tests::fixture();

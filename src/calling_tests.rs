@@ -99,6 +99,54 @@ async fn state(rx: &mut watch::Receiver<Status>, accept: impl Fn(&Status) -> boo
         .unwrap()
         .clone()
 }
+
+#[tokio::test]
+async fn a_queued_answer_or_failure_prevents_a_late_ringback() {
+    struct Scripted(Option<Event>);
+    #[async_trait::async_trait]
+    impl Session for Scripted {
+        async fn event(&mut self) -> Event {
+            match self.0.take() {
+                Some(event) => event,
+                None => std::future::pending().await,
+            }
+        }
+        async fn set_muted(&self, _: bool) {}
+        fn muted(&self) -> bool {
+            false
+        }
+        async fn end(&self) {}
+    }
+    for event in [
+        Event::Accepted,
+        Event::Connected,
+        Event::Ended,
+        Event::Failed(Error::Network),
+    ] {
+        let mut call = Scripted(Some(event));
+        assert!(
+            crate::calling::event_or_ring(&mut call, true)
+                .await
+                .is_some(),
+            "a queued backend result must be consumed before any sound starts"
+        );
+    }
+    let mut call = Scripted(None);
+    assert!(
+        crate::calling::event_or_ring(&mut call, true)
+            .await
+            .is_none()
+    );
+    assert!(
+        tokio::time::timeout(
+            Duration::from_millis(10),
+            crate::calling::event_or_ring(&mut call, false)
+        )
+        .await
+        .is_err(),
+        "after acceptance there is no ready branch to restart ringback or spin at idle"
+    );
+}
 pub(crate) struct Harness {
     _temp: tempfile::TempDir,
     pub(crate) archive: crate::archive::Archive,
@@ -449,6 +497,27 @@ async fn expired_ringing_and_remote_cancellation_never_open_audio() {
     state(&mut h.states, |s| s.phase == 6 && s.error.is_none()).await;
     assert_eq!(h.network.opened.load(Ordering::Acquire), 0);
     h.finish().await;
+}
+
+#[tokio::test]
+async fn disconnect_and_close_stop_an_incoming_ringtone_without_opening_the_microphone() {
+    for disconnect in [true, false] {
+        let mut h = Harness::new(Input::Synthetic).await;
+        h.network.incoming.send_replace(Some(Offer {
+            id: "synthetic-ringing-close".into(),
+            target: h.archive.call_target(h.chat).await.unwrap(),
+            expires: tokio::time::Instant::now() + Duration::from_secs(90),
+        }));
+        state(&mut h.states, |s| s.phase == 1).await;
+        // Give the real finite silent player time to begin before shutting down.
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert_eq!(h.network.opened.load(Ordering::Acquire), 0);
+        if disconnect {
+            h.sources.send_replace(None);
+            state(&mut h.states, |s| s.phase == 6 && !s.available).await;
+        }
+        h.finish().await;
+    }
 }
 #[tokio::test]
 async fn stale_incoming_controls_cannot_answer_or_decline_a_new_offer() {

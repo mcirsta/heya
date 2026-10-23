@@ -2,6 +2,7 @@
 use crate::{
     archive::Archive,
     call_audio::{self, Ports},
+    call_tones::{self, Tone},
     preferences::Preferences,
     voice_recorder::{Error as AudioError, Input},
 };
@@ -50,6 +51,7 @@ impl Error {
         }
     }
 }
+#[derive(Debug, PartialEq, Eq)]
 pub enum Event {
     Accepted,
     Connected,
@@ -75,6 +77,16 @@ pub trait Network: Send + Sync {
     async fn decline(&self, id: &str);
 }
 pub type Sources = Option<Arc<dyn Network>>;
+
+// A fast answer/failure may already be queued when offer sending completes.
+// Consume it before starting ringback; when no sound is pending, only wait.
+pub(crate) async fn event_or_ring(call: &mut dyn Session, ring: bool) -> Option<Event> {
+    tokio::select! {
+        biased;
+        event = call.event() => Some(event),
+        _ = std::future::ready(()), if ring => None,
+    }
+}
 pub enum Command {
     Start(i32),
     Answer(String),
@@ -142,6 +154,7 @@ impl Controller {
     async fn run(mut self) {
         let mut provider: Sources = None;
         let mut incoming = watch::channel(None).1;
+        let mut ringtone = None;
         loop {
             let latest = self.sources.borrow_and_update().clone();
             let same = match (&provider, &latest) {
@@ -159,12 +172,27 @@ impl Controller {
                 self.status.available = provider.is_some()
                     && (crate::audio::SUPPORTED || !matches!(self.input, Input::Microphone));
                 if provider.is_none() && self.status.phase == 1 {
+                    call_tones::stop(&mut ringtone).await;
                     self.status.phase = 6;
                     self.status.error = Some(Error::Offline);
                 }
                 publish(&self.updates, &self.status);
             }
             let incoming_deadline = incoming.borrow().as_ref().map(|o| o.expires);
+            if self.status.phase == 1
+                && self.status.error.is_none()
+                && incoming_deadline.is_some_and(|d| d > tokio::time::Instant::now())
+            {
+                if ringtone.is_none() {
+                    ringtone = call_tones::start(
+                        Tone::Incoming,
+                        self.settings.borrow().audio.clone(),
+                        self.input,
+                    );
+                }
+            } else {
+                call_tones::stop(&mut ringtone).await;
+            }
             let command = tokio::select! {
                 biased;
                 command=self.commands.recv()=>match command {Some(c)=>Some(c),None=>break},
@@ -174,13 +202,15 @@ impl Controller {
                 },
                 changed=incoming.changed(),if provider.is_some()=>{
                     if changed.is_err(){provider=None;continue;}
-                    if let Some(offer)=incoming.borrow_and_update().clone() {
+                    let offer=incoming.borrow_and_update().clone();
+                    if let Some(offer)=offer {
                     self.status=Status{chat:offer.target.chat,offer:offer.id,available:self.status.available,phase:1,title:offer.target.title,error:(!self.status.available).then_some(Error::Audio(AudioError::Disabled)),..Default::default()};
-                    } else if self.status.phase==1 {self.status.phase=6;self.status.error=None;}
+                    } else if self.status.phase==1 {call_tones::stop(&mut ringtone).await;self.status.phase=6;self.status.error=None;}
                     publish(&self.updates,&self.status);
                     None
                 },
                 _=async {match incoming_deadline{Some(d)=>tokio::time::sleep_until(d).await,None=>std::future::pending().await}},if self.status.phase==1=>{
+                    call_tones::stop(&mut ringtone).await;
                     let offer=incoming.borrow().clone();
                     if let (Some(provider),Some(offer))=(&provider,offer){let _=tokio::time::timeout(Duration::from_secs(3),provider.decline(&offer.id)).await;}
                     self.status.phase=6;self.status.error=Some(Error::Timeout);publish(&self.updates,&self.status);None
@@ -197,6 +227,7 @@ impl Controller {
                     };
                     match (provider.as_ref(), target) {
                         (Some(provider), Ok(target)) => {
+                            call_tones::stop(&mut ringtone).await;
                             if !self.one_call(provider.clone(), target, None).await {
                                 break;
                             }
@@ -213,12 +244,14 @@ impl Controller {
                 }
                 Command::Answer(id) => {
                     let offer = incoming.borrow().clone().filter(|o| o.id == id);
-                    if let (Some(provider), Some(offer)) = (&provider, offer)
-                        && !self
+                    if let (Some(provider), Some(offer)) = (&provider, offer) {
+                        call_tones::stop(&mut ringtone).await;
+                        if !self
                             .one_call(provider.clone(), offer.target, Some(offer.id))
                             .await
-                    {
-                        break;
+                        {
+                            break;
+                        }
                     }
                 }
                 Command::Decline(id) => {
@@ -226,6 +259,7 @@ impl Controller {
                     if offer.is_none() {
                         continue;
                     }
+                    call_tones::stop(&mut ringtone).await;
                     if let (Some(provider), Some(offer)) = (&provider, offer) {
                         let _ = tokio::time::timeout(
                             Duration::from_secs(3),
@@ -250,6 +284,7 @@ impl Controller {
                 Command::Mute => {}
             }
         }
+        call_tones::stop(&mut ringtone).await;
     }
     async fn one_call(
         &mut self,
@@ -353,6 +388,10 @@ impl Controller {
         status.muted = call.muted();
         status.phase = if offer.is_some() { 4 } else { 3 };
         publish(updates, status);
+        // Only ring back after the SDK sent the offer. Sound playback opens the
+        // selected speaker in its own finite helper; it never opens a microphone.
+        let mut ringback = None;
+        let mut start_ringback = offer.is_none();
         let mut timer = tokio::time::interval(Duration::from_secs(1));
         timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let ringing = tokio::time::sleep(Duration::from_secs(60));
@@ -373,20 +412,21 @@ impl Controller {
                 },
                 _=sources.changed()=>{status.error=Some(Error::Offline);break;},
                 result=audio.finished()=>{if let Err(error)=result {status.error=Some(Error::Audio(error));}break;},
-                event=call.event()=>match event {
-                    Event::Accepted=>{status.phase=4;publish(updates,status);},
-                    Event::Connected=>{connected.get_or_insert_with(Instant::now);status.phase=5;publish(updates,status);},
-                    Event::Ended=>break,
-                    Event::Failed(error)=>{status.error=Some(error);break;},
-                },
                 _=&mut ringing,if connected.is_none()=>{status.error=Some(Error::Timeout);break;},
+                event=event_or_ring(call.as_mut(),start_ringback)=>match event {
+                    None=>{start_ringback=false;ringback=call_tones::start(Tone::Outgoing,settings.borrow().audio.clone(),input);},
+                    Some(Event::Accepted)=>{start_ringback=false;call_tones::stop(&mut ringback).await;status.phase=4;publish(updates,status);},
+                    Some(Event::Connected)=>{start_ringback=false;call_tones::stop(&mut ringback).await;connected.get_or_insert_with(Instant::now);status.phase=5;publish(updates,status);},
+                    Some(Event::Ended)=>break,
+                    Some(Event::Failed(error))=>{status.error=Some(error);break;},
+                },
                 _=timer.tick(),if connected.is_some()=>{
                     status.seconds=connected.map_or(0,|i|i.elapsed().as_secs());publish(updates,status);
                 },
             }
         }
         // End transport and device work together; no PCM/call task survives dismissal.
-        tokio::join!(audio.stop(), async {
+        tokio::join!(audio.stop(), call_tones::stop(&mut ringback), async {
             let _ = tokio::time::timeout(Duration::from_secs(3), call.end()).await;
         });
         status.can_mute = false;
