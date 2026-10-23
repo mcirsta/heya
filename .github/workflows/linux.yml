@@ -42,7 +42,7 @@ jobs:
             libxinerama-dev libgl1-mesa-dev libssl-dev libdbus-1-dev dbus \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
             gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
-            gstreamer1.0-plugins-bad gstreamer1.0-libav \
+            gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav \
             fonts-inter fonts-noto-color-emoji poppler-utils bubblewrap util-linux
       - name: Enable the PDF sandbox on the CI runner
         run: |
@@ -78,6 +78,10 @@ jobs:
         env:
           HEYA_TEST_CALL_GSTREAMER: '1'
         run: cargo test --locked --bin heya -- --ignored --exact call_audio::tests::native_gstreamer_duplex_audio --nocapture
+      - name: Check camera codecs without devices or an account
+        env:
+          HEYA_TEST_CALL_VIDEO_NATIVE: '1'
+        run: cargo test --locked --bin heya -- --ignored --exact call_video::tests::native_camera_codec_loopback --nocapture
       - name: Lint Linux without audio
         run: cargo clippy --locked --all-targets --no-default-features -- -D warnings
       - name: Test Linux without audio

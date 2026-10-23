@@ -4,8 +4,11 @@ The direct-chat header has a phone button. Incoming one-to-one audio offers show
 the caller, cached photo, Answer and Decline. The active panel shows connection
 state, elapsed time, mute and hangup. No microphone opens while idle or merely
 ringing. A missing microphone is reported through the existing dialog;
-the incoming offer remains answerable until it expires. Group/video calls, call
+the incoming offer remains answerable until it expires. Group calls, call
 waiting and OS call integration are separate work.
+
+Two-way direct video calls share this controller and audio lifecycle; see
+[video calling](video-calling.md) for camera ownership and codec validation.
 
 Outgoing calls play a gentle repeating ringback after the SDK sends the offer;
 incoming offers play a distinct chime. Both are original synthesized sounds,

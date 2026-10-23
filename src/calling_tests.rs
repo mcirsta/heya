@@ -29,6 +29,14 @@ struct Active {
     muted: AtomicBool,
     remote: watch::Receiver<bool>,
     _ports: Ports,
+    video: Option<tokio::task::JoinHandle<()>>,
+}
+impl Drop for Active {
+    fn drop(&mut self) {
+        if let Some(video) = &self.video {
+            video.abort();
+        }
+    }
 }
 #[async_trait::async_trait]
 impl Session for Active {
@@ -46,8 +54,15 @@ impl Session for Active {
     fn muted(&self) -> bool {
         self.muted.load(Ordering::Acquire)
     }
-    async fn end(&self) {
+    async fn end(&mut self) {
+        if let Some(video) = self.video.take() {
+            video.abort();
+            let _ = video.await;
+        }
         self.ended.fetch_add(1, Ordering::AcqRel);
+    }
+    async fn camera(&mut self, _: bool) -> Result<(), Error> {
+        Ok(())
     }
 }
 #[async_trait::async_trait]
@@ -60,6 +75,7 @@ impl Network for Fake {
         _: &Target,
         _: Option<&str>,
         ports: Ports,
+        video: Option<crate::call_video::Ports>,
     ) -> Result<Box<dyn Session>, Error> {
         struct Preparing(Arc<AtomicUsize>);
         impl Drop for Preparing {
@@ -79,12 +95,22 @@ impl Network for Fake {
         if self.delay.load(Ordering::Acquire) {
             self.resume.notified().await;
         }
+        let video = video.map(|ports| {
+            tokio::spawn(async move {
+                while let Ok(frame) = ports.capture.recv().await {
+                    if ports.playout.send(frame).await.is_err() {
+                        break;
+                    }
+                }
+            })
+        });
         Ok(Box::new(Active {
             connected: false,
             ended: self.ended.clone(),
             muted: AtomicBool::new(false),
             remote: self.ended_remotely.clone(),
             _ports: ports,
+            video,
         }))
     }
     async fn decline(&self, _: &str) {
@@ -115,7 +141,7 @@ async fn a_queued_answer_or_failure_prevents_a_late_ringback() {
         fn muted(&self) -> bool {
             false
         }
-        async fn end(&self) {}
+        async fn end(&mut self) {}
     }
     for event in [
         Event::Accepted,
@@ -157,6 +183,7 @@ pub(crate) struct Harness {
     sources: watch::Sender<Sources>,
     pub(crate) commands: mpsc::Sender<Command>,
     pub(crate) states: watch::Receiver<Status>,
+    pub(crate) frames: watch::Receiver<crate::call_video::Frames>,
     remote: watch::Sender<bool>,
     pub(crate) stop: watch::Sender<bool>,
     task: tokio::task::JoinHandle<()>,
@@ -195,8 +222,18 @@ impl Harness {
         let (preferences, prefs) = watch::channel(Preferences::default());
         let (archive_source, archives) = watch::channel(Some(archive.clone()));
         let (stop, stopped) = watch::channel(false);
+        let (video, frames) = watch::channel(crate::call_video::Frames::default());
         let task = tokio::spawn(crate::calling::run(
-            archives, source_rx, requests, updates, prefs, input, stopped,
+            archives,
+            source_rx,
+            requests,
+            crate::calling::Updates {
+                status: updates,
+                video,
+            },
+            prefs,
+            input,
+            stopped,
         ));
         Self {
             _temp: temp,
@@ -208,6 +245,7 @@ impl Harness {
             sources,
             commands,
             states,
+            frames,
             remote,
             stop,
             task,
@@ -248,6 +286,7 @@ async fn incoming_audio_can_decline_or_answer_then_end_remotely() {
     let mut h = Harness::new(Input::Synthetic).await;
     let target = h.archive.call_target(h.chat).await.unwrap();
     h.network.incoming.send_replace(Some(Offer {
+        video: false,
         id: "synthetic-incoming-1".into(),
         expires: tokio::time::Instant::now() + Duration::from_secs(90),
         target: target.clone(),
@@ -265,6 +304,7 @@ async fn incoming_audio_can_decline_or_answer_then_end_remotely() {
     state(&mut h.states, |s| s.phase == 6).await;
     assert_eq!(h.network.declined.load(Ordering::Acquire), 1);
     h.network.incoming.send_replace(Some(Offer {
+        video: false,
         id: "synthetic-incoming-2".into(),
         expires: tokio::time::Instant::now() + Duration::from_secs(90),
         target,
@@ -292,6 +332,7 @@ async fn missing_microphone_never_signals_a_call_and_an_offer_remains_answerable
     assert_eq!(h.network.opened.load(Ordering::Acquire), 0);
     let target = h.archive.call_target(h.chat).await.unwrap();
     h.network.incoming.send_replace(Some(Offer {
+        video: false,
         id: "synthetic-no-mic".into(),
         expires: tokio::time::Instant::now() + Duration::from_secs(90),
         target,
@@ -477,6 +518,7 @@ async fn expired_ringing_and_remote_cancellation_never_open_audio() {
     let mut h = Harness::new(Input::Synthetic).await;
     let target = h.archive.call_target(h.chat).await.unwrap();
     h.network.incoming.send_replace(Some(Offer {
+        video: false,
         id: "expired-offer".into(),
         target: target.clone(),
         expires: tokio::time::Instant::now() - Duration::from_secs(1),
@@ -488,6 +530,7 @@ async fn expired_ringing_and_remote_cancellation_never_open_audio() {
     assert_eq!(h.network.opened.load(Ordering::Acquire), 0);
     assert_eq!(h.network.declined.load(Ordering::Acquire), 1);
     h.network.incoming.send_replace(Some(Offer {
+        video: false,
         id: "cancelled-offer".into(),
         target,
         expires: tokio::time::Instant::now() + Duration::from_secs(90),
@@ -504,6 +547,7 @@ async fn disconnect_and_close_stop_an_incoming_ringtone_without_opening_the_micr
     for disconnect in [true, false] {
         let mut h = Harness::new(Input::Synthetic).await;
         h.network.incoming.send_replace(Some(Offer {
+            video: false,
             id: "synthetic-ringing-close".into(),
             target: h.archive.call_target(h.chat).await.unwrap(),
             expires: tokio::time::Instant::now() + Duration::from_secs(90),
@@ -524,6 +568,7 @@ async fn stale_incoming_controls_cannot_answer_or_decline_a_new_offer() {
     let mut h = Harness::new(Input::Synthetic).await;
     let target = h.archive.call_target(h.chat).await.unwrap();
     h.network.incoming.send_replace(Some(Offer {
+        video: false,
         id: "new-offer".into(),
         target,
         expires: tokio::time::Instant::now() + Duration::from_secs(90),
@@ -551,4 +596,81 @@ async fn stale_incoming_controls_cannot_answer_or_decline_a_new_offer() {
     h.stop.send_replace(true);
     state(&mut h.states, |s| s.phase == 6).await;
     h.finish().await;
+}
+
+#[tokio::test]
+async fn direct_video_calls_receive_send_pause_camera_and_close_in_one_flow() {
+    for incoming in [false, true] {
+        let mut h = Harness::new(Input::Synthetic).await;
+        if incoming {
+            h.network.incoming.send_replace(Some(Offer {
+                id: "synthetic-video-call".into(),
+                target: h.archive.call_target(h.chat).await.unwrap(),
+                expires: tokio::time::Instant::now() + Duration::from_secs(90),
+                video: true,
+            }));
+            state(&mut h.states, |s| s.phase == 1 && s.video).await;
+            assert!(
+                !h.frames.borrow().camera_on,
+                "ringing must not open a camera"
+            );
+            assert_eq!(h.network.opened.load(Ordering::Acquire), 0);
+            h.commands
+                .send(Command::Answer("synthetic-video-call".into()))
+                .await
+                .unwrap();
+        } else {
+            h.commands.send(Command::StartVideo(h.chat)).await.unwrap();
+        }
+        state(&mut h.states, |s| s.phase == 5 && s.video).await;
+        tokio::time::timeout(
+            Duration::from_secs(3),
+            h.frames
+                .wait_for(|f| f.local.is_some() && f.remote.is_some() && f.camera_on),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        h.commands.send(Command::Camera).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(3), h.frames.wait_for(|f| !f.camera_on))
+            .await
+            .unwrap()
+            .unwrap();
+        state(&mut h.states, |s| s.phase == 5 && !s.camera_busy).await;
+        assert!(h.frames.borrow().local.is_none());
+        h.commands.send(Command::Camera).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(3), h.frames.wait_for(|f| f.camera_on))
+            .await
+            .unwrap()
+            .unwrap();
+        h.stop.send_replace(true);
+        state(&mut h.states, |s| s.phase == 6).await;
+        assert!(h.frames.borrow().local.is_none() && h.frames.borrow().remote.is_none());
+        assert_eq!(h.network.opened.load(Ordering::Acquire), 1);
+        assert_eq!(h.network.ended.load(Ordering::Acquire), 1);
+        h.finish().await;
+    }
+}
+
+#[tokio::test]
+async fn closing_during_video_setup_or_an_active_video_call_releases_both_helpers() {
+    for input in [Input::Synthetic, Input::Stalled] {
+        let mut h = Harness::new(input).await;
+        let frames = h.frames.clone();
+        let network = h.network.clone();
+        h.commands.send(Command::StartVideo(h.chat)).await.unwrap();
+        let phase = if matches!(input, Input::Synthetic) {
+            5
+        } else {
+            2
+        };
+        state(&mut h.states, |s| s.phase == phase && s.video).await;
+        h.finish().await;
+        assert!(!frames.borrow().camera_on);
+        assert!(frames.borrow().local.is_none() && frames.borrow().remote.is_none());
+        assert_eq!(
+            network.opened.load(Ordering::Acquire),
+            usize::from(matches!(input, Input::Synthetic))
+        );
+    }
 }

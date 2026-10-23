@@ -197,9 +197,17 @@ and selected output as audio messages, stopping when the call changes state.
 Linux reuses GStreamer device selection and volume settings; macOS uses native
 AVAudioEngine/Core Audio. The pinned SDK supplies signaling, encryption, codecs
 and media transport through its public calling API. The microphone opens only when
-placing or answering a call; devices close when it ends or Heya closes. Group/video
-calling and call waiting are outside this first slice. See
+placing or answering a call; devices close when it ends or Heya closes. Group
+calling and call waiting remain separate work. See
 [audio calling](docs/audio-calling.md) for tests and hardware/account validation limits.
+
+The camera button starts a two-way video call. Incoming video calls use the same
+Answer/Decline flow. Camera and microphone checks finish before outgoing signaling;
+missing devices and permissions show an error. The dark video panel includes a
+self preview, camera toggle, mute and hangup. Turning the camera off releases capture
+while incoming video and audio continue. Linux uses GStreamer H.264 (x264 or
+OpenH264); macOS uses AVFoundation and VideoToolbox. See
+[video calling](docs/video-calling.md) for bounds and validation limits.
 
 Contact, group and account avatars load on demand for visible chats and the open
 conversation. Small thumbnails stay in the encrypted archive for offline use;

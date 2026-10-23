@@ -432,9 +432,23 @@ pub fn attach(
                 can_mute: matches!(phase, 3..=5),
                 title: "Alex Morgan".into(),
                 seconds: 125,
+                video: std::env::var_os("HEYA_TEST_CALL_VIDEO").is_some(),
                 ..Default::default()
             },
         );
+        if std::env::var_os("HEYA_TEST_CALL_VIDEO").is_some() {
+            crate::presentation_calling::publish_video(
+                ui,
+                &crate::call_video::Frames {
+                    local: Some(std::sync::Arc::new(fixtures::video_pixels(0.))),
+                    remote: Some(std::sync::Arc::new(fixtures::video_pixels(1.5))),
+                    camera_on: true,
+                    peer_on: true,
+                    local_number: 1,
+                    remote_number: 1,
+                },
+            );
+        }
     }
     let _ = crate::presentation_avatars::bind(ui);
     sidebar(ui, state.sidebar());

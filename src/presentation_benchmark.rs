@@ -312,7 +312,15 @@ pub fn start(
     let downloads = std::env::var_os("HEYA_BENCHMARK_DOWNLOADS").is_some();
     let attachments = std::env::var_os("HEYA_BENCHMARK_ATTACHMENTS").is_some();
     let voice = std::env::var_os("HEYA_BENCHMARK_VOICE").is_some();
-    let call = std::env::var_os("HEYA_BENCHMARK_CALL_UI").is_some();
+    let call_video = std::env::var_os("HEYA_BENCHMARK_CALL_VIDEO").is_some();
+    let call = call_video || std::env::var_os("HEYA_BENCHMARK_CALL_UI").is_some();
+    let call_images = call_video.then(|| {
+        [
+            Arc::new(fixtures::video_pixels(0.)),
+            Arc::new(fixtures::video_pixels(1.5)),
+        ]
+    });
+    let mut video_tick = 0;
     if call {
         println!(
             "Call panel benchmark: active panel, cached avatar, 1 Hz duration; no account, transport or audio devices"
@@ -469,7 +477,25 @@ pub fn start(
                     title: "Alex Morgan".into(),
                     seconds: call_seconds,
                     available: true,
+                    video: call_video,
                     ..Default::default()
+                },
+            );
+        }
+        let tick = (start.elapsed().as_millis() / 67) as i32;
+        if let Some(images) = &call_images
+            && tick != video_tick
+        {
+            video_tick = tick;
+            crate::presentation_calling::publish_video(
+                &ui,
+                &crate::call_video::Frames {
+                    local: Some(images[(tick & 1) as usize].clone()),
+                    remote: Some(images[((tick + 1) & 1) as usize].clone()),
+                    camera_on: true,
+                    peer_on: true,
+                    local_number: tick,
+                    remote_number: tick,
                 },
             );
         }

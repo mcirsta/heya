@@ -3,6 +3,7 @@ use crate::{
     archive::Archive,
     call_audio::{self, Ports},
     call_tones::{self, Tone},
+    call_video,
     preferences::Preferences,
     voice_recorder::{Error as AudioError, Input},
 };
@@ -23,10 +24,12 @@ pub struct Offer {
     pub id: String,
     pub target: Target,
     pub expires: tokio::time::Instant,
+    pub video: bool,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
     Audio(AudioError),
+    Video(call_video::Error),
     Offline,
     Unavailable,
     Network,
@@ -36,6 +39,7 @@ pub enum Error {
 impl Error {
     pub fn label(self) -> &'static str {
         match self {
+            Self::Video(error) => error.label(),
             Self::Audio(AudioError::NoInput) => AudioError::NoInput.label(),
             Self::Audio(AudioError::Permission) => AudioError::Permission.label(),
             Self::Audio(AudioError::Disabled) => "Audio calling is disabled in this build.",
@@ -44,7 +48,7 @@ impl Error {
                 "Call audio is unavailable. Check your microphone, speakers and audio settings."
             }
             Self::Offline => "Connect to WhatsApp before making a call.",
-            Self::Unavailable => "Audio calling is unavailable for this conversation.",
+            Self::Unavailable => "Calling is unavailable for this conversation.",
             Self::Network => "The call could not connect. Please try again.",
             Self::Timeout => "The call was not answered.",
             Self::Declined => "Call declined.",
@@ -57,13 +61,18 @@ pub enum Event {
     Connected,
     Ended,
     Failed(Error),
+    PeerCamera(bool),
+    Keyframe,
 }
 #[async_trait::async_trait]
 pub trait Session: Send + Sync {
     async fn event(&mut self) -> Event;
     async fn set_muted(&self, muted: bool);
     fn muted(&self) -> bool;
-    async fn end(&self);
+    async fn end(&mut self);
+    async fn camera(&mut self, _: bool) -> Result<(), Error> {
+        Err(Error::Unavailable)
+    }
 }
 #[async_trait::async_trait]
 pub trait Network: Send + Sync {
@@ -73,6 +82,7 @@ pub trait Network: Send + Sync {
         target: &Target,
         offer: Option<&str>,
         ports: Ports,
+        video: Option<call_video::Ports>,
     ) -> Result<Box<dyn Session>, Error>;
     async fn decline(&self, id: &str);
 }
@@ -89,10 +99,12 @@ pub(crate) async fn event_or_ring(call: &mut dyn Session, ring: bool) -> Option<
 }
 pub enum Command {
     Start(i32),
+    StartVideo(i32),
     Answer(String),
     Decline(String),
     Mute,
     Dismiss(String),
+    Camera,
 }
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Status {
@@ -107,6 +119,8 @@ pub struct Status {
     pub muted: bool,
     pub can_mute: bool,
     pub error: Option<Error>,
+    pub video: bool,
+    pub camera_busy: bool,
 }
 fn publish(updates: &watch::Sender<Status>, status: &Status) {
     updates.send_if_modified(|current| {
@@ -118,11 +132,15 @@ fn publish(updates: &watch::Sender<Status>, status: &Status) {
         }
     });
 }
+pub struct Updates {
+    pub status: watch::Sender<Status>,
+    pub video: watch::Sender<call_video::Frames>,
+}
 pub async fn run(
     archives: watch::Receiver<Option<Archive>>,
     sources: watch::Receiver<Sources>,
     commands: mpsc::Receiver<Command>,
-    updates: watch::Sender<Status>,
+    updates: Updates,
     settings: watch::Receiver<Preferences>,
     input: Input,
     stopped: watch::Receiver<bool>,
@@ -131,7 +149,8 @@ pub async fn run(
         archives,
         sources,
         commands,
-        updates,
+        updates: updates.status,
+        frames: updates.video,
         settings,
         input,
         stopped,
@@ -145,6 +164,7 @@ struct Controller {
     sources: watch::Receiver<Sources>,
     commands: mpsc::Receiver<Command>,
     updates: watch::Sender<Status>,
+    frames: watch::Sender<call_video::Frames>,
     settings: watch::Receiver<Preferences>,
     input: Input,
     stopped: watch::Receiver<bool>,
@@ -204,7 +224,7 @@ impl Controller {
                     if changed.is_err(){provider=None;continue;}
                     let offer=incoming.borrow_and_update().clone();
                     if let Some(offer)=offer {
-                    self.status=Status{chat:offer.target.chat,offer:offer.id,available:self.status.available,phase:1,title:offer.target.title,error:(!self.status.available).then_some(Error::Audio(AudioError::Disabled)),..Default::default()};
+                    self.status=Status{chat:offer.target.chat,offer:offer.id,available:self.status.available,phase:1,title:offer.target.title,video:offer.video,error:(!self.status.available).then_some(Error::Audio(AudioError::Disabled)),..Default::default()};
                     } else if self.status.phase==1 {call_tones::stop(&mut ringtone).await;self.status.phase=6;self.status.error=None;}
                     publish(&self.updates,&self.status);
                     None
@@ -218,8 +238,9 @@ impl Controller {
                 changed=self.archives.changed()=>{if changed.is_err(){break;}None},
             };
             let Some(command) = command else { continue };
+            let video = matches!(&command, Command::StartVideo(_));
             match command {
-                Command::Start(chat) => {
+                Command::Start(chat) | Command::StartVideo(chat) => {
                     let archive = self.archives.borrow().clone();
                     let target = match archive {
                         Some(a) => a.call_target(chat).await.map_err(|_| Error::Unavailable),
@@ -228,7 +249,7 @@ impl Controller {
                     match (provider.as_ref(), target) {
                         (Some(provider), Ok(target)) => {
                             call_tones::stop(&mut ringtone).await;
-                            if !self.one_call(provider.clone(), target, None).await {
+                            if !self.one_call(provider.clone(), target, None, video).await {
                                 break;
                             }
                         }
@@ -247,7 +268,7 @@ impl Controller {
                     if let (Some(provider), Some(offer)) = (&provider, offer) {
                         call_tones::stop(&mut ringtone).await;
                         if !self
-                            .one_call(provider.clone(), offer.target, Some(offer.id))
+                            .one_call(provider.clone(), offer.target, Some(offer.id), offer.video)
                             .await
                         {
                             break;
@@ -281,7 +302,7 @@ impl Controller {
                     };
                     publish(&self.updates, &self.status);
                 }
-                Command::Mute => {}
+                Command::Mute | Command::Camera => {}
             }
         }
         call_tones::stop(&mut ringtone).await;
@@ -291,6 +312,7 @@ impl Controller {
         provider: Arc<dyn Network>,
         target: Target,
         offer: Option<String>,
+        video_mode: bool,
     ) -> bool {
         let Self {
             sources,
@@ -300,6 +322,7 @@ impl Controller {
             input,
             stopped,
             status,
+            frames,
             ..
         } = self;
         let input = *input;
@@ -310,6 +333,7 @@ impl Controller {
             available: status.available,
             phase: 2,
             title: target.title.clone(),
+            video: video_mode,
             ..Default::default()
         };
         publish(updates, status);
@@ -328,13 +352,48 @@ impl Controller {
                     return true;
                 }
             };
+        let (mut video, video_ports) = if video_mode {
+            match call_video::Worker::start(input, frames.clone()) {
+                Ok((worker, ports)) => (Some(worker), Some(ports)),
+                Err(error) => {
+                    audio.stop().await;
+                    status.phase = if offer.is_some() { 1 } else { 0 };
+                    status.error = Some(Error::Video(error));
+                    publish(updates, status);
+                    return true;
+                }
+            }
+        } else {
+            (None, None)
+        };
         let mut open = true;
         let mut cancelled = false;
         let result = {
             // The deadline must include device discovery and opening the device:
             // a plugin can block before it ever produces a microphone frame.
-            let ready = tokio::time::timeout(Duration::from_secs(8), audio.ready());
-            let starting = provider.open(&target, offer.as_deref(), ports);
+            let microphone = audio.ready();
+            let camera = video.as_mut().map(call_video::Worker::ready);
+            let ready = async move {
+                tokio::try_join!(
+                    async {
+                        tokio::time::timeout(Duration::from_secs(8), microphone)
+                            .await
+                            .map_err(|_| Error::Audio(AudioError::Unresponsive))?
+                            .map_err(Error::Audio)
+                    },
+                    async {
+                        if let Some(camera) = camera {
+                            tokio::time::timeout(Duration::from_secs(8), camera)
+                                .await
+                                .map_err(|_| Error::Video(call_video::Error::Unresponsive))?
+                                .map_err(Error::Video)?;
+                        }
+                        Ok(())
+                    }
+                )
+                .map(|_| ())
+            };
+            let starting = provider.open(&target, offer.as_deref(), ports, video_ports);
             tokio::pin!(ready, starting);
             let mut audio_ready = false;
             let deadline = tokio::time::sleep(Duration::from_secs(90));
@@ -350,11 +409,11 @@ impl Controller {
                     },
                     _=sources.changed()=>{cancelled=true;break Err(Error::Offline);},
                     result=&mut ready,if !audio_ready=>match result {
-                        Ok(Ok(()))=>{audio_ready=true;status.phase=if offer.is_some(){4}else{3};publish(updates,status);},
-                        Ok(Err(error))=>break Err(Error::Audio(error)),
-                        Err(_)=>break Err(Error::Audio(AudioError::Unresponsive)),
+                        Ok(())=>{audio_ready=true;status.phase=if offer.is_some(){4}else{3};publish(updates,status);},
+                        Err(error)=>break Err(error),
                     },
                     result=audio.finished(),if audio_ready=>break Err(Error::Audio(result.err().unwrap_or(AudioError::Device))),
+                    result=video_finished(&mut video),if video_mode=>break Err(Error::Video(result.err().unwrap_or(call_video::Error::Device))),
                     result=&mut starting,if audio_ready=>break result,
                     _=&mut deadline=>break Err(Error::Network),
                 }
@@ -367,14 +426,14 @@ impl Controller {
                     // Fixed categories only: never log SDK errors or device/media data.
                     eprintln!("Heya call setup failed: {error:?}");
                 }
-                audio.stop().await;
+                tokio::join!(audio.stop(), stop_video(&mut video));
                 if cancelled && let Some(id) = &offer {
                     let _ =
                         tokio::time::timeout(Duration::from_secs(3), provider.decline(id)).await;
                 }
                 status.phase = if offer.is_none() {
                     0
-                } else if matches!(error, Error::Audio(_)) {
+                } else if matches!(error, Error::Audio(_) | Error::Video(_)) {
                     1
                 } else {
                     6
@@ -397,7 +456,7 @@ impl Controller {
         let ringing = tokio::time::sleep(Duration::from_secs(60));
         tokio::pin!(ringing);
         let mut connected: Option<Instant> = None;
-        loop {
+        'active: loop {
             tokio::select! {
                 biased;
                 _=stopped.changed()=>break,
@@ -406,17 +465,42 @@ impl Controller {
                         let _=tokio::time::timeout(Duration::from_secs(1),call.set_muted(!call.muted())).await;
                         status.muted=call.muted();publish(updates,status);
                     },
+                    Some(Command::Camera) if video.is_some()=>{
+                        let enabled = !frames.borrow().camera_on;
+                        status.camera_busy = true; publish(updates, status);
+                        let change = async {
+                            if let Some(video) = &video {video.camera(enabled).await.map_err(Error::Video)?;}
+                            call.camera(enabled).await
+                        };
+                        let change = tokio::time::timeout(Duration::from_secs(8), change);
+                        tokio::pin!(change);
+                        let result = loop {
+                            tokio::select! {
+                                biased;
+                                _=stopped.changed()=>break 'active,
+                                _=sources.changed()=>{status.error=Some(Error::Offline);break 'active;},
+                                command=commands.recv()=>{if command.is_none(){open=false;break 'active;}},
+                                result=&mut change=>break result.unwrap_or(Err(Error::Video(call_video::Error::Unresponsive))),
+                            }
+                        };
+                        status.camera_busy = false;
+                        if let Err(error) = result {status.error=Some(error);break 'active;}
+                        publish(updates, status);
+                    },
                     None=>{open=false;break;},
                     Some(Command::Decline(id)) if offer.as_deref()==Some(id.as_str())=>break,
                     _=>{},
                 },
                 _=sources.changed()=>{status.error=Some(Error::Offline);break;},
                 result=audio.finished()=>{if let Err(error)=result {status.error=Some(Error::Audio(error));}break;},
+                result=video_finished(&mut video),if video_mode=>{status.error=Some(Error::Video(result.err().unwrap_or(call_video::Error::Device)));break;},
                 _=&mut ringing,if connected.is_none()=>{status.error=Some(Error::Timeout);break;},
                 event=event_or_ring(call.as_mut(),start_ringback)=>match event {
                     None=>{start_ringback=false;ringback=call_tones::start(Tone::Outgoing,settings.borrow().audio.clone(),input);},
-                    Some(Event::Accepted)=>{start_ringback=false;call_tones::stop(&mut ringback).await;status.phase=4;publish(updates,status);},
-                    Some(Event::Connected)=>{start_ringback=false;call_tones::stop(&mut ringback).await;connected.get_or_insert_with(Instant::now);status.phase=5;publish(updates,status);},
+                    Some(Event::Accepted)=>{start_ringback=false;call_tones::stop(&mut ringback).await;if let Some(video)=&video {video.keyframe();}status.phase=4;publish(updates,status);},
+                    Some(Event::Connected)=>{start_ringback=false;call_tones::stop(&mut ringback).await;if let Some(video)=&video {video.keyframe();}connected.get_or_insert_with(Instant::now);status.phase=5;publish(updates,status);},
+                    Some(Event::Keyframe)=>{if let Some(video)=&video {video.keyframe();}},
+                    Some(Event::PeerCamera(enabled))=>{if let Some(video)=&video {video.peer_camera(enabled);}},
                     Some(Event::Ended)=>break,
                     Some(Event::Failed(error))=>{status.error=Some(error);break;},
                 },
@@ -426,12 +510,29 @@ impl Controller {
             }
         }
         // End transport and device work together; no PCM/call task survives dismissal.
-        tokio::join!(audio.stop(), call_tones::stop(&mut ringback), async {
-            let _ = tokio::time::timeout(Duration::from_secs(3), call.end()).await;
-        });
+        tokio::join!(
+            audio.stop(),
+            stop_video(&mut video),
+            call_tones::stop(&mut ringback),
+            async {
+                let _ = tokio::time::timeout(Duration::from_secs(3), call.end()).await;
+            }
+        );
         status.can_mute = false;
+        status.camera_busy = false;
         status.phase = 6;
         publish(updates, status);
         open
+    }
+}
+async fn video_finished(video: &mut Option<call_video::Worker>) -> Result<(), call_video::Error> {
+    match video {
+        Some(video) => video.finished().await,
+        None => std::future::pending().await,
+    }
+}
+async fn stop_video(video: &mut Option<call_video::Worker>) {
+    if let Some(mut video) = video.take() {
+        video.stop().await;
     }
 }

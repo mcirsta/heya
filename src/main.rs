@@ -9,6 +9,7 @@ mod audio_process;
 mod avatars;
 mod call_audio;
 mod call_tones;
+mod call_video;
 mod calling;
 #[cfg(test)]
 mod calling_tests;
@@ -24,6 +25,8 @@ mod fixtures;
 #[cfg(all(target_os = "linux", feature = "media-gstreamer"))]
 mod gstreamer_call;
 #[cfg(all(target_os = "linux", feature = "media-gstreamer"))]
+mod gstreamer_call_video;
+#[cfg(all(target_os = "linux", feature = "media-gstreamer"))]
 mod gstreamer_memory;
 #[cfg(all(target_os = "linux", feature = "media-gstreamer"))]
 mod gstreamer_video;
@@ -37,6 +40,8 @@ mod macos;
 mod macos_audio;
 #[cfg(target_os = "macos")]
 mod macos_call_audio;
+#[cfg(target_os = "macos")]
+mod macos_call_video;
 #[cfg(target_os = "macos")]
 mod macos_video;
 mod media_process;
@@ -86,6 +91,7 @@ mod protocol_actions;
 mod protocol_audio;
 mod protocol_avatars;
 mod protocol_business;
+mod protocol_call_video;
 mod protocol_calling;
 mod protocol_calls;
 mod protocol_chat_management;
@@ -233,6 +239,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if std::env::args().nth(1).as_deref() == Some("--heya-call-audio-worker") {
         call_audio::child_main();
+    }
+    if std::env::args().nth(1).as_deref() == Some("--heya-call-video-worker") {
+        call_video::child_main();
     }
     if std::env::args().nth(1).as_deref() == Some("--heya-audio-worker") {
         audio_process::child_main();

@@ -16,7 +16,17 @@ export global AudioCall {
     in-out property <string> error;
     in-out property <bool> muted;
     in-out property <bool> can-mute;
+    in-out property <bool> video;
+    in-out property <bool> camera-busy;
     callback action(int);
+}
+export global CallVideo {
+    in-out property <image> local;
+    in-out property <image> remote;
+    in-out property <int> local-number;
+    in-out property <int> remote-number;
+    in-out property <bool> camera-on;
+    in-out property <bool> peer-on;
 }
 component CallAction inherits Rectangle {
     in property <bool> enabled: true;
@@ -24,6 +34,7 @@ component CallAction inherits Rectangle {
     in property <image> icon;
     in property <color> fill: Theme.surface;
     in property <color> ink: Theme.text;
+    in property <bool> dark;
     callback activated;
     width: 100px;
     height: 86px;
@@ -31,7 +42,7 @@ component CallAction inherits Rectangle {
         x: (parent.width - self.width) / 2;
         y: 0px;
         width: 58px; height: 58px;
-        background: root.enabled ? root.fill : Theme.outline;
+        background: root.enabled ? root.fill : root.dark ? #29343a : Theme.outline;
         border-radius: 29px;
         IconButton {
             width: parent.width; height: parent.height;
@@ -43,10 +54,105 @@ component CallAction inherits Rectangle {
     }
     caption := Text {
         y: 66px; width: parent.width; height: 20px;
-        text: root.label; color: Theme.secondary;
+        text: root.label; color: root.dark ? #d1d7db : Theme.secondary;
+        wrap: no-wrap; overflow: elide;
         font-size: 12px; horizontal-alignment: center;
     }
 }
+component VideoCallStage inherits Rectangle {
+    stage := Rectangle {
+        x: (root.width - self.width) / 2;
+        y: (root.height - self.height) / 2;
+        width: min(1040px, root.width - 32px);
+        height: min(760px, root.height - 32px);
+        border-radius: 18px;
+        background: #0b141a;
+        drop-shadow-offset-y: 8px; drop-shadow-blur: 32px; drop-shadow-color: #0007;
+        TouchArea {}
+        Avatar {
+            x: 20px; y: 16px; width: 36px; height: 36px;
+            picture: AudioCall.avatar; initials: AudioCall.initials; tint: #1d6256;
+        }
+        Text {
+            x: 68px; y: 16px; width: parent.width - 92px; height: 22px;
+            text: AudioCall.title; color: #e9edef; font-size: 16px; font-weight: 600;
+            overflow: elide; wrap: no-wrap;
+        }
+        Text {
+            x: 68px; y: 40px; width: parent.width - 92px; height: 18px;
+            text: AudioCall.phase == 3 ? @tr("Calling…") : AudioCall.phase == 4 ? @tr("Connecting…") : AudioCall.time;
+            color: #aebac1; font-size: 12px;
+            accessible-role: text; accessible-label: self.text;
+        }
+        remote-area := Rectangle {
+            x: 12px; y: 72px; width: parent.width - 24px; height: max(0px, parent.height - 192px);
+            border-radius: 12px; background: #202c33; clip: true;
+            if CallVideo.remote.width > 0 && CallVideo.peer-on: remote-video := Image {
+                source: CallVideo.remote; image-fit: contain;
+            }
+            if CallVideo.remote.width == 0 || !CallVideo.peer-on: Rectangle {
+                Avatar {
+                    x: (parent.width - self.width) / 2; y: max(8px, (parent.height - 116px) / 2);
+                    width: 72px; height: 72px; picture: AudioCall.avatar; initials: AudioCall.initials; tint: #1d6256;
+                }
+                Text {
+                    y: max(88px, (parent.height - 116px) / 2 + 84px); height: 24px; width: parent.width;
+                    text: !CallVideo.peer-on ? @tr("Camera is off") : @tr("Waiting for video…");
+                    color: #aebac1; font-size: 14px; horizontal-alignment: center;
+                }
+            }
+            self-preview := Rectangle {
+                x: parent.width - self.width - 10px; y: parent.height - self.height - 10px;
+                width: min(216px, parent.width * 0.32); height: self.width * 0.75;
+                border-radius: 10px; background: #111b21; clip: true;
+                border-width: 1px; border-color: #ffffff25;
+                if CallVideo.camera-on && CallVideo.local.width > 0: local-video := Image {
+                    source: CallVideo.local; image-fit: cover;
+                }
+                if !CallVideo.camera-on: Image {
+                    x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2 - 8px;
+                    width: 24px; height: 24px; source: @image-url("icons/video-off.svg"); colorize: #aebac1;
+                }
+                Rectangle {
+                    x: 8px; y: parent.height - 24px; width: self-label.preferred-width + 12px; height: 20px;
+                    border-radius: 6px; background: #0009;
+                    self-label := Text {
+                        x: 6px; width: parent.width - 12px; height: parent.height;
+                        text: @tr("You"); color: #e9edef; font-size: 11px; vertical-alignment: center;
+                    }
+                }
+            }
+        }
+        HorizontalLayout {
+            x: 20px; y: parent.height - 106px;
+            width: parent.width - 40px; height: 86px; spacing: 16px;
+            CallAction {
+                width: 100px;
+                dark: true; fill: #26343d; ink: #e9edef;
+                enabled: AudioCall.can-mute && !AudioCall.camera-busy;
+                label: AudioCall.camera-busy ? @tr("Checking camera…") : CallVideo.camera-on ? @tr("Camera off") : @tr("Camera on");
+                icon: CallVideo.camera-on ? @image-url("icons/call-video.svg") : @image-url("icons/video-off.svg");
+                activated => {AudioCall.action(6);}
+            }
+            CallAction {
+                width: 100px;
+                dark: true; fill: AudioCall.muted ? #41525d : #26343d; ink: #e9edef;
+                enabled: AudioCall.can-mute && !AudioCall.camera-busy;
+                label: AudioCall.muted ? @tr("Unmute") : @tr("Mute");
+                icon: AudioCall.muted ? @image-url("icons/mic-off.svg") : @image-url("icons/mic.svg");
+                activated => {AudioCall.action(4);}
+            }
+            Rectangle {horizontal-stretch: 1;}
+            CallAction {
+                width: 100px;
+                dark: true; fill: #e33f4f; ink: #fff;
+                label: @tr("End call"); icon: @image-url("icons/call-end.svg");
+                activated => {AudioCall.action(3);}
+            }
+        }
+    }
+}
+
 export component CallPanel inherits Rectangle {
     in property <bool> microphone-dialog;
     changed microphone-dialog => { if !root.microphone-dialog { call-focus.focus(); } }
@@ -63,6 +169,7 @@ export component CallPanel inherits Rectangle {
         }
     }
     panel := Rectangle {
+        visible: !AudioCall.video || AudioCall.phase < 3 || AudioCall.phase == 6;
         x: (root.width - self.width) / 2;
         y: (root.height - self.height) / 2;
         width: min(440px, root.width - 40px);
@@ -75,7 +182,7 @@ export component CallPanel inherits Rectangle {
         TouchArea { }
         Text {
             x: 24px; y: 22px; width: parent.width - 48px; height: 20px;
-            text: @tr("Voice call"); color: Theme.secondary;
+            text: AudioCall.video ? @tr("Video call") : @tr("Voice call"); color: Theme.secondary;
             font-size: 13px; horizontal-alignment: center;
         }
         Avatar {
@@ -92,7 +199,7 @@ export component CallPanel inherits Rectangle {
         }
         Text {
             x: 24px; y: 211px; width: parent.width - 48px; height: 24px;
-            text: AudioCall.phase == 1 ? @tr("Incoming voice call") : AudioCall.phase == 2 ? @tr("Preparing audio…") : AudioCall.phase == 3 ? @tr("Calling…") : AudioCall.phase == 4 ? @tr("Connecting…") : AudioCall.phase == 5 ? AudioCall.time : @tr("Call ended");
+            text: AudioCall.phase == 1 ? (AudioCall.video ? @tr("Incoming video call") : @tr("Incoming voice call")) : AudioCall.phase == 2 ? (AudioCall.video ? @tr("Preparing camera and audio…") : @tr("Preparing audio…")) : AudioCall.phase == 3 ? @tr("Calling…") : AudioCall.phase == 4 ? @tr("Connecting…") : AudioCall.phase == 5 ? AudioCall.time : @tr("Call ended");
             color: Theme.secondary; font-size: 15px;
             horizontal-alignment: center; vertical-alignment: center;
             accessible-role: text; accessible-label: self.text;
@@ -116,7 +223,7 @@ export component CallPanel inherits Rectangle {
             }
             if AudioCall.phase == 1: CallAction {
                 enabled: AudioCall.available;
-                label: !AudioCall.available ? @tr("Audio unavailable") : root.recording ? @tr("Finish recording") : @tr("Answer"); icon: @image-url("icons/call-voice.svg");
+                label: !AudioCall.available ? @tr("Audio unavailable") : root.recording ? @tr("Finish recording") : @tr("Answer"); icon: AudioCall.video ? @image-url("icons/call-video.svg") : @image-url("icons/call-voice.svg");
                 fill: Theme.accent; ink: Theme.on-accent;
                 activated => { if root.recording {root.finish-recording();} else {AudioCall.action(1);} }
             }
@@ -140,4 +247,5 @@ export component CallPanel inherits Rectangle {
             activated => { AudioCall.action(5); }
         }
     }
+    if AudioCall.video && AudioCall.phase >= 3 && AudioCall.phase <= 5: VideoCallStage { }
 }

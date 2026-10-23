@@ -1,6 +1,6 @@
 export { AudioPlayback } from "audio.slint";
-import { AudioCall, CallPanel } from "calling.slint";
-export { AudioCall }
+import { AudioCall, CallVideo, CallPanel } from "calling.slint";
+export { AudioCall, CallVideo }
 import { MessageSearch, MessageSearchHit } from "message-search.slint";
 export { MessageSearchHit }
 import { ListView, ScrollView } from "std-widgets.slint";
@@ -984,7 +984,7 @@ export component AppWindow inherits Window {
                                             y: 0px;
                                             width: self.text == "" || parent.width < 140px ? 0px : min(self.preferred-width, max(0px, parent.width - min(header-name.preferred-width, parent.width * 0.60) - 12px));
                                             height: parent.height;
-                                            text: AudioCall.phase == 2 && AudioCall.offer == "" ? @tr("Checking audio…") : root.chat-presence;
+                                            text: AudioCall.phase == 2 && AudioCall.offer == "" ? (AudioCall.video ? @tr("Checking camera and audio…") : @tr("Checking audio…")) : root.chat-presence;
                                             color: root.chat-online ? Theme.accent : Theme.secondary;
                                             font-size: 12.5px;
                                             vertical-alignment: center;
@@ -998,10 +998,16 @@ export component AppWindow inherits Window {
                                         enabled: root.selected-id > 0 && AudioCall.phase == 0;
                                         activated => { AudioCall.action(0); }
                                     }
+                                    IconButton {
+                                        icon: @image-url("icons/call-video.svg");
+                                        label: @tr("Start a video call");
+                                        enabled: root.selected-id > 0 && AudioCall.phase == 0;
+                                        activated => { AudioCall.action(7); }
+                                    }
 
                                     if AudioCall.phase == 2 && AudioCall.offer == "": IconButton {
                                         icon: @image-url("icons/close.svg");
-                                        label: @tr("Cancel audio check");
+                                        label: AudioCall.video ? @tr("Cancel video check") : @tr("Cancel audio check");
                                         activated => { AudioCall.action(3); }
                                     }
 

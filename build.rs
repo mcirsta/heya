@@ -3,6 +3,7 @@ fn main() {
         println!("cargo:rerun-if-changed=src/platform/macos.m");
         println!("cargo:rerun-if-changed=src/platform/macos_audio.m");
         println!("cargo:rerun-if-changed=src/platform/macos_call_audio.m");
+        println!("cargo:rerun-if-changed=src/platform/macos_call_video.m");
         println!("cargo:rerun-if-changed=src/platform/macos_video.m");
         cc_macos();
     }
@@ -23,6 +24,7 @@ fn cc_macos() {
         .file("src/platform/macos.m")
         .file("src/platform/macos_audio.m")
         .file("src/platform/macos_call_audio.m")
+        .file("src/platform/macos_call_video.m")
         .file("src/platform/macos_video.m")
         .flag("-fobjc-arc")
         .flag("-fblocks")
@@ -37,6 +39,7 @@ fn cc_macos() {
         "Foundation",
         "UniformTypeIdentifiers",
         "AVFoundation",
+        "VideoToolbox",
         "AudioToolbox",
         "AudioUnit",
         "CoreAudio",

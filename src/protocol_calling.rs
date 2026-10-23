@@ -68,10 +68,10 @@ impl Calling {
         }
         match &incoming.action {
             CallAction::Offer {
-                is_video: false,
+                is_video,
                 group_jid: None,
                 ..
-            } if !incoming.offline => {
+            } if !incoming.offline && incoming.group.is_none() => {
                 {
                     let pending = self.pending.lock().unwrap();
                     if pending.active.is_some()
@@ -115,6 +115,7 @@ impl Calling {
                     id: id.into(),
                     target,
                     expires,
+                    video: *is_video,
                 });
                 self.offered.send_if_modified(|old| {
                     if old != &offer {
@@ -186,6 +187,7 @@ impl Network for Calling {
         target: &Target,
         offer: Option<&str>,
         ports: Ports,
+        video: Option<crate::call_video::Ports>,
     ) -> Result<Box<dyn Session>, Error> {
         // Recheck lock/read-only/own-account state immediately before signaling.
         let current = self
@@ -215,6 +217,7 @@ impl Network for Calling {
         }
         let mut setup = Setup(self.pending.clone(), true);
         let voip = self.client.voip();
+        let mut video = video.map(crate::protocol_call_video::Video::new);
         let incoming = offer.and_then(|id| {
             self.pending
                 .lock()
@@ -229,15 +232,23 @@ impl Network for Calling {
             if incoming.action.call_id() != id {
                 return Err(Error::Unavailable);
             }
-            voip.accept(&incoming)
-                .audio(ports.microphone, ports.speaker)
-                .start()
-                .await
+            let call = voip
+                .accept(&incoming)
+                .audio(ports.microphone, ports.speaker);
+            let call = if let Some(video) = &video {
+                call.video(video.source.clone(), video.sink.clone())
+            } else {
+                call
+            };
+            call.start().await
         } else {
-            voip.call(&peer)
-                .audio(ports.microphone, ports.speaker)
-                .start()
-                .await
+            let call = voip.call(&peer).audio(ports.microphone, ports.speaker);
+            let call = if let Some(video) = &video {
+                call.video(video.source.clone(), video.sink.clone())
+            } else {
+                call
+            };
+            call.start().await
         };
         let handle = match handle {
             Ok(h) => h,
@@ -260,6 +271,9 @@ impl Network for Calling {
             return Err(Error::Network);
         };
         self.pending.lock().unwrap().active = Some(handle.call_id().into());
+        if let Some(video) = &mut video {
+            video.start(handle.clone());
+        }
         setup.1 = false;
         Ok(Box::new(Active {
             handle,
@@ -270,6 +284,7 @@ impl Network for Calling {
             accepted: offer.is_some(),
             relay: false,
             reported: false,
+            video,
         }))
     }
     async fn decline(&self, id: &str) {
@@ -312,6 +327,7 @@ struct Active {
     accepted: bool,
     relay: bool,
     reported: bool,
+    video: Option<crate::protocol_call_video::Video>,
 }
 // Sticky completion and a queued failure can become ready together. Preserve the
 // SDK's terminal event before falling back to its completion notification.
@@ -399,6 +415,15 @@ impl Session for Active {
                     Some(CallEvent::Closed(_))|None=>return Event::Ended,
                     Some(CallEvent::AudioSilent{dominant_reason,..}) if self.reported=>eprintln!("Heya call media: silent ({dominant_reason:?})"),
                     Some(CallEvent::AudioReceptionStalled{..}) if self.reported=>eprintln!("Heya call media: reception stalled"),
+                    Some(CallEvent::VideoKeyframeNeeded)=>return Event::Keyframe,
+                    Some(CallEvent::PeerVideoStateChanged{state,..}) if self.video.is_some()=>{
+                        use whatsapp_rust::wacore::types::call::VideoState;
+                        match state {
+                            VideoState::Enabled | VideoState::UpgradeAccept =>return Event::PeerCamera(true),
+                            VideoState::Paused | VideoState::Stopped | VideoState::Disabled | VideoState::Error =>return Event::PeerCamera(false),
+                            _=>{},
+                        }
+                    },
                     _=>{},
                 }
             }
@@ -410,9 +435,19 @@ impl Session for Active {
     fn muted(&self) -> bool {
         self.handle.is_muted()
     }
-    async fn end(&self) {
+    async fn end(&mut self) {
+        if let Some(video) = &mut self.video {
+            video.stop().await;
+        }
         let _ = self.handle.terminate().await;
         self.handle.wait_ended().await;
+    }
+    async fn camera(&mut self, enabled: bool) -> Result<(), Error> {
+        self.video
+            .as_mut()
+            .ok_or(Error::Unavailable)?
+            .camera(&self.handle, enabled)
+            .await
     }
 }
 
@@ -514,10 +549,13 @@ mod tests {
         })
     }
     #[tokio::test]
-    async fn only_current_audio_offers_ring_and_other_device_completion_clears_them() {
+    async fn only_current_direct_offers_ring_and_other_device_completion_clears_them() {
         let (_temp, source) = fixture().await;
         let mut offers = source.offers();
         source.observe(&offer("video", true)).await;
+        assert!(offers.borrow_and_update().as_ref().unwrap().video);
+        source.clear_offer("video");
+        offers.borrow_and_update();
         let mut offline = offer("offline", false);
         if let SdkEvent::IncomingCall(c) = &mut offline {
             c.offline = true;

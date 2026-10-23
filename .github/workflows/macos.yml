@@ -67,6 +67,10 @@ jobs:
         run: cargo clippy --locked --all-targets --target aarch64-apple-darwin -- -D warnings
       - name: Run synthetic tests on Apple Silicon
         run: cargo test --locked --target aarch64-apple-darwin
+      - name: Check native camera codecs without devices or an account
+        env:
+          HEYA_TEST_CALL_VIDEO_NATIVE: '1'
+        run: cargo test --locked --target aarch64-apple-darwin --bin heya -- --ignored --exact call_video::tests::native_camera_codec_loopback --nocapture
       - name: Check without the Linux media feature
         run: cargo check --locked --no-default-features --target aarch64-apple-darwin
       - name: Build testing package

@@ -138,6 +138,10 @@ SDK app-state, captured history and call-log envelopes feed the same projection;
 calls never become message unread/receipt/outbox keys. Initial state recovery
 requests call logs previously ignored. One-to-one audio calling now has a separate
 controller and finite duplex audio helper; see [audio calling](audio-calling.md).
+Direct two-way video calling extends that controller with a finite camera/codec
+helper, bounded frame presentation and camera/mute/hangup controls; see
+[video calling](video-calling.md). Hardware and account interoperability still need
+manual checks on each platform; synthetic tests do not establish those.
 See [call events](call-events.md); the owner confirmed a real event in both the
 sidebar and conversation. Actual call interoperability is still unverified.
 

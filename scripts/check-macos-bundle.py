@@ -22,6 +22,8 @@ binary = args.bundle.resolve() / 'Contents/MacOS/heya'
 contents = args.bundle.resolve() / 'Contents'
 info = plistlib.loads((contents / 'Info.plist').read_bytes())
 assert info.get('CFBundleIconFile') == 'Heya.icns', 'Missing bundle icon declaration'
+assert info.get('NSMicrophoneUsageDescription'), 'Missing microphone permission explanation'
+assert info.get('NSCameraUsageDescription'), 'Missing camera permission explanation'
 icon = contents / 'Resources/Heya.icns'
 assert icon.is_file() and icon.stat().st_size > 8, 'Missing bundle icon resource'
 with tempfile.TemporaryDirectory(prefix='heya-icon-check-') as temporary:

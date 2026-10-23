@@ -4,7 +4,7 @@ use crate::{
     archive::Archive,
     calling::{self, Command, Status},
     preferences::Preferences,
-    ui::AudioCall,
+    ui::{AudioCall, CallVideo},
 };
 use slint::ComponentHandle;
 use tokio::sync::{mpsc, watch};
@@ -18,6 +18,7 @@ pub fn attach(
     let (stop, stopped) = watch::channel(false);
     bind(ui, commands, stop);
     let (updates, snapshots) = watch::channel(Status::default());
+    let (frames, images) = watch::channel(crate::call_video::Frames::default());
     let weak = ui.as_weak();
     async move {
         tokio::join!(
@@ -25,12 +26,16 @@ pub fn attach(
                 archives,
                 sources,
                 requests,
-                updates,
+                calling::Updates {
+                    status: updates,
+                    video: frames
+                },
                 preferences,
                 crate::voice_recorder::Input::Microphone,
                 stopped
             ),
-            crate::live_presentation::present_latest(weak, snapshots, publish)
+            crate::live_presentation::present_latest(weak.clone(), snapshots, publish),
+            crate::live_presentation::present_latest(weak, images, publish_video)
         );
     }
 }
@@ -43,7 +48,7 @@ pub(crate) fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>, stop: watch:
     ui.global::<AudioCall>().on_action(move |action| {
         let Some(ui) = weak.upgrade() else { return };
         let command = match action {
-            0 => {
+            0 | 7 => {
                 if ui.global::<AudioCall>().get_phase() != 0 {
                     return;
                 }
@@ -58,7 +63,11 @@ pub(crate) fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>, stop: watch:
                     );
                     return;
                 }
-                Command::Start(ui.get_selected_id())
+                if action == 7 {
+                    Command::StartVideo(ui.get_selected_id())
+                } else {
+                    Command::Start(ui.get_selected_id())
+                }
             }
             1 => {
                 if !matches!(ui.get_voice_phase(), 0 | 4)
@@ -86,11 +95,19 @@ pub(crate) fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>, stop: watch:
                 }
                 Command::Dismiss(ui.global::<AudioCall>().get_offer().into())
             }
+            6 => {
+                if !ui.global::<AudioCall>().get_video()
+                    || ui.global::<AudioCall>().get_camera_busy()
+                {
+                    return;
+                }
+                Command::Camera
+            }
             _ => return,
         };
         match commands.try_reserve() {
             Ok(permit) => {
-                if action == 0 || action == 1 {
+                if action == 0 || action == 1 || action == 7 {
                     if action == 1 && ui.get_voice_playing() {
                         ui.invoke_voice_control(4);
                     }
@@ -98,6 +115,9 @@ pub(crate) fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>, stop: watch:
                     ui.invoke_video_control(0, 3, 0.);
                     stop.send_replace(false);
                     let global = ui.global::<AudioCall>();
+                    if action != 1 {
+                        global.set_video(action == 7);
+                    }
                     global.set_error("".into());
                     global.set_phase(2);
                 }
@@ -147,6 +167,8 @@ pub fn publish(ui: &AppWindow, status: &Status) {
     global.set_time(time.into());
     global.set_muted(status.muted);
     global.set_can_mute(status.can_mute);
+    global.set_video(status.video);
+    global.set_camera_busy(status.camera_busy);
     global.set_error(error.into());
     if before == 2 && matches!(status.phase, 3..=5) {
         ui.invoke_audio_control(0, 3, 0.);
@@ -155,7 +177,7 @@ pub fn publish(ui: &AppWindow, status: &Status) {
     if report_error {
         if status.error == Some(calling::Error::Audio(crate::voice_recorder::Error::NoInput)) {
             show_error(ui, "");
-        } else if status.phase == 0 {
+        } else if status.phase == 0 || matches!(status.error, Some(calling::Error::Video(_))) {
             show_error(ui, error);
         }
     }
@@ -167,6 +189,33 @@ pub fn publish(ui: &AppWindow, status: &Status) {
     } else {
         crate::presentation_avatars::refresh(ui);
     }
+}
+pub fn publish_video(ui: &AppWindow, frames: &crate::call_video::Frames) {
+    let global = ui.global::<CallVideo>();
+    let image = |pixels: &Option<std::sync::Arc<crate::photos::Pixels>>| {
+        pixels
+            .as_ref()
+            .map(|p| {
+                slint::Image::from_rgba8(slint::SharedPixelBuffer::clone_from_slice(
+                    &p.rgba, p.width, p.height,
+                ))
+            })
+            .unwrap_or_default()
+    };
+    if global.get_local_number() != frames.local_number
+        || (frames.local.is_none() && global.get_local().size().width > 0)
+    {
+        global.set_local(image(&frames.local));
+        global.set_local_number(frames.local_number);
+    }
+    if global.get_remote_number() != frames.remote_number
+        || (frames.remote.is_none() && global.get_remote().size().width > 0)
+    {
+        global.set_remote(image(&frames.remote));
+        global.set_remote_number(frames.remote_number);
+    }
+    global.set_camera_on(frames.camera_on);
+    global.set_peer_on(frames.peer_on);
 }
 #[cfg(test)]
 pub(crate) fn check_ui() {
@@ -324,6 +373,10 @@ pub(crate) fn check_ui() {
         calling::Error::Audio(crate::voice_recorder::Error::Device),
         calling::Error::Audio(crate::voice_recorder::Error::Disabled),
         calling::Error::Audio(crate::voice_recorder::Error::Unresponsive),
+        calling::Error::Video(crate::call_video::Error::NoCamera),
+        calling::Error::Video(crate::call_video::Error::Permission),
+        calling::Error::Video(crate::call_video::Error::Codec),
+        calling::Error::Video(crate::call_video::Error::Unresponsive),
         calling::Error::Unavailable,
         calling::Error::Offline,
         calling::Error::Network,
@@ -459,7 +512,83 @@ pub(crate) fn check_ui() {
         "closing a microphone warning must return focus to the call"
     );
     assert_eq!(ui.get_draft().as_str(), "Synthetic draft must stay here");
+    // The keyboard traversal above can activate call controls as well as focus them.
+    while requests.try_recv().is_ok() {}
     publish(&ui, &Status::default());
+    workflow_tests::click_button(&ui, "Start a video call");
+    assert!(matches!(
+        requests.try_recv().unwrap(),
+        Command::StartVideo(77)
+    ));
+    assert!(ui.global::<AudioCall>().get_video());
+    assert!(!ui.global::<AudioCall>().get_shown());
+    for width in [520., 800., 1200.] {
+        ui.window().set_size(slint::LogicalSize::new(width, 480.));
+        publish(
+            &ui,
+            &Status {
+                phase: 5,
+                video: true,
+                can_mute: true,
+                title: "Synthetic video caller · 你好".into(),
+                ..Default::default()
+            },
+        );
+        publish_video(
+            &ui,
+            &crate::call_video::Frames {
+                local: Some(std::sync::Arc::new(crate::fixtures::video_pixels(0.))),
+                remote: Some(std::sync::Arc::new(crate::fixtures::video_pixels(1.5))),
+                camera_on: true,
+                peer_on: true,
+                local_number: 1,
+                remote_number: 1,
+            },
+        );
+        let stage = ElementHandle::find_by_element_id(&ui, "VideoCallStage::stage")
+            .next()
+            .unwrap();
+        let p = stage.absolute_position();
+        let s = stage.size();
+        assert!(p.x >= 0. && p.y >= 0. && p.x + s.width <= width + 0.5 && p.y + s.height <= 480.5);
+        let remote = stage
+            .query_descendants()
+            .match_id("VideoCallStage::remote-area")
+            .find_first()
+            .unwrap();
+        let preview = remote
+            .query_descendants()
+            .match_id("VideoCallStage::self-preview")
+            .find_first()
+            .unwrap();
+        let r = remote.absolute_position();
+        let rs = remote.size();
+        let l = preview.absolute_position();
+        let ls = preview.size();
+        assert!(
+            l.x >= r.x
+                && l.y >= r.y
+                && l.x + ls.width <= r.x + rs.width
+                && l.y + ls.height <= r.y + rs.height
+        );
+        for text in stage.query_descendants().match_type_name("Text").find_all() {
+            let t = text.absolute_position();
+            let ts = text.size();
+            assert!(
+                t.x >= p.x - 0.5
+                    && t.y >= p.y - 0.5
+                    && t.x + ts.width <= p.x + s.width + 0.5
+                    && t.y + ts.height <= p.y + s.height + 0.5
+            );
+        }
+    }
+    workflow_tests::click_button(&ui, "Camera off");
+    assert!(matches!(requests.try_recv().unwrap(), Command::Camera));
+    workflow_tests::click_button(&ui, "End call");
+    assert!(*stopped.borrow());
+    assert_eq!(sent.get(), 0);
+    publish(&ui, &Status::default());
+    publish_video(&ui, &crate::call_video::Frames::default());
     ui.hide().unwrap();
 }
 

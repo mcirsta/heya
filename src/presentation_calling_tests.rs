@@ -37,11 +37,13 @@ pub(crate) fn click_button(ui: &crate::AppWindow, label: &str) {
 pub(crate) fn check_ui_flow(runtime: &tokio::runtime::Runtime) {
     use i_slint_backend_testing::ElementHandle;
     use slint::ComponentHandle;
-    for failure in [
-        Some(Error::Audio(AudioError::NoInput)),
-        Some(Error::Network),
-        Some(Error::Unavailable),
-        None,
+    for (failure, video) in [
+        (Some(Error::Audio(AudioError::NoInput)), false),
+        (Some(Error::Network), false),
+        (Some(Error::Unavailable), false),
+        (None, false),
+        (Some(Error::Audio(AudioError::NoInput)), true),
+        (None, true),
     ] {
         let input = if failure == Some(Error::Audio(AudioError::NoInput)) {
             Input::Unavailable
@@ -74,6 +76,11 @@ pub(crate) fn check_ui_flow(runtime: &tokio::runtime::Runtime) {
             h.states.clone(),
             crate::presentation_calling::publish,
         ));
+        let video_pump = runtime.spawn(crate::live_presentation::present_latest(
+            ui.as_weak(),
+            h.frames.clone(),
+            crate::presentation_calling::publish_video,
+        ));
         let step = std::rc::Rc::new(std::cell::Cell::new(0));
         let tick = step.clone();
         let weak = ui.as_weak();
@@ -92,7 +99,14 @@ pub(crate) fn check_ui_flow(runtime: &tokio::runtime::Runtime) {
                 }
                 match tick.get() {
                     0 if call.get_available() => {
-                        click_button(&ui, "Start a voice call");
+                        click_button(
+                            &ui,
+                            if video {
+                                "Start a video call"
+                            } else {
+                                "Start a voice call"
+                            },
+                        );
                         assert!(!call.get_shown());
                         tick.set(1);
                     }
@@ -134,7 +148,26 @@ pub(crate) fn check_ui_flow(runtime: &tokio::runtime::Runtime) {
                         network.resume.notify_one();
                         tick.set(2);
                     }
-                    2 if call.get_phase() == 5 => {
+                    2 if call.get_phase() == 5 && !video => {
+                        click_button(&ui, "Mute");
+                        tick.set(3);
+                    }
+                    2 if call.get_phase() == 5
+                        && video
+                        && ui.global::<crate::ui::CallVideo>().get_camera_on() =>
+                    {
+                        click_button(&ui, "Camera off");
+                        tick.set(7);
+                    }
+                    7 if !ui.global::<crate::ui::CallVideo>().get_camera_on()
+                        && !call.get_camera_busy() =>
+                    {
+                        click_button(&ui, "Camera on");
+                        tick.set(8);
+                    }
+                    8 if ui.global::<crate::ui::CallVideo>().get_camera_on()
+                        && !call.get_camera_busy() =>
+                    {
                         click_button(&ui, "Mute");
                         tick.set(3);
                     }
@@ -175,6 +208,10 @@ pub(crate) fn check_ui_flow(runtime: &tokio::runtime::Runtime) {
         runtime.block_on(h.finish());
         runtime.block_on(async {
             tokio::time::timeout(Duration::from_secs(2), pump)
+                .await
+                .unwrap()
+                .unwrap();
+            tokio::time::timeout(Duration::from_secs(2), video_pump)
                 .await
                 .unwrap()
                 .unwrap();

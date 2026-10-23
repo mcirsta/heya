@@ -53,7 +53,8 @@ info={
  'CFBundleShortVersionString':version.split('-')[0],'CFBundleVersion':build,
  'CFBundleGetInfoString':'Heya '+version,
  'NSHighResolutionCapable':True,'NSPrincipalClass':'NSApplication',
- 'NSMicrophoneUsageDescription':'Record a voice message when you press the microphone button.',
+ 'NSMicrophoneUsageDescription':'Use your microphone when you record a voice message or place or answer a call.',
+ 'NSCameraUsageDescription':'Use your camera when you place or answer a video call.',
  'LSMinimumSystemVersion':minimum,
 }
 with (pathlib.Path(bundle)/'Contents/Info.plist').open('wb') as f:plistlib.dump(info,f)
