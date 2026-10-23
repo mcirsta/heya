@@ -27,8 +27,9 @@ jobs:
       - name: Install Linux build and runtime dependencies
         timeout-minutes: 15
         run: |
-          # The Azure mirror has stalled package downloads at tens of kB/s.
-          for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.sources; do
+          # Hosted runners also select Azure through mirror+file sources. Rewrite
+          # those mirror lists too; changing only .sources leaves Azure selected.
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/apt-mirrors.txt /etc/apt/apt-mirrors-security.txt; do
             if [ -f "$source" ]; then
               sudo sed -i -E 's|https?://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$source"
             fi
