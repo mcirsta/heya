@@ -1,4 +1,4 @@
-//! Local presentation preferences. No account data or toolkit types belong here.
+//! Local application preferences. No account data or toolkit types belong here.
 use serde::{Deserialize, Serialize};
 use std::{
     io::{Read, Write},
@@ -25,6 +25,7 @@ pub struct Preferences {
     pub version: u32,
     pub theme: String,
     pub font: String,
+    pub connect_automatically: bool,
     pub enter_sends: bool,
     pub show_shortcut_hint: bool,
     pub show_wallpaper: bool,
@@ -45,6 +46,7 @@ impl Default for Preferences {
                 "Inter"
             }
             .into(),
+            connect_automatically: true,
             enter_sends: true,
             show_shortcut_hint: true,
             show_wallpaper: true,
@@ -83,7 +85,8 @@ impl Preferences {
             "font" if (0..=1).contains(&value) => {
                 self.font = if value == 0 { "System" } else { "Inter" }.into()
             }
-            "enter_sends"
+            "connect_automatically"
+            | "enter_sends"
             | "show_shortcut_hint"
             | "show_wallpaper"
             | "auto_download_photos"
@@ -91,6 +94,7 @@ impl Preferences {
                 if (0..=1).contains(&value) =>
             {
                 let field = match key {
+                    "connect_automatically" => &mut self.connect_automatically,
                     "send_receipts" => &mut self.send_receipts,
                     "auto_download_photos" => &mut self.auto_download_photos,
                     "enter_sends" => &mut self.enter_sends,
@@ -211,6 +215,11 @@ mod tests {
         save(&path, &settings).unwrap();
         assert!(!load(&path).unwrap().auto_download_photos);
         assert!(!settings.change("auto_download_photos", 2));
+        assert!(settings.connect_automatically);
+        assert!(settings.change("connect_automatically", 0));
+        save(&path, &settings).unwrap();
+        assert!(!load(&path).unwrap().connect_automatically);
+        assert!(!settings.change("connect_automatically", 2));
         let previous = std::fs::read(&path).unwrap();
         settings.version = 2;
         assert!(save(&path, &settings).is_err());
@@ -220,5 +229,16 @@ mod tests {
             assert!(load(&path).is_err());
             assert_eq!(std::fs::read_to_string(&path).unwrap(), invalid);
         }
+    }
+
+    #[test]
+    fn existing_settings_keep_automatic_connection_enabled() {
+        let mut previous = serde_json::to_value(Preferences::default()).unwrap();
+        previous
+            .as_object_mut()
+            .unwrap()
+            .remove("connect_automatically");
+        let restored: Preferences = serde_json::from_value(previous).unwrap();
+        assert!(restored.connect_automatically);
     }
 }

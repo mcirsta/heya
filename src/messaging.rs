@@ -248,7 +248,15 @@ pub async fn run_with_chat_sources(
             }
             command = commands.recv() => {
                 let Some(command) = command else { return; };
-                let Some(db) = &archive else { continue; };
+                let Some(db) = &archive else {
+                    if let Command::Send {chat,text,request,..}=command {
+                        // A disconnect can release storage after UI submission.
+                        // Retain the rejection just like a durable-save reply.
+                        reply=Some(SendReply{chat,text,request,saved:false});
+                        updates.send_modify(|snapshot|snapshot.reply=reply.clone());
+                    }
+                    continue;
+                };
                 let result = match command {
                     Command::Navigation(crate::message_navigation::Command::Search {chat,query,request,revision:seen}) => {
                         if chat!=selected || seen!=revision {continue;}

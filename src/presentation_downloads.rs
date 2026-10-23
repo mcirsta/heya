@@ -27,7 +27,7 @@ pub(crate) fn parent(ui: &AppWindow) -> String {
         )
         .unwrap_or_default()
 }
-fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>) {
+pub(crate) fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>) {
     let weak = ui.as_weak();
     let tx = commands.clone();
     ui.on_download_message(move |chat, message| {
@@ -63,6 +63,7 @@ fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>) {
             ui.set_notice("Downloads are busy. Please try again.".into());
         }
     });
+    let weak = ui.as_weak();
     ui.on_download_control(move |action| {
         let command = match action {
             0 => Command::Cancel,
@@ -70,7 +71,11 @@ fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>) {
             2 => Command::Dismiss,
             _ => return,
         };
-        let _ = commands.try_send(command);
+        if commands.try_send(command).is_err()
+            && let Some(ui) = weak.upgrade()
+        {
+            ui.set_notice("Download controls are busy. Please try again.".into());
+        }
     });
 }
 fn bytes(n: u64) -> String {

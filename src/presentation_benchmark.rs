@@ -465,6 +465,7 @@ pub fn start(
                 &crate::calling::Status {
                     chat: ui.get_selected_id(),
                     phase: 5,
+                    can_mute: true,
                     title: "Alex Morgan".into(),
                     seconds: call_seconds,
                     available: true,

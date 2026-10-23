@@ -10,6 +10,9 @@ pub(crate) mod chat_list;
 #[path = "presentation_chat_management_tests.rs"]
 mod chat_management_tests;
 #[cfg(test)]
+#[path = "presentation_media_tests.rs"]
+mod media_tests;
+#[cfg(test)]
 #[path = "presentation_notice_tests.rs"]
 mod notice_tests;
 #[cfg(test)]
@@ -426,6 +429,7 @@ pub fn attach(
             &crate::calling::Status {
                 chat: 1,
                 phase,
+                can_mute: matches!(phase, 3..=5),
                 title: "Alex Morgan".into(),
                 seconds: 125,
                 ..Default::default()
@@ -1227,6 +1231,7 @@ mod tests {
         let runtime = Runtime::new().unwrap();
         let live_ui = check_live_message_handoff();
         send_tests::check_ui();
+        media_tests::check_ui();
         super::chat_management_tests::check_ui();
         crate::presentation_avatars::check_ui();
         crate::presentation_preferences::check_ui(&runtime);
@@ -1236,6 +1241,7 @@ mod tests {
         crate::presentation_photos::check_ui();
         crate::presentation_audio::check_ui();
         crate::presentation_calling::check_ui();
+        crate::presentation_calling::workflow_tests::check_ui_flow(&runtime);
         crate::presentation_video::check_ui();
         crate::presentation_hover_tests::check_ui();
         crate::presentation_hover_tests::check_action_flows();

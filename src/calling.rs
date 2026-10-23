@@ -41,7 +41,7 @@ impl Error {
             Self::Audio(_) => {
                 "Call audio is unavailable. Check your microphone, speakers and audio settings."
             }
-            Self::Offline => "The connection closed. Please reconnect before calling.",
+            Self::Offline => "Connect to WhatsApp before making a call.",
             Self::Unavailable => "Audio calling is unavailable for this conversation.",
             Self::Network => "The call could not connect. Please try again.",
             Self::Timeout => "The call was not answered.",
@@ -86,11 +86,13 @@ pub struct Status {
     pub chat: i32,
     pub offer: String,
     pub available: bool,
-    /// 0 hidden, 1 incoming, 2 preparing, 3 calling, 4 connecting, 5 active, 6 ended.
+    /// 0 idle, 1 incoming, 2 preparing, 3 calling, 4 connecting, 5 active, 6 ended.
+    /// Outgoing preparation stays outside the call panel until setup succeeds.
     pub phase: i32,
     pub title: String,
     pub seconds: u64,
     pub muted: bool,
+    pub can_mute: bool,
     pub error: Option<Error>,
 }
 fn publish(updates: &watch::Sender<Status>, status: &Status) {
@@ -199,8 +201,11 @@ impl Controller {
                             }
                         }
                         (_, target) => {
-                            self.status.phase = 6;
-                            self.status.error = Some(target.err().unwrap_or(Error::Offline));
+                            self.status = Status {
+                                available: self.status.available,
+                                error: Some(target.err().unwrap_or(Error::Offline)),
+                                ..Default::default()
+                            };
                             publish(&self.updates, &self.status);
                         }
                     }
@@ -273,7 +278,7 @@ impl Controller {
         };
         publish(updates, status);
         if *stopped.borrow_and_update() {
-            status.phase = 6;
+            status.phase = if offer.is_some() { 6 } else { 0 };
             publish(updates, status);
             return true;
         }
@@ -281,7 +286,7 @@ impl Controller {
             match call_audio::Worker::start(settings.borrow().audio.clone(), input) {
                 Ok(p) => p,
                 Err(e) => {
-                    status.phase = if offer.is_some() { 1 } else { 6 };
+                    status.phase = if offer.is_some() { 1 } else { 0 };
                     status.error = Some(Error::Audio(e));
                     publish(updates, status);
                     return true;
@@ -290,11 +295,10 @@ impl Controller {
         let mut open = true;
         let mut cancelled = false;
         let result = {
-            let preparation = async {
-                audio.ready().await.map_err(Error::Audio)?;
-                provider.open(&target, offer.as_deref(), ports).await
-            };
-            tokio::pin!(preparation);
+            let ready = audio.ready();
+            let starting = provider.open(&target, offer.as_deref(), ports);
+            tokio::pin!(ready, starting);
+            let mut audio_ready = false;
             let deadline = tokio::time::sleep(Duration::from_secs(90));
             tokio::pin!(deadline);
             loop {
@@ -307,8 +311,12 @@ impl Controller {
                         None=>{open=false;cancelled=true;break Err(Error::Offline);},
                     },
                     _=sources.changed()=>{cancelled=true;break Err(Error::Offline);},
-                    result=&mut preparation=>break result,
-                    _=&mut deadline=>break Err(Error::Timeout),
+                    result=&mut ready,if !audio_ready=>match result {
+                        Ok(())=>{audio_ready=true;status.phase=if offer.is_some(){4}else{3};publish(updates,status);},
+                        Err(error)=>break Err(Error::Audio(error)),
+                    },
+                    result=&mut starting,if audio_ready=>break result,
+                    _=&mut deadline=>break Err(Error::Network),
                 }
             }
         };
@@ -320,11 +328,12 @@ impl Controller {
                     let _ =
                         tokio::time::timeout(Duration::from_secs(3), provider.decline(id)).await;
                 }
-                status.phase = if matches!(
+                status.phase = if offer.is_none() {
+                    0
+                } else if matches!(
                     error,
                     Error::Audio(AudioError::NoInput | AudioError::Permission)
-                ) && offer.is_some()
-                {
+                ) {
                     1
                 } else {
                     6
@@ -334,6 +343,8 @@ impl Controller {
                 return open;
             }
         };
+        status.can_mute = true;
+        status.muted = call.muted();
         status.phase = if offer.is_some() { 4 } else { 3 };
         publish(updates, status);
         let mut timer = tokio::time::interval(Duration::from_secs(1));
@@ -372,6 +383,7 @@ impl Controller {
         tokio::join!(audio.stop(), async {
             let _ = tokio::time::timeout(Duration::from_secs(3), call.end()).await;
         });
+        status.can_mute = false;
         status.phase = 6;
         publish(updates, status);
         open

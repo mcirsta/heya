@@ -142,10 +142,14 @@ See [call events](call-events.md); the owner confirmed a real event in both the
 sidebar and conversation. Actual call interoperability is still unverified.
 
 The first slice now implements Connect/Cancel/Disconnect, QR rotation/expiry,
-encrypted single-session storage with a desktop keyring key, automatic saved
+encrypted single-session storage with a desktop keyring key, configurable saved
 session resume, offline archive opening, SDK reconnection states and bounded
 shutdown. Confirmed unlink/relink preserves the archive and its account binding;
 an unconfirmed remote unlink is reported. The upstream pin is unchanged.
+Automatic connection is enabled by default. Disabling it waits for Connect
+without opening the keyring or archive; an explicit `--offline` launch still
+opens the encrypted archive and needs its key. A failed or cancelled keyring
+unlock remains an explicit connection failure, with manual retry.
 Synthetic tests cover storage, state mapping, reset/archive preservation and UI controls;
 the owner has reached the connected chat list after pairing, and a later launch
 resumed the existing session to Connected. The owner confirmed live receiving.

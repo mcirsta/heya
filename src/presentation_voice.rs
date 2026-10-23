@@ -26,13 +26,14 @@ pub fn attach(
         );
     }
 }
-fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>) {
+pub(crate) fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>) {
     let weak = ui.as_weak();
     ui.set_voice_supported(crate::audio::SUPPORTED);
     ui.on_voice_control(move |action| {
         let Some(ui) = weak.upgrade() else { return };
         let command = match action {
             0 if ui.get_voice_phase() == 0
+                && ui.global::<crate::ui::AudioCall>().get_phase() == 0
                 && !ui.get_microphone_dialog()
                 && ui.get_attachment_phase() == 0
                 && ui.get_selected_id() > 0
@@ -41,7 +42,6 @@ fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>) {
                         && ui.get_live_can_send()
                         && ui.get_live_revision() == ui.get_live_shown_revision())) =>
             {
-                ui.invoke_audio_control(0, 3, 0.);
                 Command::Start {
                     chat: ui.get_selected_id(),
                     title: ui.get_chat_title().into(),
@@ -55,10 +55,15 @@ fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>) {
             6 => Command::ClearReply,
             _ => return,
         };
-        if commands.try_send(command).is_err() {
-            ui.set_notice("Voice recording is busy. Please try again.".into());
-        } else if action == 0 {
-            ui.set_voice_phase(6);
+        match commands.try_reserve() {
+            Ok(permit) => {
+                if action == 0 {
+                    ui.invoke_audio_control(0, 3, 0.);
+                    ui.set_voice_phase(6);
+                }
+                permit.send(command);
+            }
+            Err(_) => ui.set_notice("Voice recording is busy. Please try again.".into()),
         }
     });
 }
@@ -158,7 +163,7 @@ pub(crate) fn check_ui() {
     };
     for (w, h) in [(1200., 800.), (800., 600.), (520., 480.), (620., 480.)] {
         ui.window().set_size(slint::LogicalSize::new(w, h));
-        let panel = ElementHandle::find_by_element_id(&ui, "MicrophoneDialog::panel")
+        let panel = ElementHandle::find_by_element_id(&ui, "AudioErrorDialog::panel")
             .next()
             .unwrap();
         let p = panel.absolute_position();

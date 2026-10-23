@@ -7,6 +7,17 @@ merely ringing. A missing microphone is reported through the existing dialog;
 the incoming offer remains answerable until it expires. Group/video calls, call
 waiting, ringtones and OS call integration are separate work.
 
+Outgoing microphone/permission/device checks complete before the call panel opens.
+Failed checks show an audio error popup without a preparing/ended call dialog.
+Once audio is ready, Calling appears while signaling starts, rather than hiding
+the network wait. Initial signaling failures close the panel and show the error
+popup. The header shows Checking audio during the brief readiness check, with
+repeated starts ignored. The call panel handles ringing,
+connection progress and later failures normally. Incoming offers remain visible
+before answering, without opening the microphone merely to ring.
+Mute is enabled once the SDK returns a call handle; hangup is available during
+network setup too.
+
 ## Protocol and audio ownership
 
 `protocol_calling` uses the pinned whatsapp-rust `voip` public facade, with no
@@ -53,6 +64,10 @@ tests construct an unspawned synthetic SDK bot to check offer/control routing.
 Shutdown tests include the calling source in the SDK session-release fence.
 Toolkit tests check panel/text containment at 520/800/1200 px, actual controls,
 rapid repeated actions and keyboard focus without sending a hidden draft.
+Button-to-controller tests click the actual header and run the finite audio
+helper, covering absent microphones, setup failure, visible Calling during slow
+network setup, mute, hangup and dismissal. A connection-state transition or an
+unfinished voice message produces a popup instead of silently rejecting a click.
 
 For the real Linux pipeline, use the unit-test executable produced by
 `cargo test --release --locked --bin heya --no-run`:

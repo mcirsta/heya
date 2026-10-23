@@ -34,21 +34,30 @@ pub fn attach(
         );
     }
 }
-fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>, stop: watch::Sender<bool>) {
+fn show_error(ui: &AppWindow, message: &str) {
+    ui.set_audio_error(message.into());
+    ui.set_microphone_dialog(true);
+}
+pub(crate) fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>, stop: watch::Sender<bool>) {
     let weak = ui.as_weak();
     ui.global::<AudioCall>().on_action(move |action| {
         let Some(ui) = weak.upgrade() else { return };
         let command = match action {
             0 => {
-                if ui.get_connection_state() != 5
-                    || ui.get_voice_phase() != 0
-                    || ui.global::<AudioCall>().get_phase() != 0
-                {
+                if ui.global::<AudioCall>().get_phase() != 0 {
                     return;
                 }
-                ui.invoke_audio_control(0, 3, 0.);
-                ui.invoke_video_control(0, 3, 0.);
-                stop.send_replace(false);
+                if ui.get_connection_state() != 5 {
+                    show_error(&ui, calling::Error::Offline.label());
+                    return;
+                }
+                if ui.get_voice_phase() != 0 {
+                    show_error(
+                        &ui,
+                        "Finish or discard your voice message before making a call.",
+                    );
+                    return;
+                }
                 Command::Start(ui.get_selected_id())
             }
             1 => {
@@ -57,12 +66,6 @@ fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>, stop: watch::Sender<boo
                 {
                     return;
                 }
-                if ui.get_voice_playing() {
-                    ui.invoke_voice_control(4);
-                }
-                ui.invoke_audio_control(0, 3, 0.);
-                ui.invoke_video_control(0, 3, 0.);
-                stop.send_replace(false);
                 Command::Answer(ui.global::<AudioCall>().get_offer().into())
             }
             2 => Command::Decline(ui.global::<AudioCall>().get_offer().into()),
@@ -72,7 +75,7 @@ fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>, stop: watch::Sender<boo
                 return;
             }
             4 => {
-                if !matches!(ui.global::<AudioCall>().get_phase(), 3..=5) {
+                if !ui.global::<AudioCall>().get_can_mute() {
                     return;
                 }
                 Command::Mute
@@ -85,23 +88,27 @@ fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>, stop: watch::Sender<boo
             }
             _ => return,
         };
-        if commands.try_send(command).is_err() {
-            ui.global::<AudioCall>()
-                .set_error("Call controls are busy. Please try again.".into());
-        } else if action == 0 || action == 1 {
-            let global = ui.global::<AudioCall>();
-            global.set_phase(2);
-            if action == 0 {
-                publish(
-                    &ui,
-                    &Status {
-                        chat: ui.get_selected_id(),
-                        available: global.get_available(),
-                        phase: 2,
-                        title: ui.get_chat_title().into(),
-                        ..Default::default()
-                    },
-                );
+        match commands.try_reserve() {
+            Ok(permit) => {
+                if action == 0 || action == 1 {
+                    if action == 1 && ui.get_voice_playing() {
+                        ui.invoke_voice_control(4);
+                    }
+                    ui.invoke_audio_control(0, 3, 0.);
+                    ui.invoke_video_control(0, 3, 0.);
+                    stop.send_replace(false);
+                    let global = ui.global::<AudioCall>();
+                    global.set_error("".into());
+                    global.set_phase(2);
+                }
+                permit.send(command);
+            }
+            Err(_) => {
+                ui.global::<AudioCall>()
+                    .set_error("Call controls are busy. Please try again.".into());
+                if !ui.global::<AudioCall>().get_shown() {
+                    show_error(&ui, "Call controls are busy. Please try again.");
+                }
             }
         }
     });
@@ -110,6 +117,9 @@ pub fn publish(ui: &AppWindow, status: &Status) {
     let global = ui.global::<AudioCall>();
     let before = global.get_phase();
     let before_chat = global.get_chat();
+    let error = status.error.map_or("", |e| e.label());
+    let report_error =
+        status.error.is_some() && (before != status.phase || global.get_error() != error);
     global.set_chat(status.chat);
     global.set_offer(status.offer.as_str().into());
     global.set_available(status.available);
@@ -136,9 +146,18 @@ pub fn publish(ui: &AppWindow, status: &Status) {
     };
     global.set_time(time.into());
     global.set_muted(status.muted);
-    global.set_error(status.error.map_or("", |e| e.label()).into());
-    if status.error == Some(calling::Error::Audio(crate::voice_recorder::Error::NoInput)) {
-        ui.set_microphone_dialog(true);
+    global.set_can_mute(status.can_mute);
+    global.set_error(error.into());
+    if before == 2 && matches!(status.phase, 3..=5) {
+        ui.invoke_audio_control(0, 3, 0.);
+        ui.invoke_video_control(0, 3, 0.);
+    }
+    if report_error {
+        if status.error == Some(calling::Error::Audio(crate::voice_recorder::Error::NoInput)) {
+            show_error(ui, "");
+        } else if status.phase == 0 {
+            show_error(ui, error);
+        }
     }
     if before > 0 && status.phase == 0 {
         ui.invoke_focus_composer();
@@ -172,6 +191,12 @@ pub(crate) fn check_ui() {
                 &Status {
                     available: true,
                     phase,
+                    can_mute: matches!(phase, 3..=5),
+                    offer: if phase == 2 {
+                        "synthetic-offer".into()
+                    } else {
+                        String::new()
+                    },
                     title: "Synthetic caller with a long Unicode name · 你好".into(),
                     seconds: 125,
                     ..Default::default()
@@ -211,6 +236,26 @@ pub(crate) fn check_ui() {
         }
     }
     ui.global::<AudioCall>().set_phase(0);
+    ui.set_connection_state(2);
+    let button = ElementHandle::find_by_accessible_label(&ui, "Start a voice call")
+        .next()
+        .unwrap();
+    assert_eq!(button.accessible_enabled(), Some(true));
+    workflow_tests::click_button(&ui, "Start a voice call");
+    assert!(
+        ui.get_microphone_dialog(),
+        "a click while the connection changes must report the error instead of silently returning"
+    );
+    assert!(requests.try_recv().is_err());
+    ui.invoke_close_microphone_dialog();
+    ui.set_connection_state(5);
+    ui.set_voice_phase(1);
+    workflow_tests::click_button(&ui, "Start a voice call");
+    assert!(ui.get_microphone_dialog());
+    assert!(ui.get_audio_error().contains("voice message"));
+    assert!(requests.try_recv().is_err());
+    ui.invoke_close_microphone_dialog();
+    ui.set_voice_phase(0);
     ui.global::<AudioCall>().invoke_action(0);
     assert!(matches!(requests.try_recv().unwrap(), Command::Start(77)));
     ui.global::<AudioCall>().invoke_action(0);
@@ -218,6 +263,86 @@ pub(crate) fn check_ui() {
         requests.try_recv().is_err(),
         "a second click cannot enqueue or cancel another call"
     );
+    assert!(!ui.global::<AudioCall>().get_shown());
+    assert_eq!(
+        ElementHandle::find_by_accessible_label(&ui, "Message draft")
+            .next()
+            .unwrap()
+            .accessible_enabled(),
+        Some(true),
+        "preparation does not block typing"
+    );
+    assert_eq!(
+        ElementHandle::find_by_element_type_name(&ui, "CallPanel").count(),
+        0
+    );
+    let button = ElementHandle::find_by_accessible_label(&ui, "Start a voice call")
+        .next()
+        .unwrap();
+    assert_eq!(
+        button.accessible_enabled(),
+        Some(false),
+        "a double click must not cancel the check or start another call"
+    );
+    publish(
+        &ui,
+        &Status {
+            error: Some(calling::Error::Audio(crate::voice_recorder::Error::NoInput)),
+            ..Default::default()
+        },
+    );
+    assert!(ui.get_microphone_dialog());
+    assert_eq!(
+        ElementHandle::find_by_element_type_name(&ui, "CallPanel").count(),
+        0
+    );
+    ui.invoke_close_microphone_dialog();
+    publish(
+        &ui,
+        &Status {
+            available: true,
+            error: Some(calling::Error::Audio(crate::voice_recorder::Error::NoInput)),
+            ..Default::default()
+        },
+    );
+    assert!(
+        !ui.get_microphone_dialog(),
+        "availability refresh cannot reopen a dismissed warning"
+    );
+    assert_eq!(
+        ElementHandle::find_by_element_type_name(&ui, "CallPanel").count(),
+        0
+    );
+    for error in [
+        calling::Error::Audio(crate::voice_recorder::Error::Permission),
+        calling::Error::Audio(crate::voice_recorder::Error::Device),
+        calling::Error::Audio(crate::voice_recorder::Error::Disabled),
+        calling::Error::Unavailable,
+        calling::Error::Offline,
+        calling::Error::Network,
+    ] {
+        publish(
+            &ui,
+            &Status {
+                phase: 2,
+                ..Default::default()
+            },
+        );
+        publish(
+            &ui,
+            &Status {
+                error: Some(error),
+                ..Default::default()
+            },
+        );
+        assert_eq!(ui.get_audio_error(), error.label());
+        assert!(ui.get_microphone_dialog());
+        assert_eq!(
+            ElementHandle::find_by_element_type_name(&ui, "CallPanel").count(),
+            0
+        );
+        ui.invoke_close_microphone_dialog();
+    }
     ui.global::<AudioCall>().set_offer("synthetic-offer".into());
     for (action, expected) in [(1, 1), (2, 2), (4, 4), (5, 5)] {
         if action == 1 {
@@ -228,6 +353,7 @@ pub(crate) fn check_ui() {
         }
         if action == 4 {
             ui.global::<AudioCall>().set_phase(5);
+            ui.global::<AudioCall>().set_can_mute(true);
         }
         if action == 5 {
             ui.global::<AudioCall>().set_phase(6);
@@ -329,3 +455,7 @@ pub(crate) fn check_ui() {
     publish(&ui, &Status::default());
     ui.hide().unwrap();
 }
+
+#[cfg(test)]
+#[path = "presentation_calling_tests.rs"]
+pub(crate) mod workflow_tests;

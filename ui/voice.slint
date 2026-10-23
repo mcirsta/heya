@@ -2,8 +2,9 @@ import { Theme } from "theme.slint";
 import { IconButton } from "components.slint";
 import { SessionButton } from "session.slint";
 
-// Created only after a failed microphone check, once for the whole window.
-export component MicrophoneDialog inherits Rectangle {
+// One shared audio error popup. Empty error selects the microphone setup guidance.
+export component AudioErrorDialog inherits Rectangle {
+    in property <string> error;
     callback close();
     background: #0005;
     TouchArea { }
@@ -30,7 +31,7 @@ export component MicrophoneDialog inherits Rectangle {
                 padding: 24px;
                 spacing: 24px;
                 Text {
-                    text: @tr("Microphone not found");
+                    text: root.error == "" ? @tr("Microphone not found") : @tr("Unable to start call");
                     color: Theme.text;
                     font-size: 24px;
                     wrap: word-wrap;
@@ -38,7 +39,7 @@ export component MicrophoneDialog inherits Rectangle {
                     accessible-label: self.text;
                 }
                 Text {
-                    text: @tr("You can't record a voice message because no microphone is available. Connect a microphone and try again. If one is already connected, check the microphone selection in Settings → Audio and your system's microphone permissions.");
+                    text: root.error != "" ? root.error : @tr("No microphone is available for voice messages or calls. Connect a microphone and try again. If one is already connected, check the microphone selection in Settings → Audio and your system's microphone permissions.");
                     color: Theme.secondary;
                     font-size: 14px;
                     wrap: word-wrap;

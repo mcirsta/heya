@@ -166,11 +166,10 @@ pub fn attach(
     preferences: watch::Receiver<crate::preferences::Preferences>,
 ) -> JoinHandle<()> {
     let (requests, receiver) = watch::channel(Request::Idle);
-    requests.send_replace(if offline {
-        Request::OpenOffline
-    } else {
-        Request::Startup
-    });
+    requests.send_replace(Request::startup(
+        offline,
+        preferences.borrow().connect_automatically,
+    ));
     let desired = receiver.clone();
     let (updates, snapshots) = watch::channel(Snapshot::new(Phase::Idle));
     publish(ui, &snapshots.borrow());

@@ -3,6 +3,36 @@ use super::*;
 use crate::archive::tests::{PN, fixture};
 
 #[tokio::test]
+async fn send_without_an_archive_is_rejected_instead_of_leaving_the_ui_pending() {
+    let (_archives, receiver) = watch::channel(None);
+    let (commands, rx) = mpsc::channel(1);
+    let (updates, mut views) = watch::channel(Snapshot::empty());
+    let task = tokio::spawn(run(receiver, rx, updates));
+    commands
+        .send(Command::Send {
+            chat: 1,
+            text: "Retain this synthetic draft".into(),
+            request: 7,
+            draft_version: 2,
+        })
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(2), views.changed())
+        .await
+        .expect("an accepted send must receive an acknowledgement even without an archive")
+        .unwrap();
+    let snapshot = views.borrow_and_update().clone();
+    let reply = snapshot.reply.unwrap();
+    assert_eq!(reply.request, 7);
+    assert_eq!(reply.chat, 1);
+    assert_eq!(reply.text, "Retain this synthetic draft");
+    assert!(!reply.saved);
+    assert!(snapshot.view.is_none());
+    drop(commands);
+    task.await.unwrap();
+}
+
+#[tokio::test]
 async fn send_replies_report_committed_text_and_allow_retry_after_failure() {
     let (_temp, db) = fixture();
     let chat = db.create_chat(PN.into()).await.unwrap();

@@ -94,19 +94,21 @@ pub(crate) fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>) {
             {
                 return;
             }
-            0 => {
-                ui.invoke_audio_control(0, 3, 0.);
-                Command::Toggle(id)
-            }
+            0 => Command::Toggle(id),
             1 => Command::Seek(id, f64::from(value)),
             2 => Command::Mute(id),
             _ => return,
         };
-        if matches!(command, Command::Stop) {
-            ui.set_video_expanded(false);
-        }
-        if commands.try_send(command).is_err() {
-            ui.set_notice("Video is busy. Please try again.".into());
+        match commands.try_reserve() {
+            Ok(permit) => {
+                if matches!(command, Command::Stop) {
+                    ui.set_video_expanded(false);
+                } else if action == 0 {
+                    ui.invoke_audio_control(0, 3, 0.);
+                }
+                permit.send(command);
+            }
+            Err(_) => ui.set_notice("Video is busy. Please try again.".into()),
         }
     });
 }

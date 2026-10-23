@@ -603,6 +603,12 @@ fn refresh(ui: &AppWindow, p: &Preferences) {
         (
             "Account",
             vec![
+                toggle(
+                    "connect_automatically",
+                    "Connect automatically on startup",
+                    "Use your saved session when Heya starts. Your OS may ask you to unlock the keyring. When off, saved chats stay closed until you connect. Applies on the next launch.",
+                    p.connect_automatically,
+                ),
                 if ui.get_demo_mode()
                     || ui.get_connection_state() == 7
                     || ui.get_connection_blocked()
@@ -820,6 +826,21 @@ pub(crate) fn check_ui(runtime: &tokio::runtime::Runtime) {
     .unwrap();
     settings.invoke_accessible_default_action();
     assert!(ui.get_settings_open());
+    assert!(current.borrow().connect_automatically);
+    ui.set_settings_query("Connect automatically".into());
+    ui.invoke_search_settings(ui.get_settings_query());
+    ElementHandle::find_by_accessible_label(&ui, "Connect automatically on startup")
+        .find(|element| {
+            element.accessible_role() == Some(i_slint_backend_testing::AccessibleRole::Checkbox)
+        })
+        .unwrap()
+        .invoke_accessible_default_action();
+    assert!(!current.borrow().connect_automatically);
+    assert_eq!(ui.get_connection_state(), 0, "only future startup changes");
+    ui.invoke_preference_changed("connect_automatically".into(), 1);
+    assert!(current.borrow().connect_automatically);
+    ui.set_settings_query("".into());
+    ui.invoke_search_settings(ui.get_settings_query());
     for index in 0..THEMES.len() {
         ui.invoke_preference_changed("theme".into(), index as i32);
         assert_eq!(ui.global::<Theme>().get_follow_system(), index == 0);

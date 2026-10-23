@@ -43,6 +43,9 @@ proposed components or acceptance targets as implemented or measured behavior.
 
 ## Quality and responsiveness
 
+- For stateful UI/backend changes, apply [the state-flow skill](skills/heya-state-flow/SKILL.md):
+  trace command acceptance through backend completion, simplify conflicting state,
+  and test delayed/failing operations before adding coordination machinery.
 - Prefer completing one feature's behavior, failure cases, tests and responsiveness
   over adding more partially validated features. Rework an existing design when
   measurements or bugs show it is inadequate.

@@ -8,11 +8,14 @@ export global AudioCall {
     in-out property <string> offer;
     in-out property <bool> available;
     in-out property <int> phase;
+    // Outgoing readiness checks have no incoming offer and are not a call yet.
+    out property <bool> shown: phase > 0 && (phase != 2 || offer != "");
     in-out property <string> title;
     in-out property <string> initials;
     in-out property <string> time;
     in-out property <string> error;
     in-out property <bool> muted;
+    in-out property <bool> can-mute;
     callback action(int);
 }
 component CallAction inherits Rectangle {
@@ -118,7 +121,7 @@ export component CallPanel inherits Rectangle {
                 activated => { if root.recording {root.finish-recording();} else {AudioCall.action(1);} }
             }
             if AudioCall.phase != 1: CallAction {
-                enabled: AudioCall.phase != 2;
+                enabled: AudioCall.can-mute;
                 label: AudioCall.muted ? @tr("Unmute") : @tr("Mute");
                 icon: AudioCall.muted ? @image-url("icons/mic-off.svg") : @image-url("icons/mic.svg");
                 fill: AudioCall.muted ? Theme.outline : Theme.surface;

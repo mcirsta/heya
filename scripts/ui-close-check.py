@@ -3,6 +3,7 @@
 import os
 import ctypes
 import ctypes.util
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -61,13 +62,26 @@ def main():
     assert not os.environ.get("DBUS_SESSION_BUS_ADDRESS")
     assert not os.environ.get("WAYLAND_DISPLAY")
     assert not list(data.rglob("*.db"))
+    child_env = os.environ.copy()
+    # Explicitly reject D-Bus autolaunch too, including in a regressed startup.
+    child_env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={os.environ['XDG_RUNTIME_DIR']}/no-keyring-bus"
 
-    for mode, delay in [("demo", 0), ("startup", 0), ("demo", 0.5), ("startup", 0.5)]:
+    for mode, delay in [("demo", 0), ("startup", 0), ("manual", 0.5), ("demo", 0.5), ("startup", 0.5)]:
+        if mode == "manual":
+            # A saved-session marker would normally trigger vault access. With
+            # automatic connection off, even the session lock stays unopened.
+            profile = data / "heya" / "default-v2"
+            profile.mkdir(parents=True)
+            marker = profile / "session.db"
+            marker.write_bytes(b"Synthetic unopened session")
+            settings = Path(os.environ["XDG_CONFIG_HOME"]) / "heya" / "settings.json"
+            settings.parent.mkdir(parents=True)
+            settings.write_text(json.dumps({"connect_automatically": False}))
         args = [sys.argv[1], "--size", "800x600"]
         if mode == "demo":
             args += ["--demo", "--demo-chat", "10"]
         with tempfile.TemporaryFile(mode="w+") as log:
-            proc = subprocess.Popen(args, stdout=log, stderr=log)
+            proc = subprocess.Popen(args, stdout=log, stderr=log, env=child_env)
             try:
                 window = subprocess.check_output(
                     ["xdotool", "search", "--sync", "--onlyvisible", "--pid", str(proc.pid), "--name", "^Heya"],
@@ -94,6 +108,12 @@ def main():
                 assert "Heya shutdown: finished" in output, output
                 assert "shutdown was interrupted" not in output, output
                 assert "did not finish" not in output, output
+                if mode == "manual":
+                    assert "Heya connection:" not in output, output
+                    assert marker.read_bytes() == b"Synthetic unopened session"
+                    assert not (profile / "session.lock").exists(), "manual startup opened storage"
+                    marker.unlink()
+                    settings.unlink()
                 print(f"{mode}: no idle media thread; close/reopen exited in {elapsed:.0f} ms", flush=True)
             except Exception:
                 log.seek(0)

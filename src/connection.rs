@@ -87,6 +87,18 @@ pub enum Request {
     Logout,
 }
 impl Request {
+    /// Manual startup waits without touching the vault. An explicit offline
+    /// launch still opens the encrypted archive and therefore needs its key.
+    pub fn startup(offline: bool, connect_automatically: bool) -> Self {
+        if offline {
+            Self::OpenOffline
+        } else if connect_automatically {
+            Self::Startup
+        } else {
+            Self::Idle
+        }
+    }
+
     pub fn connects(self) -> bool {
         matches!(self, Self::Startup | Self::Connect | Self::Relink)
     }
@@ -127,5 +139,25 @@ impl Snapshot {
             qr: None,
             seconds_left: 0,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Request;
+
+    #[test]
+    fn startup_respects_the_preference_and_explicit_offline_launches() {
+        assert_eq!(Request::startup(false, true), Request::Startup);
+        assert_eq!(Request::startup(false, false), Request::Idle);
+        for connect_automatically in [false, true] {
+            let request = Request::startup(true, connect_automatically);
+            assert_eq!(request, Request::OpenOffline);
+            assert!(!request.connects());
+        }
+        assert!(
+            Request::Connect.connects(),
+            "manual Connect is always available"
+        );
     }
 }

@@ -12,13 +12,15 @@ use std::sync::{
 };
 use std::time::Duration;
 use tokio::sync::{mpsc, watch};
-struct Fake {
-    delay: AtomicBool,
+pub(crate) struct Fake {
+    pub(crate) delay: AtomicBool,
+    pub(crate) resume: tokio::sync::Notify,
     preparing: Arc<AtomicUsize>,
     incoming: watch::Sender<Option<Offer>>,
-    opened: Arc<AtomicUsize>,
-    ended: Arc<AtomicUsize>,
+    pub(crate) opened: Arc<AtomicUsize>,
+    pub(crate) ended: Arc<AtomicUsize>,
     declined: AtomicUsize,
+    pub(crate) failure: std::sync::Mutex<Option<Error>>,
     ended_remotely: watch::Receiver<bool>,
 }
 struct Active {
@@ -71,8 +73,11 @@ impl Network for Fake {
         assert_eq!(pcm.len(), SAMPLES);
         ports.speaker.send(pcm).await.map_err(|_| Error::Network)?;
         self.opened.fetch_add(1, Ordering::AcqRel);
+        if let Some(error) = *self.failure.lock().unwrap() {
+            return Err(error);
+        }
         if self.delay.load(Ordering::Acquire) {
-            std::future::pending::<()>().await;
+            self.resume.notified().await;
         }
         Ok(Box::new(Active {
             connected: false,
@@ -94,22 +99,22 @@ async fn state(rx: &mut watch::Receiver<Status>, accept: impl Fn(&Status) -> boo
         .unwrap()
         .clone()
 }
-struct Harness {
+pub(crate) struct Harness {
     _temp: tempfile::TempDir,
-    archive: crate::archive::Archive,
-    chat: i32,
-    network: Arc<Fake>,
+    pub(crate) archive: crate::archive::Archive,
+    pub(crate) chat: i32,
+    pub(crate) network: Arc<Fake>,
     _archive_source: watch::Sender<Option<crate::archive::Archive>>,
     _preferences: watch::Sender<Preferences>,
     sources: watch::Sender<Sources>,
-    commands: mpsc::Sender<Command>,
-    states: watch::Receiver<Status>,
+    pub(crate) commands: mpsc::Sender<Command>,
+    pub(crate) states: watch::Receiver<Status>,
     remote: watch::Sender<bool>,
-    stop: watch::Sender<bool>,
+    pub(crate) stop: watch::Sender<bool>,
     task: tokio::task::JoinHandle<()>,
 }
 impl Harness {
-    async fn new(input: Input) -> Self {
+    pub(crate) async fn new(input: Input) -> Self {
         let (temp, archive) = fixture();
         archive
             .ingest(crate::archive::Batch {
@@ -127,11 +132,13 @@ impl Harness {
         let (remote, ended_remotely) = watch::channel(false);
         let network = Arc::new(Fake {
             delay: AtomicBool::new(false),
+            resume: tokio::sync::Notify::new(),
             preparing: Arc::default(),
             incoming: watch::channel(None).0,
             opened: Arc::default(),
             ended: Arc::default(),
             declined: AtomicUsize::new(0),
+            failure: Default::default(),
             ended_remotely,
         });
         let (sources, source_rx) = watch::channel(Some(network.clone() as Arc<dyn Network>));
@@ -158,7 +165,7 @@ impl Harness {
             task,
         }
     }
-    async fn finish(self) {
+    pub(crate) async fn finish(self) {
         drop(self.commands);
         tokio::time::timeout(Duration::from_secs(5), self.task)
             .await
@@ -166,6 +173,7 @@ impl Harness {
             .unwrap();
     }
 }
+
 #[tokio::test]
 async fn outgoing_audio_can_mute_and_hangup_and_releases_each_helper() {
     let mut h = Harness::new(Input::Synthetic).await;
@@ -228,10 +236,11 @@ async fn incoming_audio_can_decline_or_answer_then_end_remotely() {
 async fn missing_microphone_never_signals_a_call_and_an_offer_remains_answerable() {
     let mut h = Harness::new(Input::Unavailable).await;
     h.commands.send(Command::Start(h.chat)).await.unwrap();
-    state(&mut h.states, |s| {
+    let failure = state(&mut h.states, |s| {
         s.error == Some(Error::Audio(AudioError::NoInput))
     })
     .await;
+    assert_eq!(failure.phase, 0, "a failed check is not a started call");
     assert_eq!(h.network.opened.load(Ordering::Acquire), 0);
     let target = h.archive.call_target(h.chat).await.unwrap();
     h.network.incoming.send_replace(Some(Offer {
@@ -251,6 +260,35 @@ async fn missing_microphone_never_signals_a_call_and_an_offer_remains_answerable
     assert!(h.network.incoming.borrow().is_some());
     assert_eq!(h.network.opened.load(Ordering::Acquire), 0);
     h.finish().await;
+}
+#[tokio::test]
+async fn outgoing_setup_errors_return_to_idle_without_a_call_ended_state() {
+    for error in [Error::Network, Error::Unavailable, Error::Offline] {
+        let mut h = Harness::new(Input::Synthetic).await;
+        state(&mut h.states, |s| s.available).await;
+        let chat = match error {
+            Error::Network => {
+                *h.network.failure.lock().unwrap() = Some(error);
+                h.chat
+            }
+            Error::Offline => {
+                h.sources.send_replace(None);
+                state(&mut h.states, |s| !s.available).await;
+                h.chat
+            }
+            _ => -1,
+        };
+        h.commands.send(Command::Start(chat)).await.unwrap();
+        let failed = state(&mut h.states, |s| s.error == Some(error)).await;
+        assert_eq!(failed.phase, 0);
+        assert_eq!(h.network.ended.load(Ordering::Acquire), 0);
+        assert_eq!(h.network.preparing.load(Ordering::Acquire), 0);
+        assert_eq!(
+            h.network.opened.load(Ordering::Acquire),
+            usize::from(error == Error::Network)
+        );
+        h.finish().await;
+    }
 }
 #[tokio::test]
 async fn disconnect_and_closing_the_ui_end_an_active_call() {
@@ -355,7 +393,7 @@ async fn cancelling_or_closing_during_call_preparation_releases_audio_and_setup(
             h.finish().await;
         } else {
             h.stop.send_replace(true);
-            state(&mut h.states, |s| s.phase == 6).await;
+            state(&mut h.states, |s| s.phase == 0).await;
             h.finish().await;
         }
         assert_eq!(preparing.load(Ordering::Acquire), 0);

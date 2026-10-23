@@ -85,10 +85,19 @@ launcher and taskbar icons for your user. The desktop integration uses the SVG
 where supported and generated PNG fallbacks otherwise. See
 [branding and desktop integration](docs/branding.md) for paths and update steps.
 
-Saved sessions resume automatically on a normal launch. On first use, click
+Saved sessions resume automatically on a normal launch. Turn off **Settings →
+Account → Connect automatically on startup** to wait for **Connect** instead;
+this also leaves saved chats closed and avoids accessing the keyring at startup.
+The setting takes effect on the next launch and does not disconnect an active session.
+If the OS keyring is locked, connecting may show its unlock prompt. Cancelling
+or failing that prompt leaves Heya disconnected; unlock the keyring and click
+**Connect** to retry. Heya does not store the keyring's password.
+On first use, click
 **Connect** to display a QR code and scan it from WhatsApp's **Linked devices →
 Link a device** screen. To open the real encrypted archive without connecting,
 run `cargo run --release --locked -- --offline`; **Connect** remains available.
+This explicit offline launch opens saved chats regardless of the automatic
+connection setting and still needs the key from the OS keyring.
 **Disconnect** closes the connection and retains the session. The SDK handles
 temporary network interruptions while the connection is active, and a banner
 shows the connection state without hiding cached conversations.

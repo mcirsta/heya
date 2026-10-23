@@ -59,7 +59,7 @@ pub fn publish(ui: &AppWindow, status: &Status) {
     }
 }
 
-fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>) {
+pub(crate) fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>) {
     let weak = ui.as_weak();
     ui.on_audio_control(move |id, action, value| {
         let Some(ui) = weak.upgrade() else {
@@ -67,9 +67,6 @@ fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>) {
         };
         if action != 3 && ui.get_voice_phase() > 0 {
             return;
-        }
-        if action == 0 {
-            ui.invoke_video_control(0, 3, 0.);
         }
         if action != 3
             && !ui
@@ -86,8 +83,14 @@ fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>) {
             3 => Command::Stop,
             _ => return,
         };
-        if commands.try_send(command).is_err() {
-            ui.set_notice("Audio is busy. Please try again.".into());
+        match commands.try_reserve() {
+            Ok(permit) => {
+                if action == 0 {
+                    ui.invoke_video_control(0, 3, 0.);
+                }
+                permit.send(command);
+            }
+            Err(_) => ui.set_notice("Audio is busy. Please try again.".into()),
         }
     });
 }

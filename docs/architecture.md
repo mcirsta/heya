@@ -32,9 +32,12 @@ serializes UI commands and produces archive-backed snapshots. Slint types stay
 in the presentation modules and `ui/`. No SDK fork or ZapFast application code
 is used.
 
-The protocol actor resumes an existing account on normal startup. A first launch
-waits for Connect before creating files or keys. `--offline` opens an existing
-archive without starting the network or outbox. Lifecycle events update a
+The protocol actor resumes an existing account on normal startup unless automatic
+connection is disabled in preferences. With that setting off, it waits for Connect
+without touching the keyring or archive. A first launch also waits for Connect
+before creating files or keys. `--offline` explicitly opens an existing archive
+regardless of the preference; it needs the keyring but starts no network or outbox.
+Lifecycle events update a
 latest-value watch channel inline. Message durability hooks commit supported
 batches before returning; history capture persists compressed chunks separately.
 Receipt and recovery events use a bounded synchronous handoff; overflow stops
@@ -220,6 +223,18 @@ flowchart LR
 | `src/presentation/`, `ui/` | Slint models, view mapping, focus and `.slint` components | Blocking I/O or source-of-truth message state |
 
 ## Runtime and UI updates
+
+The reusable [state-flow skill](../skills/heya-state-flow/SKILL.md) guides reviews
+of callbacks and their workers. Connection, messaging, navigation, chat/message
+actions, attachments, clipboard, settings and media retain their existing
+controllers; there is no additional shared dispatcher. Presentation owns input
+and pending feedback, while workers own capabilities and completed operations.
+Media controls reserve command capacity before stopping another player or
+clearing call cancellation. A rejected command reports its failure and leaves
+the existing activity alone. Send rejection still acknowledges the request if
+the archive becomes unavailable before processing; it cannot leave the composer
+waiting indefinitely. Regression checks exercise these failures alongside the
+existing delayed-save, stale-navigation, progress/model-reuse and cleanup tests.
 
 Run Slint on the main thread. An owned Tokio runtime manages connection and
 application tasks. Use dedicated blocking work for SQLite operations and image
