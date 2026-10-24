@@ -17,10 +17,20 @@ async fn roundtrip() {
         frames.borrow().remote.is_some()
     );
     ready.unwrap().unwrap();
-    let packet = tokio::time::timeout(Duration::from_secs(2), ports.capture.recv())
-        .await
-        .unwrap()
-        .unwrap();
+    // Start the peer stream at a fresh IDR, like the protocol bridge does.
+    // Frames queued during decoder preflight may be predictive or already old.
+    while ports.capture.try_recv().is_ok() {}
+    ports.keyframe();
+    let packet = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let frame = ports.capture.recv().await.unwrap();
+            if frame.keyframe {
+                break frame;
+            }
+        }
+    })
+    .await
+    .unwrap();
     assert!(!packet.data.is_empty());
     let first_timestamp = packet.timestamp;
     ports.playout.send(packet.clone()).await.unwrap();
@@ -38,6 +48,9 @@ async fn roundtrip() {
     assert!(!frames.borrow().camera_on);
     assert!(frames.borrow().local.is_none());
     let before = frames.borrow().remote_number;
+    // Decoder output is capped at 15 fps; use a new playout interval rather
+    // than submitting two copies inside the same frame interval.
+    tokio::time::sleep(Duration::from_millis(100)).await;
     ports.playout.send(packet).await.unwrap();
     tokio::time::timeout(
         Duration::from_secs(3),

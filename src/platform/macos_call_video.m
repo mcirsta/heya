@@ -4,6 +4,7 @@
 #import <CoreImage/CoreImage.h>
 #import <QuartzCore/QuartzCore.h>
 #include <math.h>
+#include <stdio.h>
 
 @interface HeyaCallVideo : NSObject <AVCaptureVideoDataOutputSampleBufferDelegate> {
 @public
@@ -34,12 +35,25 @@
 - (void)encode:(CVPixelBufferRef)pixel time:(CMTime)time;
 @end
 
+static OSStatus encoderProperty(HeyaCallVideo *state, CFStringRef key, CFTypeRef value) {
+    OSStatus status = VTSessionSetProperty(state->encoder, key, value);
+    if (status && state.synthetic) {
+        char name[160] = {0};
+        CFStringGetCString(key, name, sizeof(name), kCFStringEncodingUTF8);
+        fprintf(stderr, "Heya synthetic H.264 property %s failed (%d)\n", name, (int)status);
+    }
+    return status;
+}
+
 static void encodedVideo(void *ref, void *source, OSStatus status,
                          VTEncodeInfoFlags flags, CMSampleBufferRef sample) {
     (void)source; (void)flags;
     HeyaCallVideo *state = (__bridge HeyaCallVideo *)ref;
     if (!state.cameraOn) return;
-    if (status || !sample || !CMSampleBufferDataIsReady(sample)) { state.failed = YES; return; }
+    if (status || !sample || !CMSampleBufferDataIsReady(sample)) {
+        if (state.synthetic) fprintf(stderr, "Heya synthetic H.264 encode failed (%d)\n", (int)status);
+        state.failed = YES; return;
+    }
     CMBlockBufferRef block = CMSampleBufferGetDataBuffer(sample);
     size_t length = block ? CMBlockBufferGetDataLength(block) : 0;
     if (!length || length > 2 * 1024 * 1024) {state.failed = YES; return;}
@@ -87,18 +101,28 @@ static void decodedVideo(void *ref, void *source, OSStatus status,
     if (!self.cameraOn) return;
     if (!encoder) {
         size_t width = CVPixelBufferGetWidth(pixel), height = CVPixelBufferGetHeight(pixel);
-        if (!width || !height || width > 960 || height > 960 ||
-            VTCompressionSessionCreate(NULL, (int32_t)width, (int32_t)height,
+        if (!width || !height || width > 960 || height > 960) {self.failed = YES; return;}
+        OSStatus created = VTCompressionSessionCreate(NULL, (int32_t)width, (int32_t)height,
                 kCMVideoCodecType_H264, NULL, NULL, NULL, encodedVideo,
-                (__bridge void *)self, &encoder)) {self.failed = YES; return;}
-        if (VTSessionSetProperty(encoder, kVTCompressionPropertyKey_RealTime, kCFBooleanTrue) ||
-            VTSessionSetProperty(encoder, kVTCompressionPropertyKey_MaxFrameDelayCount, (__bridge CFTypeRef)@0) ||
-            VTSessionSetProperty(encoder, kVTCompressionPropertyKey_AllowFrameReordering, kCFBooleanFalse) ||
-            VTSessionSetProperty(encoder, kVTCompressionPropertyKey_ProfileLevel, kVTProfileLevel_H264_Baseline_AutoLevel) ||
-            VTSessionSetProperty(encoder, kVTCompressionPropertyKey_AverageBitRate, (__bridge CFTypeRef)@700000) ||
-            VTSessionSetProperty(encoder, kVTCompressionPropertyKey_MaxKeyFrameInterval, (__bridge CFTypeRef)@15) ||
-            VTSessionSetProperty(encoder, kVTCompressionPropertyKey_ExpectedFrameRate, (__bridge CFTypeRef)@15) ||
-            VTCompressionSessionPrepareToEncodeFrames(encoder)) {self.failed = YES; return;}
+                (__bridge void *)self, &encoder);
+        if (created) {
+            if (self.synthetic) fprintf(stderr, "Heya synthetic H.264 create failed (%d)\n", (int)created);
+            self.failed = YES; return;
+        }
+        if (encoderProperty(self, kVTCompressionPropertyKey_RealTime, kCFBooleanTrue)) {self.failed = YES; return;}
+        // Some Apple encoders do not expose this optional latency control.
+        // Readiness still requires an actual encoded and decoded frame.
+        (void)encoderProperty(self, kVTCompressionPropertyKey_MaxFrameDelayCount, (__bridge CFTypeRef)@0);
+        if (encoderProperty(self, kVTCompressionPropertyKey_AllowFrameReordering, kCFBooleanFalse) ||
+            encoderProperty(self, kVTCompressionPropertyKey_ProfileLevel, kVTProfileLevel_H264_Baseline_AutoLevel) ||
+            encoderProperty(self, kVTCompressionPropertyKey_AverageBitRate, (__bridge CFTypeRef)@700000) ||
+            encoderProperty(self, kVTCompressionPropertyKey_MaxKeyFrameInterval, (__bridge CFTypeRef)@15) ||
+            encoderProperty(self, kVTCompressionPropertyKey_ExpectedFrameRate, (__bridge CFTypeRef)@15)) {self.failed = YES; return;}
+        OSStatus prepared = VTCompressionSessionPrepareToEncodeFrames(encoder);
+        if (prepared) {
+            if (self.synthetic) fprintf(stderr, "Heya synthetic H.264 prepare failed (%d)\n", (int)prepared);
+            self.failed = YES; return;
+        }
     }
     [self.lock lock];
     if (localFrame) CVPixelBufferRelease(localFrame);

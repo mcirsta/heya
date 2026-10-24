@@ -231,7 +231,11 @@ async fn pump(
     let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(if cfg!(test) && header.synthetic && header.native {
+            Stdio::inherit()
+        } else {
+            Stdio::null()
+        })
         .kill_on_drop(true)
         .spawn()
         .map_err(|_| Error::Device)?;

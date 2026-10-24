@@ -30,8 +30,10 @@ limited to 2 MiB. Bounded queues discard old frames under pressure and request a
 fresh keyframe after loss. The latest local/remote images use a separate coalesced
 presentation stream, so video does not rebuild conversation models.
 
-The camera helper tests its decoder using its first locally encoded frame before
-declaring readiness. Camera-off acknowledgements follow physical capture shutdown.
+The camera helper feeds locally encoded frames into its decoder until an image
+decodes before declaring readiness. macOS also bounds encoder frame delay; Apple
+documents that the [real-time hint alone](https://developer.apple.com/documentation/videotoolbox/kvtcompressionpropertykey_maxframedelaycount)
+does not impose that bound. Camera-off acknowledgements follow physical capture shutdown.
 The parent monitors actual encoded progress while capture is enabled; heartbeats
 only establish liveness while it is off. Hangup, disconnect, setup cancellation,
 failure and app close stop/reap both media helpers and release the SDK bridge.
