@@ -21,6 +21,8 @@ pub struct Video {
     remote: AppSink,
     orientation: u8,
     lost: bool,
+    clock: std::time::Instant,
+    capture_offset: u32,
 }
 impl Video {
     pub fn new(synthetic: bool) -> Result<Self, Error> {
@@ -56,6 +58,7 @@ impl Video {
         );
         let bin = gst::parse::bin_from_description(&branch, true).map_err(|_| Error::Codec)?;
         let capture = Pipeline(gst::Pipeline::new());
+        let clock = std::time::Instant::now();
         capture
             .0
             .add_many([&camera, bin.upcast_ref()])
@@ -108,6 +111,8 @@ impl Video {
             remote,
             orientation: 0,
             lost: false,
+            clock,
+            capture_offset: 0,
         })
     }
     fn pixels(sample: gst::Sample, orientation: u8) -> Result<Pixels, Error> {
@@ -155,9 +160,11 @@ impl Device for Video {
         }
         if let Some(sample) = self.encoded.try_pull_sample(gst::ClockTime::ZERO) {
             let buffer = sample.buffer().ok_or(Error::Device)?;
-            let timestamp = buffer.pts().map_or(0, |t| {
-                (t.nseconds() as u128 * 90_000 / 1_000_000_000) as u32
-            });
+            let timestamp = self
+                .capture_offset
+                .wrapping_add(buffer.pts().map_or(0, |t| {
+                    (t.nseconds() as u128 * 90_000 / 1_000_000_000) as u32
+                }));
             let data = buffer
                 .map_readable()
                 .map_err(|_| Error::Device)?
@@ -187,6 +194,11 @@ impl Device for Video {
         Ok(())
     }
     fn camera(&mut self, enabled: bool) -> Result<(), Error> {
+        if enabled {
+            // NULL releases the camera and resets pipeline PTS. Preserve the call's
+            // RTP timeline across that reset, including time spent with capture off.
+            self.capture_offset = (self.clock.elapsed().as_nanos() * 90_000 / 1_000_000_000) as u32;
+        }
         self.capture
             .0
             .set_state(if enabled {

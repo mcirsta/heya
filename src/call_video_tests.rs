@@ -9,15 +9,20 @@ fn child() {
 async fn roundtrip() {
     let (updates, mut frames) = watch::channel(Frames::default());
     let (mut worker, ports) = Worker::start(Input::Synthetic, updates).unwrap();
-    tokio::time::timeout(Duration::from_secs(8), worker.ready())
-        .await
-        .unwrap()
-        .unwrap();
+    let ready = tokio::time::timeout(Duration::from_secs(8), worker.ready()).await;
+    assert!(
+        ready.is_ok(),
+        "camera readiness timed out (local frame: {}, remote frame: {})",
+        frames.borrow().local.is_some(),
+        frames.borrow().remote.is_some()
+    );
+    ready.unwrap().unwrap();
     let packet = tokio::time::timeout(Duration::from_secs(2), ports.capture.recv())
         .await
         .unwrap()
         .unwrap();
     assert!(!packet.data.is_empty());
+    let first_timestamp = packet.timestamp;
     ports.playout.send(packet.clone()).await.unwrap();
     tokio::time::timeout(
         Duration::from_secs(3),
@@ -56,6 +61,10 @@ async fn roundtrip() {
         .unwrap()
         .unwrap();
     assert!(!packet.data.is_empty());
+    assert!(
+        packet.timestamp.wrapping_sub(first_timestamp) > 90_000,
+        "camera resume must preserve the capture gap instead of resetting RTP time"
+    );
     worker.stop().await;
     assert!(
         !frames.borrow().camera_on

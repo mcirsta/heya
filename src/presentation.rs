@@ -429,6 +429,7 @@ pub fn attach(
             &crate::calling::Status {
                 chat: 1,
                 phase,
+                available: true,
                 can_mute: matches!(phase, 3..=5),
                 title: "Alex Morgan".into(),
                 seconds: 125,

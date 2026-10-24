@@ -482,7 +482,6 @@ fn run_child(out: &mut impl Write) -> Result<(), Error> {
     let mut on = true;
     let mut announce = true;
     let mut keyframe = 0;
-    let mut probe_started = false;
     let mut probed = false;
     let mut peer_received = false;
     loop {
@@ -517,9 +516,8 @@ fn run_child(out: &mut impl Write) -> Result<(), Error> {
                     if data.is_empty() || data.len() > MAX_UNIT {
                         return Err(Error::Device);
                     }
-                    if !probe_started {
+                    if !probed {
                         device.receive(&data, 0)?;
-                        probe_started = true;
                     }
                     if announce && probed {
                         out.write_all(&[4, 1]).map_err(|_| Error::Device)?;

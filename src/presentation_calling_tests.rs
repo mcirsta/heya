@@ -117,14 +117,24 @@ pub(crate) fn check_ui_flow(runtime: &tokio::runtime::Runtime) {
                             ElementHandle::find_by_element_type_name(&ui, "CallPanel").count(),
                             0
                         );
-                        assert_eq!(
-                            ui.get_audio_error().as_str(),
-                            if error == Error::Audio(AudioError::NoInput) {
-                                ""
-                            } else {
-                                error.label()
-                            }
-                        );
+                        let message = ui.get_audio_error();
+                        if video && error == Error::Audio(AudioError::NoInput) {
+                            // Both synthetic devices are absent; either concurrent
+                            // preflight may report its valid error first.
+                            assert!(
+                                message.is_empty()
+                                    || message == crate::call_video::Error::NoCamera.label()
+                            );
+                        } else {
+                            assert_eq!(
+                                message.as_str(),
+                                if error == Error::Audio(AudioError::NoInput) {
+                                    ""
+                                } else {
+                                    error.label()
+                                }
+                            );
+                        }
                         click_button(&ui, "OK, got it");
                         assert!(!ui.get_microphone_dialog());
                         tick.set(6);

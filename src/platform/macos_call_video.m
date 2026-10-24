@@ -92,6 +92,7 @@ static void decodedVideo(void *ref, void *source, OSStatus status,
                 kCMVideoCodecType_H264, NULL, NULL, NULL, encodedVideo,
                 (__bridge void *)self, &encoder)) {self.failed = YES; return;}
         if (VTSessionSetProperty(encoder, kVTCompressionPropertyKey_RealTime, kCFBooleanTrue) ||
+            VTSessionSetProperty(encoder, kVTCompressionPropertyKey_MaxFrameDelayCount, (__bridge CFTypeRef)@0) ||
             VTSessionSetProperty(encoder, kVTCompressionPropertyKey_AllowFrameReordering, kCFBooleanFalse) ||
             VTSessionSetProperty(encoder, kVTCompressionPropertyKey_ProfileLevel, kVTProfileLevel_H264_Baseline_AutoLevel) ||
             VTSessionSetProperty(encoder, kVTCompressionPropertyKey_AverageBitRate, (__bridge CFTypeRef)@700000) ||

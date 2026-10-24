@@ -563,6 +563,12 @@ pub(crate) fn check_ui() {
             .unwrap();
         let r = remote.absolute_position();
         let rs = remote.size();
+        let image = remote
+            .query_descendants()
+            .match_id("VideoCallStage::remote-video")
+            .find_first()
+            .unwrap();
+        assert_eq!(image.size(), rs, "remote video uses the whole stage");
         let l = preview.absolute_position();
         let ls = preview.size();
         assert!(

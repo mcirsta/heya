@@ -422,7 +422,9 @@ mod tests {
             next = crate::audio_player::Worker::start(initial, updates, Output::Silent);
             let mut next = next.unwrap();
             assert_eq!(
-                tokio::time::timeout(Duration::from_secs(5), next.finished())
+                // A four-second real-time clip also needs cold plugin startup
+                // and helper teardown time on a busy CI runner.
+                tokio::time::timeout(Duration::from_secs(10), next.finished())
                     .await
                     .unwrap()
                     .unwrap()

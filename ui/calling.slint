@@ -88,6 +88,7 @@ component VideoCallStage inherits Rectangle {
             x: 12px; y: 72px; width: parent.width - 24px; height: max(0px, parent.height - 192px);
             border-radius: 12px; background: #202c33; clip: true;
             if CallVideo.remote.width > 0 && CallVideo.peer-on: remote-video := Image {
+                width: parent.width; height: parent.height;
                 source: CallVideo.remote; image-fit: contain;
             }
             if CallVideo.remote.width == 0 || !CallVideo.peer-on: Rectangle {
@@ -107,6 +108,7 @@ component VideoCallStage inherits Rectangle {
                 border-radius: 10px; background: #111b21; clip: true;
                 border-width: 1px; border-color: #ffffff25;
                 if CallVideo.camera-on && CallVideo.local.width > 0: local-video := Image {
+                    width: parent.width; height: parent.height;
                     source: CallVideo.local; image-fit: cover;
                 }
                 if !CallVideo.camera-on: Image {

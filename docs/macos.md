@@ -21,8 +21,10 @@ Normal startup resumes a saved session or presents the connection screen.
 `target/release/heya --demo` uses synthetic data without opening an account.
 Use `scripts/build-macos.sh` to build a local `target/macos/Heya.app` bundle.
 This is an ad-hoc-signed development app, not a notarized distribution. Use this
-bundle for microphone recording: its Info.plist contains the macOS microphone
-permission description. The unbundled Cargo executable cannot request that permission.
+bundle for microphone recording and video calls: its Info.plist contains the
+microphone and camera permission descriptions. The unbundled Cargo executable
+cannot request those permissions. Video calls use AVFoundation capture and
+VideoToolbox H.264 encoding/decoding; they do not add a GStreamer dependency.
 
 ## Apple Silicon testing release
 
@@ -47,8 +49,9 @@ architecture at `target/macos/Heya.app`. Older deployment targets are developmen
 experiments, not supported by this release.
 
 The macOS workflow runs native arm64 formatting, lint, synthetic tests, a check
-without the Linux media feature, and packaged-helper checks on GitHub's macOS 15
-M1 runner. It never opens an account or microphone. To check a local bundle with
+without the Linux media feature, a generated-image native H.264 loopback and
+packaged-helper checks on GitHub's macOS 15 M1 runner. It never opens an account,
+camera or microphone. To check a local bundle with
 real output hardware but zero app volume, explicitly run:
 
 ```sh
