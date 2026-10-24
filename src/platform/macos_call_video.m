@@ -130,8 +130,12 @@ static void decodedVideo(void *ref, void *source, OSStatus status,
     [self.lock unlock];
     NSDictionary *options = self.forceKeyframe ? @{(__bridge NSString *)kVTEncodeFrameOptionKey_ForceKeyFrame:@YES} : nil;
     self.forceKeyframe = NO;
-    if (VTCompressionSessionEncodeFrame(encoder, pixel, time, CMTimeMake(1,15),
-        (__bridge CFDictionaryRef)options, NULL, NULL)) self.failed = YES;
+    OSStatus encoded = VTCompressionSessionEncodeFrame(encoder, pixel, time, CMTimeMake(1,15),
+        (__bridge CFDictionaryRef)options, NULL, NULL);
+    if (encoded) {
+        if (self.synthetic) fprintf(stderr, "Heya synthetic H.264 submit failed (%d)\n", (int)encoded);
+        self.failed = YES;
+    }
 }
 - (void)captureOutput:(AVCaptureOutput *)output didOutputSampleBuffer:(CMSampleBufferRef)sample fromConnection:(AVCaptureConnection *)connection {
     @autoreleasepool {
