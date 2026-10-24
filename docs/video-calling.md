@@ -31,9 +31,10 @@ fresh keyframe after loss. The latest local/remote images use a separate coalesc
 presentation stream, so video does not rebuild conversation models.
 
 The camera helper feeds locally encoded frames into its decoder until an image
-decodes before declaring readiness. macOS also bounds encoder frame delay; Apple
-documents that the [real-time hint alone](https://developer.apple.com/documentation/videotoolbox/kvtcompressionpropertykey_maxframedelaycount)
-does not impose that bound. Camera-off acknowledgements follow physical capture shutdown.
+decodes before declaring readiness. macOS requests bounded encoder frame delay
+where supported; Apple's [frame-delay documentation](https://developer.apple.com/documentation/videotoolbox/kvtcompressionpropertykey_maxframedelaycount)
+describes the otherwise unlimited default. Camera-off acknowledgements follow
+physical capture shutdown.
 The parent monitors actual encoded progress while capture is enabled; heartbeats
 only establish liveness while it is off. Hangup, disconnect, setup cancellation,
 failure and app close stop/reap both media helpers and release the SDK bridge.
@@ -61,3 +62,14 @@ application/rendering work, not camera, codec, compositor or network latency.
 Automated tests never place a real call. They do not establish physical camera
 compatibility, permission prompts or WhatsApp peer interoperability; those need
 deliberate manual calls on each platform.
+
+### Linux offscreen measurement, 2026-10-24
+
+An optimized build with Skia/OpenGL in Xvfb measured ordinary 10,000-message
+scrolling at 13.02 ms render CPU p95 (previous check: 13.36 ms). With prepared
+video images updating at 15 fps, changing background snapshots measured 11.04 ms
+p95; resizing the 10,000-message view measured 19.79 ms. The modal covers the
+timeline, so its scrolling number is not a direct comparison with ordinary chat.
+Existing cold rendering (~2 s) and first-resize (~0.4 s) outliers remain. Native
+window-close checks took 22–44 ms and found no idle media threads. These are
+application/rendering checks, not compositor, camera, codec or network latency.
