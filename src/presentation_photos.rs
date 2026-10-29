@@ -110,6 +110,9 @@ fn open(
     if ui.get_photo_viewer_id() != id {
         ui.set_photo_viewer_caption(Default::default());
         ui.set_photo_viewer_date(Default::default());
+        ui.set_photo_viewer_message(Default::default());
+        ui.set_photo_viewer_chat(0);
+        ui.set_action_error(Default::default());
     }
     ui.set_photo_viewer_id(id);
     ui.invoke_request_photos();
@@ -145,6 +148,19 @@ pub fn publish(ui: &AppWindow, snapshot: &Arc<photos::Snapshot>) {
         ui.invoke_close_photo();
         return;
     };
+    let message = ui
+        .get_demo_mode()
+        .then(|| timeline::photo_message(ui, id))
+        .flatten()
+        .or_else(|| {
+            gallery
+                .message
+                .as_ref()
+                .map(|message| crate::presentation::message_row(message, None))
+        });
+    ui.set_photo_viewer_message(message.unwrap_or_default());
+    ui.set_photo_viewer_chat(ui.get_selected_id());
+    crate::presentation_actions::refresh_menu(ui);
     ui.set_photo_viewer_sender(gallery.sender.clone().into());
     ui.set_photo_viewer_date(gallery.date.clone().into());
     ui.set_photo_viewer_caption(gallery.caption.clone().into());

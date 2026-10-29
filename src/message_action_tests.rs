@@ -517,7 +517,7 @@ async fn schema_seven_upgrade_repairs_action_metadata_without_discarding_media_c
     db.blocking(move |c| {
         assert_eq!(
             c.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))?,
-            18
+            19
         );
         assert_eq!(
             c.query_row(

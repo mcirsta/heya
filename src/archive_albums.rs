@@ -35,22 +35,35 @@ impl Archive {
             if chat_settings::unlocked(db, chat).is_err() { return Ok(None); }
             let selected = db.query_row(&format!("SELECT m.sender,m.album,m.body,m.stamp,m.outgoing,
                 coalesce(nullif(trim(n.saved_name),''),nullif(trim(n.profile_name),''),m.sender_name),
-                nullif(trim(n.saved_name),'') IS NOT NULL,c.is_group,m.content
+                nullif(trim(n.saved_name),'') IS NOT NULL,c.is_group,m.content,m.wire_id,m.delivery,length(m.raw)
                 FROM messages m JOIN chats c ON c.id=m.chat_id LEFT JOIN contacts n ON n.jid=m.sender
                 WHERE m.id=?1 AND m.chat_id=?2 AND {}",photos::ELIGIBLE), params![id,chat], |r| {
-                Ok((r.get::<_,String>(0)?,r.get::<_,Option<String>>(1)?,r.get::<_,String>(2)?,r.get::<_,i64>(3)?,r.get::<_,bool>(4)?,r.get::<_,String>(5)?,r.get::<_,bool>(6)?,r.get::<_,bool>(7)?,r.get::<_,String>(8)?))
+                Ok((r.get::<_,String>(0)?,r.get::<_,Option<String>>(1)?,r.get::<_,String>(2)?,r.get::<_,i64>(3)?,r.get::<_,bool>(4)?,r.get::<_,String>(5)?,r.get::<_,bool>(6)?,r.get::<_,bool>(7)?,r.get::<_,String>(8)?,r.get::<_,String>(9)?,r.get::<_,String>(10)?,r.get::<_,i64>(11)?))
             }).optional()?;
-            let Some((author,album,body,stamp,outgoing,name,saved,group,content))=selected else { return Ok(None); };
+            let Some((author,album,body,stamp,outgoing,name,saved,group,content,wire,delivery,raw_len))=selected else { return Ok(None); };
             let members = if let Some(album) = album {
                 db.prepare_cached(&format!("SELECT m.id FROM messages m WHERE m.chat_id=?1 AND m.sender=?2 AND m.album=?3 AND {} ORDER BY m.album_index IS NULL,m.album_index,m.stamp,m.id", photos::ELIGIBLE))?
                     .query_map(params![chat,author,album],|r|r.get::<_,i32>(0))?.collect::<std::result::Result<Vec<_>,_>>()?
             } else { photo_groups::members(db,chat,id,stamp)? };
             let Some(position)=members.iter().position(|&member|member==id) else { return Ok(None); };
-            let content = serde_json::from_str::<crate::message_content::Content>(&content).unwrap_or_default();
+            let mut content = serde_json::from_str::<crate::message_content::Content>(&content).unwrap_or_default();
+            content.metadata = crate::message_actions::Metadata {wire:wire.clone(),stamp,delivery:delivery.clone(),..Default::default()};
+            marks::project(db, chat, &author, &wire, &mut content.metadata)?;
+            actions::Projection::load(db, chat, 1, (stamp,id))?.apply(db,&wire,&mut content)?;
+            content.metadata.pending=controls::pending_one(db,chat,&author,&wire)?;
+            content.unavailable = raw_len==0 && (!outgoing || !matches!(delivery.as_str(),"accepted"|"delivered"|"read"));
+            let sender = if outgoing {"You".into()} else if group {domain::participant_name(&name,saved,&author)} else {name};
+            let when=crate::message_time::local(stamp);
+            let message=domain::Message {
+                id,sender:sender.clone(),sender_id:author,text:body.clone(),
+                time:when.map(|t|t.format("%H:%M").to_string()).unwrap_or_default(),date:when.map(|t|t.date_naive()),
+                outgoing,local:false,content:Arc::new(content),
+            };
             Ok(Some(Gallery {
                 id,members,position,
-                sender: if outgoing {"You".into()} else if group {domain::participant_name(&name,saved,&author)} else {name},
-                date:crate::message_time::local(stamp).map(|t|t.format("%d %b %Y, %H:%M").to_string()).unwrap_or_default(), caption:content.body.unwrap_or(body),
+                sender,
+                date:when.map(|t|t.format("%d %b %Y, %H:%M").to_string()).unwrap_or_default(), caption:message.content.body.clone().unwrap_or(body),
+                message:Some(message),
             }))
         }).await
     }

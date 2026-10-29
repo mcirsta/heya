@@ -6,8 +6,10 @@ use std::time::Instant;
 const SELECT: &str =
     "SELECT m.id,coalesce(nullif(trim(n.saved_name),''),nullif(trim(n.profile_name),''),m.sender_name),
     m.sender,m.body,m.stamp,m.outgoing,m.delivery,m.content,m.wire_id,m.deleted,length(m.raw),
-    nullif(trim(n.saved_name),'') IS NOT NULL,m.album,m.album_index
+    nullif(trim(n.saved_name),'') IS NOT NULL,m.album,m.album_index,
+    coalesce(k.starred,0),coalesce(k.pinned_until,0)>unixepoch()
     FROM messages m LEFT JOIN contacts n ON n.jid=m.sender
+    LEFT JOIN message_marks k ON k.chat_id=m.chat_id AND k.sender=m.sender AND k.wire_id=m.wire_id
     WHERE m.chat_id=?1 AND m.visible=1 AND (m.stamp,m.id)<=(?5,?6)";
 fn query(append: bool) -> String {
     let after = if append {
@@ -65,6 +67,7 @@ pub(super) fn install(db: &Connection) -> Result<()> {
         "aliases",
         "metadata",
         "message_controls",
+        "message_marks",
     ] {
         for (event, condition) in [
             ("INSERT", "chat_id=NEW.chat_id"),
@@ -82,7 +85,7 @@ pub(super) fn install(db: &Connection) -> Result<()> {
             } else {
                 event
             };
-            let filter = if matches!(table, "messages" | "reactions") {
+            let filter = if matches!(table, "messages" | "reactions" | "message_marks") {
                 format!(" WHERE {condition}")
             } else {
                 String::new()
@@ -223,6 +226,8 @@ impl Cache {
                 wire: r.get(8)?,
                 stamp: r.get(4)?,
                 delivery: status.clone(),
+                starred: r.get(14)?,
+                pinned: r.get(15)?,
                 ..Default::default()
             };
             content.unavailable = r.get::<_, bool>(9)?

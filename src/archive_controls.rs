@@ -7,6 +7,10 @@ fn kind(value: &str) -> Result<ControlKind> {
         "edit" => Ok(ControlKind::Edit),
         "revoke" => Ok(ControlKind::Revoke),
         "hide" => Ok(ControlKind::Hide),
+        "star" => Ok(ControlKind::Star),
+        "unstar" => Ok(ControlKind::Unstar),
+        "pin" => Ok(ControlKind::Pin),
+        "unpin" => Ok(ControlKind::Unpin),
         _ => Err(Error::Invalid),
     }
 }
@@ -46,7 +50,7 @@ fn queue(
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     )?;
     let now = chrono::Utc::now();
-    if control != ControlKind::Hide {
+    if matches!(control, ControlKind::Edit | ControlKind::Revoke) {
         let window = if control == ControlKind::Edit {
             action::EDIT_WINDOW
         } else {
@@ -67,7 +71,25 @@ fn queue(
         ControlKind::Edit => "edit",
         ControlKind::Revoke => "revoke",
         ControlKind::Hide => "hide",
+        ControlKind::Star => "star",
+        ControlKind::Unstar => "unstar",
+        ControlKind::Pin => "pin",
+        ControlKind::Unpin => "unpin",
     };
+    if matches!(
+        control,
+        ControlKind::Star | ControlKind::Unstar | ControlKind::Pin | ControlKind::Unpin
+    ) {
+        let (first, second) = if matches!(control, ControlKind::Star | ControlKind::Unstar) {
+            ("star", "unstar")
+        } else {
+            ("pin", "unpin")
+        };
+        let busy:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM message_controls c JOIN messages e ON e.wire_id=c.event_wire AND e.sender='#self' WHERE e.chat_id=?1 AND c.target=?2 AND c.sender=?3 AND c.kind IN (?4,?5) AND e.delivery IN ('queued','sending'))",params![source.chat,source.wire,source.sender,first,second],|r|r.get(0))?;
+        if busy {
+            return Err(Error::Invalid);
+        }
+    }
     let previous:Option<i64>=db.query_row("SELECT max(version) FROM (SELECT version FROM mutations WHERE chat_id=?1 AND sender='#self' AND wire_id=?2 UNION ALL SELECT c.version FROM message_controls c JOIN messages m ON m.wire_id=c.event_wire AND m.sender='#self' WHERE m.chat_id=?1 AND c.target=?2)",params![source.chat,source.wire],|r|r.get(0))?;
     let version = now
         .timestamp_millis()
@@ -92,7 +114,7 @@ pub(super) fn hide_if_needed(db: &Connection, chat: i32, sender: &str, wire: &st
     if hidden {
         if sender == "#self" {
             db.execute("UPDATE messages SET delivery='failed' WHERE chat_id=?1 AND sender='#self' AND delivery='queued' AND wire_id IN (SELECT event_wire FROM message_controls WHERE target=?2 AND kind IN ('edit','revoke'))",params![chat,wire])?;
-            db.execute("UPDATE message_controls SET text='' WHERE target=?2 AND event_wire IN (SELECT wire_id FROM messages WHERE chat_id=?1 AND sender='#self')",params![chat,wire])?;
+            db.execute("UPDATE message_controls SET text='' WHERE kind='edit' AND target=?2 AND event_wire IN (SELECT wire_id FROM messages WHERE chat_id=?1 AND sender='#self')",params![chat,wire])?;
         }
         db.execute("DELETE FROM reply_drafts WHERE message_id IN (SELECT id FROM messages WHERE chat_id=?1 AND sender=?2 AND wire_id=?3)",params![chat,sender,wire])?;
         db.execute("UPDATE messages SET visible=0,body='',raw=X'',content='',thumbnail=X'',unread=0,seen=1,delivery=CASE WHEN delivery='queued' THEN 'failed' ELSE delivery END WHERE chat_id=?1 AND sender=?2 AND wire_id=?3",params![chat,sender,wire])?;
@@ -129,6 +151,12 @@ pub(super) fn accepted(db: &Connection, chat: i32, event: &str, status: &str) ->
     }
     if control.kind == ControlKind::Hide {
         return Ok(());
+    }
+    if matches!(
+        control.kind,
+        ControlKind::Star | ControlKind::Unstar | ControlKind::Pin | ControlKind::Unpin
+    ) {
+        return marks::accepted(db, chat, &control);
     }
     edits::record(
         db,
@@ -169,6 +197,17 @@ pub(super) fn pending(
     }
     Ok(result)
 }
+/// One addressed original, including gallery selections outside the loaded page.
+pub(super) fn pending_one(db: &Connection, chat: i32, sender: &str, wire: &str) -> Result<String> {
+    let value:Option<(String,String)>=db.query_row("SELECT c.kind,e.delivery FROM message_controls c JOIN messages e ON e.wire_id=c.event_wire AND e.sender='#self'
+        WHERE e.chat_id=?1 AND c.target=?2 AND c.kind<>'hide'
+          AND ((c.outgoing=1 AND ?3='#self') OR (c.outgoing=0 AND (c.sender=?3 OR EXISTS(SELECT 1 FROM aliases a WHERE a.alias=c.sender AND a.canonical=?3))))
+        ORDER BY c.version DESC,e.id DESC LIMIT 1",params![chat,wire,sender],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+    match value {
+        Some((k, status)) => Ok(pending_label(kind(&k)?, &status)),
+        None => Ok(String::new()),
+    }
+}
 fn pending_label(kind: ControlKind, status: &str) -> String {
     let label = kind.label();
     match status {
@@ -180,6 +219,68 @@ fn pending_label(kind: ControlKind, status: &str) -> String {
 }
 
 impl Archive {
+    pub async fn queue_star(
+        &self,
+        chat: i32,
+        message: i32,
+        event: String,
+        starred: bool,
+    ) -> Result<()> {
+        self.queue_mark(
+            chat,
+            message,
+            event,
+            if starred {
+                ControlKind::Star
+            } else {
+                ControlKind::Unstar
+            },
+            String::new(),
+        )
+        .await
+    }
+    pub async fn queue_pin(
+        &self,
+        chat: i32,
+        message: i32,
+        event: String,
+        seconds: u32,
+    ) -> Result<()> {
+        if !matches!(seconds, 0 | 86400 | 604800 | 2592000) {
+            return Err(Error::Invalid);
+        }
+        self.queue_mark(
+            chat,
+            message,
+            event,
+            if seconds == 0 {
+                ControlKind::Unpin
+            } else {
+                ControlKind::Pin
+            },
+            seconds.to_string(),
+        )
+        .await
+    }
+    async fn queue_mark(
+        &self,
+        chat: i32,
+        message: i32,
+        event: String,
+        kind: ControlKind,
+        text: String,
+    ) -> Result<()> {
+        self.call(move |db| {
+            let tx = db.transaction()?;
+            let source = actions::source(&tx, chat, message)?;
+            queue(&tx, &source, &event, kind, &text)?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await?;
+        self.changed();
+        Ok(())
+    }
     pub async fn queue_edit(
         &self,
         chat: i32,

@@ -72,26 +72,13 @@ export component PhotoGrid inherits Rectangle {
 // the selection; full-size pixels belong only to the current photo.
 export struct PhotoThumbnail { id: int, picture: image, key: string }
 
-component ViewerButton inherits Rectangle {
-    in property <image> icon;
-    in property <string> label;
-    in property <bool> enabled: true;
-    callback activated();
+component ViewerButton inherits IconButton {
     width: 40px; height: 40px; border-radius: 20px;
-    background: area.has-hover && root.enabled ? Theme.hover : transparent;
-    opacity: root.enabled ? 1 : 0.32;
-    accessible-role: button; accessible-label: root.label; accessible-enabled: root.enabled;
-    accessible-action-default => {if root.enabled {root.activated();}}
-    border-width: focus.has-focus ? 1px : 0px; border-color: Theme.accent;
-    Image {x: 9px; y: 9px; width: 22px; height: 22px; source: root.icon; colorize: Theme.secondary;}
-    focus := FocusScope {
-        enabled: root.enabled;
-        key-pressed(event) => {
-            if event.text == Key.Return || event.text == " " {root.activated(); return accept;}
-            return reject;
-        }
-    }
-    area := TouchArea {enabled: root.enabled; mouse-cursor: pointer; clicked => {focus.focus();root.activated();}}
+    icon-size: 21px;
+    background: self.hovered && self.enabled ? Theme.hover : transparent;
+    ink: self.active ? Theme.accent : Theme.text;
+    opacity: self.enabled ? 1 : 0.32;
+    Tooltip {text: @markdown("\{root.label}");}
 }
 
 export component PhotoViewer inherits Rectangle {
@@ -106,13 +93,24 @@ export component PhotoViewer inherits Rectangle {
     in property <int> previous-id;
     in property <int> next-id;
     in property <[PhotoThumbnail]> thumbnails;
+    in property <bool> actions-enabled;
+    in property <bool> busy;
+    in property <bool> starred;
+    in property <bool> pinned;
+    in property <string> action-status;
+    in property <bool> obscured;
+    changed obscured => {if !root.obscured {focus.focus();}}
     callback navigate(int);
+    // Shared message actions; the parent retains the selected photo identity.
+    callback action(int);
     callback closed();
     callback retry();
     callback copy();
-    private property <bool> zoomed;
-    changed photo-id => {root.zoomed=false; viewport.content-x=0px; viewport.content-y=0px;}
+    private property <float> zoom:1;
+    changed photo-id => {root.zoom=1; viewport.content-x=0px; viewport.content-y=0px;}
     private property <bool> album: root.thumbnails.length>1;
+    private property <bool> wide-toolbar: root.width>=900px;
+    private property <length> toolbar-width: root.wide-toolbar ? 480px : 216px;
     private property <length> thumb-size: min(64px, (root.width - 32px - max(0,root.thumbnails.length - 1) * 8px) / max(1,root.thumbnails.length));
     private property <length> caption-height: root.caption=="" ? 0px : min(76px, caption-text.preferred-height + 12px);
     private property <length> footer-height: root.caption-height + (root.album ? root.thumb-size + 36px : 0px) + 40px;
@@ -125,7 +123,7 @@ export component PhotoViewer inherits Rectangle {
             if event.text == Key.Escape {root.closed();return accept;}
             if event.text == Key.LeftArrow {if root.previous-id>0 {root.navigate(root.previous-id);} return accept;}
             if event.text == Key.RightArrow {if root.next-id>0 {root.navigate(root.next-id);} return accept;}
-            if event.text == " " {if root.ready {root.zoomed=!root.zoomed;} return accept;}
+            if event.text == " " {if root.ready {root.zoom=root.zoom==1 ? 2 : 1;} return accept;}
             return reject;
         }
         header := Rectangle {
@@ -136,19 +134,31 @@ export component PhotoViewer inherits Rectangle {
                 x: 20px; y: 16px; width: 40px; height: 40px; border-radius: 20px; background: Theme.accent.with-alpha(0.12);
                 Image {x: 10px; y: 10px; width: 20px; height: 20px; source: @image-url("icons/photo.svg"); colorize: Theme.accent;}
             }
-            Text {x: 72px; y: 14px; width: max(1px,parent.width - 228px); height: 24px; text: root.sender=="" ? @tr("Photo") : root.sender; color: Theme.text; font-size: 15px; font-weight: 600; overflow: elide;}
-            Text {x: 72px; y: 39px; width: max(1px,parent.width - 228px); height: 18px; text: root.date; color: Theme.secondary; font-size: 12px; overflow: elide;}
-            ViewerButton {x: parent.width - 144px; y: 16px; icon: @image-url("icons/copy.svg"); label: @tr("Copy image"); enabled: root.ready; activated => {root.copy();}}
-            ViewerButton {x: parent.width - 96px; y: 16px; icon: root.zoomed ? @image-url("icons/viewer-fit.svg") : @image-url("icons/viewer-zoom.svg"); label: root.zoomed ? @tr("Fit photo") : @tr("Zoom photo"); enabled: root.ready; activated => {root.zoomed=!root.zoomed;}}
-            ViewerButton {x: parent.width - 48px; y: 16px; icon: @image-url("icons/close.svg"); label: @tr("Close photo"); activated => {root.closed();}}
+            Text {x: 72px; y: 14px; width: max(1px,parent.width - root.toolbar-width - 96px); height: 24px; text: root.sender=="" ? @tr("Photo") : root.sender; color: Theme.text; font-size: 15px; font-weight: 600; overflow: elide;}
+            Text {x: 72px; y: 39px; width: max(1px,parent.width - root.toolbar-width - 96px); height: 18px; text: root.date; color: Theme.secondary; font-size: 12px; overflow: elide;}
+            toolbar := HorizontalLayout {
+                x: parent.width - self.width - 16px; y: 16px;
+                width: root.toolbar-width; height: 40px; spacing: 4px;
+                ViewerButton {icon: @image-url("icons/viewer-zoom-out.svg"); label: @tr("Zoom out"); enabled: root.ready && root.zoom>1; activated => {root.zoom=max(1,root.zoom/2);viewport.content-x=0px;viewport.content-y=0px;}}
+                ViewerButton {icon: @image-url("icons/viewer-zoom.svg"); label: @tr("Zoom in"); enabled: root.ready && root.zoom<4; activated => {root.zoom=min(4,root.zoom*2);}}
+                if root.wide-toolbar: ViewerButton {icon: @image-url("icons/viewer-message.svg"); label: @tr("Go to message"); enabled: root.actions-enabled && !root.busy; activated => {root.action(19);}}
+                if root.wide-toolbar: ViewerButton {icon: @image-url("icons/reply.svg"); label: @tr("Reply to photo"); enabled: root.actions-enabled && !root.busy; activated => {root.action(1);}}
+                if root.wide-toolbar: ViewerButton {icon: @image-url("icons/star.svg"); label: root.starred ? @tr("Unstar photo") : @tr("Star photo"); active: root.starred; enabled: root.actions-enabled && !root.busy; activated => {root.action(7);}}
+                if root.wide-toolbar: ViewerButton {icon: @image-url("icons/pin.svg"); label: root.pinned ? @tr("Unpin photo") : @tr("Pin photo"); active: root.pinned; enabled: root.actions-enabled && !root.busy; activated => {root.action(6);}}
+                if root.wide-toolbar: ViewerButton {icon: @image-url("icons/smile.svg"); label: @tr("React to photo"); enabled: root.actions-enabled && !root.busy; activated => {root.action(0);}}
+                if root.wide-toolbar: ViewerButton {icon: @image-url("icons/forward.svg"); label: @tr("Forward photo"); enabled: root.actions-enabled && !root.busy; activated => {root.action(2);}}
+                ViewerButton {icon: @image-url("icons/photo-download.svg"); label: @tr("Download photo"); enabled: root.actions-enabled && !root.busy; activated => {root.action(5);}}
+                ViewerButton {icon: @image-url("icons/ellipsis.svg"); label: @tr("More photo options"); enabled: root.actions-enabled && !root.busy; activated => {root.action(3);}}
+                ViewerButton {icon: @image-url("icons/close.svg"); label: @tr("Close photo"); activated => {root.closed();}}
+            }
         }
         stage := Rectangle {
             x: 0px; y: header.height; width: parent.width; height: max(40px,parent.height - header.height - root.footer-height);
             viewport := ScrollView {
                 x: root.album ? 64px : 24px; y: 16px; width: max(1px,parent.width - 2 * self.x); height: max(1px,parent.height - 32px);
-                content-width: root.zoomed ? max(self.visible-width,root.picture.width * 1px) : self.visible-width;
-                content-height: root.zoomed ? max(self.visible-height,root.picture.height * 1px) : self.visible-height;
-                Image {width: parent.content-width; height: parent.content-height; source: root.picture; image-fit: contain;}
+                content-width: self.visible-width * root.zoom;
+                content-height: self.visible-height * root.zoom;
+                photo-image := Image {width: parent.content-width; height: parent.content-height; source: root.picture; image-fit: contain;}
             }
             if root.album: previous := ViewerButton {
                 x: 12px; y: (parent.height - self.height)/2; icon: @image-url("icons/viewer-previous.svg");
@@ -164,6 +174,15 @@ export component PhotoViewer inherits Rectangle {
                 background: Theme.panel; border-width: 1px; border-color: Theme.outline;
                 Text {x: 16px; width: parent.width - 32px; height: parent.height; text: root.status; font-size: 13px; color: Theme.secondary; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap;}
                 ContentTarget {width: parent.width; height: parent.height; border-radius: 26px; label: root.status; activated => {root.retry();}}
+            }
+            if root.action-status!="": action-feedback := Rectangle {
+                x: (parent.width - self.width)/2; y: 8px;
+                width: min(520px,parent.width - 48px); height: min(64px,action-text.preferred-height + 20px);
+                border-radius: 12px; background: Theme.panel;
+                border-width: 1px; border-color: Theme.outline;
+                action-text := Text {x: 12px; y: 10px; width: parent.width - 24px; height: parent.height - 20px;
+                    text:root.action-status;color:Theme.secondary;font-size:13px;wrap:word-wrap;horizontal-alignment:center;
+                }
             }
         }
         footer := Rectangle {

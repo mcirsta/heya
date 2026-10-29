@@ -43,11 +43,16 @@ pub(crate) fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>) {
             .find(|r| r.message.id == message && r.message.has_attachment && r.message.actionable);
         let panel = crate::presentation_contact_info::item(&ui, message)
             .filter(|row| matches!(row.kind, 0..=2));
-        if row.is_none() && panel.is_none() {
+        let viewing = ui.get_photo_viewer_id() == message
+            && ui.get_photo_viewer_chat() == chat
+            && ui.get_photo_viewer_message().id == message
+            && ui.get_photo_viewer_message().actionable;
+        if row.is_none() && panel.is_none() && !viewing {
             return;
         }
         let photo = row.as_ref().is_some_and(|row| row.message.has_photo)
-            || panel.as_ref().is_some_and(|row| row.kind == 0);
+            || panel.as_ref().is_some_and(|row| row.kind == 0)
+            || viewing;
         let audio = row.as_ref().is_some_and(|row| row.message.has_audio);
         let demo = ui.get_demo_mode().then_some(if photo {
             Kind::Photo
@@ -66,6 +71,9 @@ pub(crate) fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>) {
             .is_err()
         {
             ui.set_notice("Downloads are busy. Please try again.".into());
+            if viewing {
+                ui.set_action_error("Downloads are busy. Please try again.".into());
+            }
         }
     });
     let weak = ui.as_weak();

@@ -741,6 +741,12 @@ fn same_row(a: &TimelineRow, b: &TimelineRow) -> bool {
         && a.last == b.last
         && a.day_label == b.day_label
         && am.id == bm.id
+        && am.wire_id == bm.wire_id
+        && am.sent_at == bm.sent_at
+        && am.operation_busy == bm.operation_busy
+        && am.operation_status == bm.operation_status
+        && am.starred == bm.starred
+        && am.pinned == bm.pinned
         && am.system_notice == bm.system_notice
         && am.call_kind == bm.call_kind
         && am.call_details == bm.call_details
@@ -900,6 +906,22 @@ fn viewer(ui: &AppWindow, state: &mut State) {
 
 pub(crate) fn refresh_photo_viewer(ui: &AppWindow) {
     with(ui, |model| viewer(ui, &mut model.state.borrow_mut()));
+}
+
+pub(crate) fn photo_message(ui: &AppWindow, id: i32) -> Option<crate::MessageRow> {
+    let mut result = None;
+    with(ui, |model| {
+        if let Some(message) = model
+            .state
+            .borrow()
+            .source
+            .iter()
+            .find(|message| message.id == id)
+        {
+            result = Some(super::message_row(message, None));
+        }
+    });
+    result
 }
 
 pub(crate) fn photos(ui: &AppWindow, snapshot: &crate::photos::Snapshot) {

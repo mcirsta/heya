@@ -22,6 +22,7 @@ struct Pending {
     chats: BTreeMap<(String, crate::chat_management::Setting), crate::chat_management::Update>,
     names: BTreeMap<String, Contact>,
     reads: BTreeMap<String, ReadUpdate>,
+    stars: BTreeMap<(String, String, String), crate::message_actions::MarkUpdate>,
     calls: BTreeMap<(String, String), whatsapp_rust::wacore::types::events::CallLogSync>,
     aliases: BTreeMap<String, String>,
     bytes: usize,
@@ -65,6 +66,9 @@ impl AppState {
         archive
             .save_chat_settings(pending.chats.into_values().collect())
             .await?;
+        archive
+            .save_message_marks(pending.stars.into_values().collect())
+            .await?;
         crate::protocol_calls::save(archive, pending.calls.into_values().collect()).await?;
         Ok(())
     }
@@ -83,9 +87,63 @@ impl EventHandler for AppState {
             EventKind::ArchiveUpdate,
             EventKind::LockChatUpdate,
             EventKind::CallLogSync,
+            EventKind::StarUpdate,
         ])
     }
     fn handle_event(&self, event: Arc<Event>) {
+        if let Event::StarUpdate(update) = event.as_ref() {
+            let Some(starred) = update.action.starred else {
+                return;
+            };
+            if !(update.chat_jid.is_pn() || update.chat_jid.is_lid() || update.chat_jid.is_group())
+                || update.message_id.is_empty()
+            {
+                return;
+            }
+            let jid = address(&update.chat_jid);
+            let sender = if update.from_me {
+                "#self".into()
+            } else if let Some(participant) = &update.participant_jid {
+                address(participant)
+            } else if !update.chat_jid.is_group() {
+                jid.clone()
+            } else {
+                return;
+            };
+            let key = (jid.clone(), sender.clone(), update.message_id.clone());
+            let next = crate::message_actions::MarkUpdate {
+                jid,
+                sender,
+                wire: update.message_id.clone(),
+                starred: Some(starred),
+                pinned_until: None,
+                stamp: update.action_timestamp.map(|t| t.timestamp_millis()),
+            };
+            let mut pending = self.0.pending.lock().expect("app-state mailbox poisoned");
+            if pending.failed {
+                return;
+            }
+            let old = pending.stars.get(&key);
+            let size = key.0.len() + key.1.len() + key.2.len();
+            if (pending.stars.len() >= 100_000 && old.is_none())
+                || pending
+                    .bytes
+                    .saturating_add(if old.is_none() { size } else { 0 })
+                    > 32 * 1024 * 1024
+            {
+                pending.failed = true;
+            } else if old.is_none_or(|old| {
+                old.stamp.is_none() || next.stamp.is_some() && next.stamp >= old.stamp
+            }) {
+                if old.is_none() {
+                    pending.bytes = pending.bytes.saturating_add(size);
+                }
+                pending.stars.insert(key, next);
+            }
+            drop(pending);
+            self.0.changed.notify_one();
+            return;
+        }
         if let Event::CallLogSync(call) = event.as_ref() {
             use whatsapp_rust::waproto::buffa::Message as _;
             let mut pending = self.0.pending.lock().expect("app-state mailbox poisoned");
@@ -306,6 +364,9 @@ fn chat_update(event: &Event) -> Option<crate::chat_management::Update> {
 #[cfg(test)]
 #[path = "protocol_chat_settings_tests.rs"]
 mod chat_settings_tests;
+#[cfg(test)]
+#[path = "protocol_mark_tests.rs"]
+mod mark_tests;
 
 pub async fn run(
     archive: Archive,
@@ -348,6 +409,7 @@ pub async fn run(
                 archive.ingest(batch).await?;
             }
             rebuild |= archive.needs_call_snapshot().await?;
+            rebuild |= archive.needs_message_marks_snapshot().await?;
         }
         contacts.flush(&archive, false).await?;
         if rebuild && !fatal && tokio::time::Instant::now() >= next_attempt {
@@ -374,6 +436,7 @@ pub async fn run(
             next_attempt = tokio::time::Instant::now() + Duration::from_secs(30);
             if complete {
                 archive.finish_call_snapshot().await?;
+                archive.finish_message_marks_snapshot().await?;
                 eprintln!("Heya: contacts, calls and read state synchronized");
             } else {
                 eprintln!("Heya: app-state sync incomplete; saved state retained");

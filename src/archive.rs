@@ -49,6 +49,8 @@ mod downloads;
 mod edits;
 #[path = "archive_history.rs"]
 mod history;
+#[path = "archive_marks.rs"]
+mod marks;
 #[path = "archive_navigation.rs"]
 mod navigation;
 #[path = "archive_photo_groups.rs"]
@@ -181,7 +183,7 @@ impl Archive {
         db.busy_timeout(Duration::from_secs(5))?;
         db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA secure_delete=ON; PRAGMA temp_store=MEMORY;")?;
         let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if version > 18 {
+        if version > 19 {
             return Err(Error::Database);
         }
         if version == 0 {
@@ -261,7 +263,7 @@ impl Archive {
         if version < 13 {
             let tx = db.transaction()?;
             tx.execute_batch(include_str!("archive_edits.sql"))?;
-            expire(&tx)?;
+            expire_messages(&tx)?;
             edits::apply(&tx, None)?;
             tx.pragma_update(None, "user_version", 13)?;
             tx.commit()?;
@@ -294,6 +296,12 @@ impl Archive {
             let tx = db.transaction()?;
             tx.execute_batch(include_str!("archive_albums.sql"))?;
             tx.pragma_update(None, "user_version", 18)?;
+            tx.commit()?;
+        }
+        if version < 19 {
+            let tx = db.transaction()?;
+            tx.execute_batch(include_str!("archive_marks.sql"))?;
+            tx.pragma_update(None, "user_version", 19)?;
             tx.commit()?;
         }
         // Never resend something that may have reached the network before a crash.
@@ -495,7 +503,10 @@ impl Archive {
             expire(&tx)?;
             tx.execute("UPDATE messages SET delivery='queued' WHERE delivery='uncertain' AND wire_id IN (SELECT event_wire FROM message_controls WHERE kind='hide' AND retry_at<=unixepoch())",[])?;
             let mut next = tx.query_row("SELECT m.chat_id,c.jid,m.wire_id,m.body,c.ephemeral,m.raw FROM messages m JOIN chats c ON c.id=m.chat_id WHERE m.delivery='queued' AND m.deleted=0 ORDER BY m.id LIMIT 1", [], |r| Ok(Outgoing {chat:r.get(0)?,jid:r.get(1)?,id:r.get(2)?,text:r.get(3)?,ephemeral:r.get(4)?,raw:r.get(5)?,control:None})).optional()?;
-            if let Some(job)=&mut next {job.control=controls::payload(&tx,&job.id)?;}
+            if let Some(job)=&mut next {
+                tx.execute("UPDATE message_controls SET version=max(version,?2) WHERE event_wire=?1 AND kind IN ('star','unstar','pin','unpin')",params![job.id,chrono::Utc::now().timestamp_millis()])?;
+                job.control=controls::payload(&tx,&job.id)?;
+            }
             if let Some(next) = &next { tx.execute("UPDATE messages SET delivery='sending' WHERE chat_id=?1 AND sender='#self' AND wire_id=?2", params![next.chat,next.id])?; }
             tx.commit()?; Ok(next)
         }).await?;
@@ -783,6 +794,7 @@ fn insert_record(tx: &Transaction<'_>, r: Record, live: bool) -> Result<()> {
     } else {
         canonical(tx, &r.sender)?
     };
+    marks::ingest(tx, chat, &r)?;
     if let Some(change) = &r.change {
         edits::record(tx, chat, &sender, change)?;
     }
@@ -866,9 +878,14 @@ fn apply_mutations(db: &Connection, chat: i32) -> Result<()> {
     edits::apply(db, Some(chat))
 }
 fn expire(db: &Connection) -> Result<()> {
+    db.execute("UPDATE message_marks SET pinned_until=0 WHERE pinned_until>0 AND pinned_until<=unixepoch()",[])?;
+    expire_messages(db)
+}
+// Also used while upgrading pre-marker schemas; later tables do not exist yet.
+fn expire_messages(db: &Connection) -> Result<()> {
     db.execute("UPDATE messages SET content='',thumbnail=X'',body='[Disappearing message expired]',raw=X'',deleted=1,delivery='' WHERE expires IS NOT NULL AND expires<=?1 AND deleted=0", [chrono::Utc::now().timestamp()])?;
     db.execute("UPDATE mutations SET body=NULL,raw=X'',deleted=1 WHERE EXISTS(SELECT 1 FROM messages m WHERE m.chat_id=mutations.chat_id AND m.sender=mutations.sender AND m.wire_id=mutations.wire_id AND m.deleted=1)", [])?;
-    db.execute("UPDATE message_controls SET text='' WHERE CASE WHEN text<>'' THEN event_wire IN (SELECT wire_id FROM messages WHERE deleted=1 AND expires IS NOT NULL AND expires<=unixepoch()) ELSE 0 END",[])?;
+    db.execute("UPDATE message_controls SET text='' WHERE kind='edit' AND CASE WHEN text<>'' THEN event_wire IN (SELECT wire_id FROM messages WHERE deleted=1 AND expires IS NOT NULL AND expires<=unixepoch()) ELSE 0 END",[])?;
     Ok(())
 }
 
@@ -897,6 +914,7 @@ fn merge_alias(tx: &Transaction<'_>, lid: &str, pn: &str) -> Result<()> {
     avatars::merge(tx, lid, pn)?;
     actions::merge(tx, "actor", &lid, &pn)?;
     controls::merge(tx, "sender", &lid, &pn)?;
+    marks::merge(tx, "sender", &lid, &pn)?;
     move_records(tx, "sender", &lid, &pn)?;
     let old: Option<i32> = tx
         .query_row("SELECT id FROM chats WHERE jid=?1", [lid], |r| r.get(0))
@@ -943,6 +961,7 @@ fn merge_alias(tx: &Transaction<'_>, lid: &str, pn: &str) -> Result<()> {
             read_sync::merge(tx, old, target)?;
             actions::merge(tx, "chat_id", &old, &target)?;
             controls::merge(tx, "chat_id", &old, &target)?;
+            marks::merge(tx, "chat_id", &old, &target)?;
             controls::settle_hides(tx, target)?;
             history::merge(tx, old, target)?;
             tx.execute("DELETE FROM chats WHERE id=?1", [old])?;

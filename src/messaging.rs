@@ -280,6 +280,16 @@ pub async fn run_with_chat_sources(
                         // Retain the rejection just like a durable-save reply.
                         reply=Some(SendReply{chat,text,request,saved:false});
                         updates.send_modify(|snapshot|snapshot.reply=reply.clone());
+                    } else if let Command::Action(action)=command {
+                        let rejected=match action {
+                            crate::message_actions::Command::Star {request,..}=>Some((request,8)),
+                            crate::message_actions::Command::Pin {request,..}=>Some((request,9)),
+                            _=>None,
+                        };
+                        if let Some((request,kind))=rejected {
+                            operation=Some(operation_reply(request,kind,&Err(Error::Invalid)));
+                            updates.send_modify(|snapshot|snapshot.operation=operation.clone());
+                        }
                     }
                     continue;
                 };
@@ -326,6 +336,14 @@ pub async fn run_with_chat_sources(
                         Ok(())
                     }
                     Command::Action(crate::message_actions::Command::CloseInfo)=>{info_target=None;continue;}
+                    Command::Action(crate::message_actions::Command::Star {chat,message,starred,request})=>{
+                        let result=match fresh_id(){Ok(id)=>db.queue_star(chat,message,id,starred).await,Err(e)=>Err(e)};
+                        operation=Some(operation_reply(request,8,&result));result
+                    }
+                    Command::Action(crate::message_actions::Command::Pin {chat,message,seconds,request})=>{
+                        let result=match fresh_id(){Ok(id)=>db.queue_pin(chat,message,id,seconds).await,Err(e)=>Err(e)};
+                        operation=Some(operation_reply(request,9,&result));result
+                    }
                     Command::Action(crate::message_actions::Command::Info {chat,message,request})=>{info_target=Some((chat,message,request));Ok(())}
                     Command::Action(crate::message_actions::Command::Edit {chat,message,expected,text,request})=>{
                         let result=match fresh_id(){Ok(id)=>db.queue_edit(chat,message,id,expected,text).await,Err(e)=>Err(e)};

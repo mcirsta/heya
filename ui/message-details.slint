@@ -1,6 +1,7 @@
 import { ListView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { IconButton } from "components.slint";
+import { MenuControl } from "message-menu.slint";
 import { SoftButton } from "settings.slint";
 export struct MessageInfoRow {name:string,detail:string}
 
@@ -11,6 +12,7 @@ export component MessageDetails inherits Rectangle {
     in property <string> error;
     in property <string> summary;
     in-out property <string> text;
+    in-out property <int> duration:604800;
     in property <string> sent;
     in property <string> wire;
     in property <string> status;
@@ -32,7 +34,7 @@ export component MessageDetails inherits Rectangle {
         }
         panel:=Rectangle {
             width:min(480px,root.width - 32px);
-            height:min(root.mode==8 ? 460px : root.mode==5 ? 380px : 290px,root.height - 32px);
+            height:min(root.mode==8 ? 460px : root.mode==5 || root.mode==9 ? 380px : 290px,root.height - 32px);
             x:(root.width - self.width)/2;y:(root.height - self.height)/2;
             background:Theme.overlay;border-radius:14px;
             drop-shadow-offset-y:8px;drop-shadow-blur:28px;drop-shadow-color:Theme.modal-shadow;
@@ -41,7 +43,7 @@ export component MessageDetails inherits Rectangle {
                 padding:20px;spacing:12px;
                 HorizontalLayout {
                     height:28px;
-                    Text {text:root.mode==5 ? @tr("Edit message") : root.mode==6 ? @tr("Delete for everyone?") : root.mode==7 ? @tr("Delete for me?") : @tr("Message info");color:Theme.text;font-size:19px;font-weight:600;vertical-alignment:center;horizontal-stretch:1;}
+                    Text {text:root.mode==5 ? @tr("Edit message") : root.mode==6 ? @tr("Delete for everyone?") : root.mode==7 ? @tr("Delete for me?") : root.mode==9 ? @tr("Pin message") : @tr("Message info");color:Theme.text;font-size:19px;font-weight:600;vertical-alignment:center;horizontal-stretch:1;}
                     IconButton {icon:@image-url("icons/close.svg");label:@tr("Close message details");enabled:!root.busy;activated=>{root.close();}}
                 }
                 if root.mode!=5:Text {height:44px;text:root.summary;color:Theme.secondary;font-size:13px;wrap:word-wrap;overflow:elide;max-lines:2;}
@@ -62,6 +64,19 @@ export component MessageDetails inherits Rectangle {
                     vertical-stretch:1;text:root.mode==6 ? @tr("This message will be deleted for everyone in this conversation.") : root.count==1 ? @tr("This message will be removed for you and synced to your linked devices. Other participants keep their copies.") : @tr("These {} messages will be removed for you and synced to your linked devices. Other participants keep their copies.",root.count);
                     color:Theme.text;wrap:word-wrap;font-size:14px;
                 }
+                if root.mode==9:VerticalLayout {
+                    vertical-stretch:1;spacing:4px;
+                    Text {text:@tr("Choose how long this message stays pinned for everyone in the chat.");color:Theme.secondary;wrap:word-wrap;font-size:13px;}
+                    for option in [{seconds:86400,label:@tr("24 hours")},{seconds:604800,label:@tr("7 days")},{seconds:2592000,label:@tr("30 days")}]:MenuControl {
+                        height:36px;border-radius:8px;background:root.duration==option.seconds ? Theme.hover : transparent;
+                        label:@tr("Pin for {}",option.label);enabled:!root.busy;selected:root.duration==option.seconds;
+                        activated=>{root.duration=option.seconds;}
+                        Rectangle {x:10px;y:9px;width:18px;height:18px;border-radius:9px;border-width:1px;border-color:root.duration==option.seconds ? Theme.accent : Theme.secondary;
+                            if root.duration==option.seconds:Rectangle {x:4px;y:4px;width:10px;height:10px;border-radius:5px;background:Theme.accent;}
+                        }
+                        Text {x:40px;width:parent.width - 48px;height:parent.height;text:option.label;color:Theme.text;vertical-alignment:center;font-size:14px;}
+                    }
+                }
                 if root.mode==8:Text {text:@tr("Sent · {}",root.sent)+"\n"+root.status;color:Theme.secondary;wrap:word-wrap;font-size:13px;}
                 if root.mode==8 && root.receipts.length==0:Text {text:@tr("Recipient receipt times have not been supplied. Unavailable read receipts do not mean the message is unread.");color:Theme.secondary;wrap:word-wrap;font-size:13px;vertical-stretch:1;}
                 if root.mode==8 && root.receipts.length>0:ListView {
@@ -76,7 +91,7 @@ export component MessageDetails inherits Rectangle {
                 if root.mode!=8:HorizontalLayout {
                     alignment:end;spacing:10px;height:32px;
                     SoftButton {text:@tr("Cancel");enabled:!root.busy;activated=>{root.close();}}
-                    SoftButton {text:root.busy ? @tr("Please wait…") : root.mode==5 ? @tr("Save edit") : root.mode==6 ? @tr("Delete for everyone") : @tr("Delete for me");enabled:!root.busy;activated=>{root.confirm();}}
+                    SoftButton {text:root.busy ? @tr("Please wait…") : root.mode==5 ? @tr("Save edit") : root.mode==6 ? @tr("Delete for everyone") : root.mode==9 ? @tr("Pin") : @tr("Delete for me");enabled:!root.busy;activated=>{root.confirm();}}
                 }
             }
         }

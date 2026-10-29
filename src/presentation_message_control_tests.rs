@@ -308,6 +308,17 @@ pub(crate) fn check_ui() {
     assert!(commands.borrow().is_empty());
     assert_eq!(ui.get_message_dialog(), 3);
     ui.invoke_close_message_actions();
+    {
+        let metadata =
+            &mut Arc::make_mut(&mut Arc::make_mut(&mut view.messages)[0].content).metadata;
+        metadata.starred = true;
+        metadata.pinned = true;
+        metadata.pending = "Star pending".into();
+    }
+    presentation::conversation(&ui, &view, false);
+    let updated = crate::presentation_actions::source_row(&ui, id).unwrap();
+    assert!(updated.starred && updated.pinned && updated.operation_busy);
+    assert_eq!(updated.operation_status, "Star pending");
     ui.invoke_prepare_quick_reactions("🦀".into());
     assert_eq!(
         ui.get_menu_reactions()

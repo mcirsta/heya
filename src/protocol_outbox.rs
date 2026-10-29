@@ -156,7 +156,7 @@ async fn send_control(
 ) -> Attempt {
     use crate::message_actions::{self as action, ControlKind};
     use whatsapp_rust::{EditOptions, EditRequest, MessageId, MessageRef, StanzaId};
-    if control.kind != ControlKind::Hide
+    if matches!(control.kind, ControlKind::Edit | ControlKind::Revoke)
         && !action::within_window(
             control.stamp,
             chrono::Utc::now().timestamp(),
@@ -181,6 +181,52 @@ async fn send_control(
     let Ok(target) = MessageRef::new(jid, target_id, sender.as_ref(), control.outgoing) else {
         return Attempt::Rejected;
     };
+    if matches!(control.kind, ControlKind::Star | ControlKind::Unstar) {
+        let result = if control.kind == ControlKind::Star {
+            client.chat_actions().star_message(&target).await
+        } else {
+            client.chat_actions().unstar_message(&target).await
+        };
+        return if result.is_ok() {
+            Attempt::Confirmed
+        } else {
+            Attempt::Unconfirmed
+        };
+    }
+    if matches!(control.kind, ControlKind::Pin | ControlKind::Unpin) {
+        use whatsapp_rust::wacore_binary::JidExt as _;
+        let mut key = target.to_raw_key();
+        if jid.is_group() && control.outgoing && key.participant.is_none() {
+            let Ok(routing) = client.groups().routing_info(jid).await else {
+                return Attempt::Unconfirmed;
+            };
+            let author = match routing.addressing_mode {
+                whatsapp_rust::wacore::types::message::AddressingMode::Pn => client.pn(),
+                whatsapp_rust::wacore::types::message::AddressingMode::Lid => client.lid(),
+            };
+            let Some(author) = author else {
+                return Attempt::Rejected;
+            };
+            key.participant = Some(author.to_non_ad_string());
+        }
+        let Ok(seconds) = control.text.parse::<u32>() else {
+            return Attempt::Rejected;
+        };
+        let Some(message) = crate::protocol_actions::pin(key, seconds, control.version) else {
+            return Attempt::Rejected;
+        };
+        let Ok(id) = MessageId::new(event) else {
+            return Attempt::Rejected;
+        };
+        return submitted(
+            client
+                .send(
+                    SendRequest::new(jid, message)
+                        .with_options(SendOptions::default().with_message_id(id)),
+                )
+                .await,
+        );
+    }
     if control.kind == ControlKind::Hide {
         return if client
             .chat_actions()
@@ -292,7 +338,12 @@ mod tests {
             assert_eq!(control.wire, "source");
             assert_ne!(job.id, "source");
             self.calls.lock().unwrap().push(control.kind);
-            if control.kind == crate::message_actions::ControlKind::Hide {
+            if matches!(
+                control.kind,
+                crate::message_actions::ControlKind::Hide
+                    | crate::message_actions::ControlKind::Star
+                    | crate::message_actions::ControlKind::Unstar
+            ) {
                 Attempt::Confirmed
             } else {
                 self.archive
@@ -335,6 +386,66 @@ mod tests {
             stopped,
             Duration::from_secs(1),
         ));
+        for (event, starred) in [("star", true), ("unstar", false)] {
+            db.queue_star(chat, id, event.into(), starred)
+                .await
+                .unwrap();
+            tokio::time::timeout(Duration::from_secs(3), async {
+                loop {
+                    let done = db
+                        .blocking(|c| {
+                            Ok(c.query_row(
+                                "SELECT delivery='accepted' FROM messages WHERE wire_id=?1",
+                                [event],
+                                |r| r.get::<_, bool>(0),
+                            )?)
+                        })
+                        .unwrap();
+                    if done {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            assert_eq!(
+                db.view(chat, 100, String::new(), false, false)
+                    .await
+                    .unwrap()
+                    .conversation
+                    .unwrap()
+                    .messages[0]
+                    .content
+                    .metadata
+                    .starred,
+                starred
+            );
+        }
+        for (event, seconds) in [("pin", 604800), ("unpin", 0)] {
+            db.queue_pin(chat, id, event.into(), seconds).await.unwrap();
+            tokio::time::timeout(Duration::from_secs(3), async {
+                loop {
+                    if db
+                        .view(chat, 100, String::new(), false, false)
+                        .await
+                        .unwrap()
+                        .conversation
+                        .unwrap()
+                        .messages[0]
+                        .content
+                        .metadata
+                        .pinned
+                        == (seconds > 0)
+                    {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+        }
         db.queue_edit(chat, id, "edit".into(), "Original".into(), "Edited".into())
             .await
             .unwrap();
@@ -407,7 +518,15 @@ mod tests {
             .unwrap();
         assert_eq!(
             *calls.lock().unwrap(),
-            [ControlKind::Edit, ControlKind::Revoke, ControlKind::Hide]
+            [
+                ControlKind::Star,
+                ControlKind::Unstar,
+                ControlKind::Pin,
+                ControlKind::Unpin,
+                ControlKind::Edit,
+                ControlKind::Revoke,
+                ControlKind::Hide
+            ]
         );
         assert!(db.claim_next().await.unwrap().is_none());
     }

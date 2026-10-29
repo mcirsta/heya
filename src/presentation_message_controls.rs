@@ -138,13 +138,31 @@ pub fn bind(ui: &AppWindow, submit: Rc<impl Fn(Command) -> bool + 'static>) -> R
             return;
         }
         let mode = ui.get_message_dialog();
-        if matches!(mode, 5 | 6) && !ui.get_demo_mode() && ui.get_connection_state() != 5 {
+        if matches!(mode, 5 | 6 | 9) && !ui.get_demo_mode() && ui.get_connection_state() != 5 {
             ui.set_action_error("Connect to complete this action.".into());
             return;
         }
         let chat = ui.get_action_chat();
         let message = ui.get_action_message();
         match mode {
+            9 => {
+                if crate::presentation_actions::source_row(&ui, message)
+                    .is_none_or(|row| !row.actionable)
+                {
+                    ui.set_action_error("This photo is no longer available.".into());
+                    return;
+                }
+                let seconds = ui.get_pin_duration();
+                if !matches!(seconds, 86400 | 604800 | 2592000) {
+                    return;
+                }
+                crate::presentation_actions::request(&ui, &sender, |request| Command::Pin {
+                    chat,
+                    message,
+                    seconds: seconds as u32,
+                    request,
+                });
+            }
             5 => {
                 let text = ui.get_action_edit_text().to_string();
                 if text.trim().is_empty() || text.len() > 64 * 1024 {

@@ -427,6 +427,53 @@ impl DemoState {
         use crate::message_actions::{Command, Destination, OperationReply, ReplyDraft};
         let mut destinations = Vec::new();
         let (request, kind, saved) = match command {
+            Command::Star {
+                chat,
+                message,
+                starred,
+                request,
+            } => {
+                let source = self
+                    .chats
+                    .iter_mut()
+                    .find(|c| c.id == chat)
+                    .and_then(|c| c.messages.iter_mut().find(|m| m.id == message));
+                if let Some(source) = source
+                    && !source.content.unavailable
+                    && source.content.notice.is_none()
+                {
+                    std::sync::Arc::make_mut(&mut source.content)
+                        .metadata
+                        .starred = starred;
+                    (request, 8, true)
+                } else {
+                    (request, 8, false)
+                }
+            }
+            Command::Pin {
+                chat,
+                message,
+                seconds,
+                request,
+            } => {
+                let source = self
+                    .chats
+                    .iter_mut()
+                    .find(|c| c.id == chat)
+                    .and_then(|c| c.messages.iter_mut().find(|m| m.id == message));
+                if let Some(source) = source
+                    && matches!(seconds, 0 | 86400 | 604800 | 2592000)
+                    && !source.content.unavailable
+                    && source.content.notice.is_none()
+                {
+                    std::sync::Arc::make_mut(&mut source.content)
+                        .metadata
+                        .pinned = seconds > 0;
+                    (request, 9, true)
+                } else {
+                    (request, 9, false)
+                }
+            }
             Command::CloseInfo => (0, 7, true),
             Command::Info {
                 chat,
@@ -655,6 +702,7 @@ impl DemoState {
                         stamp: now.timestamp(),
                         delivery: "accepted".into(),
                         pending: String::new(),
+                        ..Default::default()
                     };
                     content.quote = None;
                     // Business action envelopes forward as their full readable

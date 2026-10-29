@@ -22,6 +22,8 @@ pub struct Gallery {
     pub sender: String,
     pub date: String,
     pub caption: String,
+    /// Current eligible message metadata, including photos outside the timeline page.
+    pub message: Option<crate::domain::Message>,
 }
 impl Gallery {
     pub fn thumbnails(&self) -> &[i32] {
@@ -392,17 +394,41 @@ fn demo_gallery(chat: i32, id: i32) -> Gallery {
         vec![id]
     };
     let position = members.iter().position(|&member| member == id).unwrap_or(0);
+    let caption = match id {
+        22002 => "A synthetic landscape · Salut 👋 · こんにちは",
+        22004 => "A wide photo keeps its proportions.",
+        _ => "",
+    };
     Gallery {
         id,
         members,
         position,
         sender: "Mira Sample".into(),
         date: "Today, 10:24".into(),
-        caption: match id {
-            22002 => "A synthetic landscape · Salut 👋 · こんにちは",
-            22004 => "A wide photo keeps its proportions.",
-            _ => "",
-        }
-        .into(),
+        caption: caption.into(),
+        message: Some(crate::domain::Message {
+            id,
+            sender: "Mira Sample".into(),
+            sender_id: "synthetic-photo".into(),
+            text: caption.into(),
+            time: "10:24".into(),
+            date: None,
+            outgoing: false,
+            local: false,
+            content: Arc::new(crate::message_content::Content {
+                body: Some(caption.into()),
+                photo: Some(crate::message_content::Photo {
+                    width: 1200,
+                    height: 900,
+                    size: None,
+                }),
+                metadata: crate::message_actions::Metadata {
+                    wire: format!("synthetic-photo-{id}"),
+                    delivery: "accepted".into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+        }),
     }
 }

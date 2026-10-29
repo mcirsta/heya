@@ -74,6 +74,9 @@ pub(crate) fn check_ui() {
                 for outgoing in [false, true] {
                     let id = view.messages[0].id;
                     Arc::make_mut(&mut view.messages)[0].outgoing = outgoing;
+                    Arc::make_mut(&mut Arc::make_mut(&mut view.messages)[0].content)
+                        .metadata
+                        .delivery = "accepted".into();
                     presentation::conversation(&ui, &view, true);
                     ui.show().unwrap();
                     ui.invoke_layout_timeline();
@@ -146,7 +149,10 @@ pub(crate) fn check_ui() {
                     let entries = ui.get_message_menu_entries();
                     assert_eq!(entries.iter().any(|e| e.action == 5), chat != 1);
                     assert_eq!(entries.iter().any(|e| e.action == 8), !outgoing);
-                    for e in entries.iter().filter(|e| matches!(e.action, 6..=10)) {
+                    for e in entries.iter().filter(|e| matches!(e.action, 6 | 7)) {
+                        assert!(e.enabled, "confirmed messages can be starred and pinned");
+                    }
+                    for e in entries.iter().filter(|e| matches!(e.action, 8 | 10)) {
                         assert!(!e.enabled);
                     }
                     ui.invoke_choose_message_menu(5);

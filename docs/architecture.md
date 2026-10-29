@@ -73,6 +73,12 @@ receivers. Clear it before the ownership fence; a scope-exit guard alone creates
 a cycle between connection cleanup and client release. Closing the window drains
 queued draft/settings writes and exits the process; there is no tray lifecycle.
 
+The session directory lock explicitly unlocks when its owner is dropped. A
+helper's briefly inherited file descriptor can no longer keep a normally closed
+profile busy. Session connections still retain the owner until their work ends;
+mode conversion uses the same guard. A deterministic Unix test holds an inherited
+descriptor in a live child while checking release and reacquisition.
+
 Unlink and relink require an explicit confirmation in the UI. Unlink calls the
 SDK's remote logout API and distinguishes confirmed removal from an uncertain
 result. Revocation is persisted in archive metadata to avoid repeatedly trying

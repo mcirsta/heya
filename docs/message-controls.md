@@ -69,6 +69,32 @@ pending. SDK validation may reject community-announcement edits without an
 original message secret; regular direct/group text uses its public edit API.
 No protocol-library modification was needed for this slice.
 
+Photo-viewer Star/Unstar and Pin/Unpin use invisible controls in the same durable
+outbox. Saving the command reports that it is queued; it does not change the
+confirmed star or pin flag. Stars call the pinned SDK's public app-state API and
+commit only after it succeeds. Pins use its public canonical send API with a
+stable operation ID, preserving the target's chat and author. Server ACKs or
+own-device echoes confirm the operation. An uncertain or failed operation leaves
+the previous flag intact and is shown in the existing pending status. Explicit
+retry remains available; these controls do not automatically resend uncertain
+network operations. Pins support 24 hours, seven days and thirty days.
+
+Schema 19 stores stars and pin deadlines separately from message content, keyed
+by canonical chat, author and wire ID. PN/LID merging preserves them. Incoming
+StarUpdate events and pin/unpin envelopes update the same projection, with older
+timestamps unable to overwrite newer state. The existing app-state worker
+requests a star snapshot once after the upgrade; no additional service thread,
+idle polling or SDK patch is introduced. A gallery selection outside the loaded
+timeline page reads the same flags and pending-control status on the archive
+worker.
+
+Synthetic tests cover queued versus confirmed state, failed requests, duplicate
+submissions, missing originals, disconnected storage, migration/reopen, aliases,
+pin expiry, remote pin notices and the serial outbox. On 29 October 2026,
+345 Linux tests passed with media and 326 without it; strict Clippy passed in
+both configurations. These checks do not establish live account star
+synchronization, group pin permissions or other clients' presentation.
+
 The composer focus outline now takes its corner radius from the rounded pill,
 instead of the intermediate rectangular content container.
 

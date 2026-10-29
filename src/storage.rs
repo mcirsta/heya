@@ -131,7 +131,17 @@ pub struct SessionFiles {
     pub key_sql: Zeroizing<String>,
     pub archive_key_sql: Zeroizing<String>,
     // Retained by the protocol pool's connection hook, including detached work.
-    _lock: File,
+    _lock: DirectoryLock,
+}
+
+struct DirectoryLock(File);
+impl Drop for DirectoryLock {
+    fn drop(&mut self) {
+        // A forked helper can briefly inherit this open file description before
+        // exec closes its descriptor. Release ownership now instead of waiting
+        // for every inherited descriptor to close.
+        let _ = self.0.unlock();
+    }
 }
 
 // Pre-release storage reset: the former profile used two independent keyring
@@ -216,7 +226,7 @@ pub(crate) fn prepare_at(
     }))
 }
 
-fn lock_directory(directory: &Path) -> Result<File, Failure> {
+fn lock_directory(directory: &Path) -> Result<DirectoryLock, Failure> {
     fs::create_dir_all(directory).map_err(|_| Failure::DataDirectory)?;
     #[cfg(unix)]
     {
@@ -229,7 +239,7 @@ fn lock_directory(directory: &Path) -> Result<File, Failure> {
         std::fs::TryLockError::WouldBlock => Failure::AlreadyRunning,
         std::fs::TryLockError::Error(_) => Failure::DataDirectory,
     })?;
-    Ok(lock)
+    Ok(DirectoryLock(lock))
 }
 
 fn databases_exist(directory: &Path) -> Result<bool, Failure> {
@@ -307,6 +317,36 @@ pub(crate) mod tests {
             *self.0.borrow_mut() = Some(key.to_vec());
             Ok(())
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dropping_the_owner_releases_a_lock_inherited_by_a_live_child() {
+        use std::process::{Command, Stdio};
+        let temp = tempfile::tempdir().unwrap();
+        let files = prepare_at(temp.path(), &MemoryVault::default()).unwrap();
+        // stdin deliberately survives exec. The temporary Command drops the
+        // parent's duplicate; only the live child retains that file description.
+        let mut child = Command::new("/bin/sleep")
+            .arg("30")
+            .stdin(Stdio::from(files._lock.0.try_clone().unwrap()))
+            .spawn()
+            .unwrap();
+        let owner_blocks = matches!(lock_directory(temp.path()), Err(Failure::AlreadyRunning));
+        drop(files);
+        let reopened = lock_directory(temp.path());
+        let child_alive = child.try_wait().unwrap().is_none();
+        let _ = child.kill();
+        child.wait().unwrap();
+        assert!(owner_blocks, "a live owner must exclude another lock");
+        assert!(
+            child_alive,
+            "reacquisition must precede the inherited fd closing"
+        );
+        assert!(
+            reopened.is_ok(),
+            "dropping the owner must release the lock while the child is alive"
+        );
     }
 
     #[test]

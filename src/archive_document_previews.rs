@@ -81,7 +81,7 @@ mod tests {
             .blocking(|c| {
                 assert_eq!(
                     c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?,
-                    18
+                    19
                 );
                 assert_eq!(
                     c.query_row("SELECT draft FROM chats", [], |r| r.get::<_, String>(0))?,

@@ -272,6 +272,9 @@ export component AppWindow inherits Window {
     }
     public function close-message-actions() {if root.message-dialog==8 {root.close-message-info();}let was-composer = root.message-dialog==4;root.message-dialog=0;if was-composer {composer.focus-editor();} else {app-focus.focus();}}
     in-out property <int> photo-viewer-id;
+    in-out property <MessageRow> photo-viewer-message;
+    in-out property <int> photo-viewer-chat;
+    in-out property <int> pin-duration: 604800;
     in property <image> photo-viewer-image;
     in property <string> photo-viewer-status;
     in property <bool> photo-viewer-ready;
@@ -473,12 +476,15 @@ export component AppWindow inherits Window {
         root.follow-timeline-bottom();
     }
     public function close-photo() {
+        if root.action-chat==root.selected-id && root.action-message==root.photo-viewer-id && root.message-dialog!=0 {root.close-message-actions();}
         root.photo-viewer-id = 0;
         root.reset-photo-gallery();
         root.request-photos();
         app-focus.focus();
     }
     public function reset-photo-gallery() {
+        root.photo-viewer-message.id=0;
+        root.photo-viewer-chat=0;
         root.photo-gallery-ids = [];
         root.photo-thumbnails = [];
         root.photo-viewer-sender = "";
@@ -505,7 +511,7 @@ export component AppWindow inherits Window {
             if root.selection-active && event.text==Key.Escape {root.selection-control(0);root.focus-composer();return accept;}
             if root.selection-active && event.text==Key.Return {return accept;}
             if root.video-expanded {if event.text==Key.Escape {root.video-expanded=false;return accept;}return reject;}
-            if root.photo-viewer-id != 0 { if event.text == Key.Escape { root.close-photo(); return accept; } return reject; }
+            if root.photo-viewer-id != 0 && root.message-dialog==0 { if event.text == Key.Escape { root.close-photo(); return accept; } return reject; }
             if root.contact-info-open && event.text==Key.Escape {
                 if root.contact-info-media-view {root.request-contact-media(-1);}else{root.close-contact-info();}
                 return accept;
@@ -1414,6 +1420,25 @@ export component AppWindow inherits Window {
             close => { root.new-chat-open = false; }
             start(phone) => { root.new-chat(phone); }
         }
+        if root.photo-viewer-id > 0 && !AudioCall.shown: photo-viewer := PhotoViewer {
+            photo-id: root.photo-viewer-id;
+            sender: root.photo-viewer-sender; date: root.photo-viewer-date;
+            caption: root.photo-viewer-caption; counter: root.photo-viewer-counter;
+            previous-id: root.photo-viewer-previous; next-id: root.photo-viewer-next;
+            thumbnails: root.photo-thumbnails;
+            navigate(id) => { root.navigate-photo(id); }
+            picture: root.photo-viewer-image; status: root.photo-viewer-status;
+            ready: root.photo-viewer-ready;
+            actions-enabled: root.photo-viewer-message.id==root.photo-viewer-id && root.photo-viewer-chat==root.selected-id && root.photo-viewer-message.actionable && (root.demo-mode || root.live-revision==root.live-shown-revision);
+            busy:root.action-pending;
+            obscured:root.message-dialog!=0;
+            starred:root.photo-viewer-message.starred;pinned:root.photo-viewer-message.pinned;
+            action-status:root.action-error!="" ? root.action-error : root.photo-viewer-message.operation-status;
+            action(which)=>{root.message-action(root.photo-viewer-id,which,root.width - 280px,76px);}
+            copy => { root.copy-photo(root.photo-viewer-id); }
+            closed => { root.close-photo(); }
+            retry => { root.activate-photo(root.photo-viewer-id); }
+        }
         if root.message-dialog==3 && !AudioCall.shown: MessageMenu {
             context:root.action-context-menu;
             reactions:root.menu-reactions;
@@ -1453,8 +1478,9 @@ export component AppWindow inherits Window {
             search(query)=>{root.search-message-actions(query);}
             forward(id)=>{root.forward-message(id);}
         }
-        if root.message-dialog>=5 && root.message-dialog<=8 && !AudioCall.shown:MessageDetails {
+        if root.message-dialog>=5 && root.message-dialog<=9 && !AudioCall.shown:MessageDetails {
             mode:root.message-dialog;count:root.control-count;busy:root.action-pending;error:root.action-error;summary:root.action-summary;
+            duration<=>root.pin-duration;
             text<=>root.action-edit-text;sent:root.info-sent;wire:root.info-wire;status:root.info-status;receipts:root.info-receipts;
             copy-id=>{root.copy-value(root.info-wire);}
             close=>{root.close-message-actions();root.focus-composer();}
@@ -1473,19 +1499,6 @@ export component AppWindow inherits Window {
             message-id:VideoPlayback.id;
             closed=>{root.video-expanded=false;root.focus-composer();}
             control(action,value)=>{root.video-control(VideoPlayback.id,action,value);}
-        }
-        if root.photo-viewer-id > 0 && !AudioCall.shown: photo-viewer := PhotoViewer {
-            photo-id: root.photo-viewer-id;
-            sender: root.photo-viewer-sender; date: root.photo-viewer-date;
-            caption: root.photo-viewer-caption; counter: root.photo-viewer-counter;
-            previous-id: root.photo-viewer-previous; next-id: root.photo-viewer-next;
-            thumbnails: root.photo-thumbnails;
-            navigate(id) => { root.navigate-photo(id); }
-            picture: root.photo-viewer-image; status: root.photo-viewer-status;
-            ready: root.photo-viewer-ready;
-            copy => { root.copy-photo(root.photo-viewer-id); }
-            closed => { root.close-photo(); }
-            retry => { root.activate-photo(root.photo-viewer-id); }
         }
         file-drop := DropArea {
             x: root.conversation-left;

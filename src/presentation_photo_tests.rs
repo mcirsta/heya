@@ -210,12 +210,12 @@ pub(crate) fn check_ui() {
         .next()
         .unwrap();
     assert_eq!(viewer.size(), ui.window().size().to_logical(1.));
-    let zoom = ElementHandle::find_by_accessible_label(&ui, "Zoom photo")
+    let zoom = ElementHandle::find_by_accessible_label(&ui, "Zoom in")
         .next()
         .unwrap();
     zoom.invoke_accessible_default_action();
     assert!(
-        ElementHandle::find_by_accessible_label(&ui, "Fit photo")
+        ElementHandle::find_by_accessible_label(&ui, "Zoom out")
             .next()
             .is_some()
     );
@@ -505,6 +505,7 @@ fn check_grid() {
                 sender: "Mira Sample".into(),
                 date: "Today".into(),
                 caption: String::new(),
+                message: None,
             })),
             viewer: Some((44003, pixels.clone())),
             ..Default::default()
@@ -545,89 +546,111 @@ fn check_grid() {
 }
 
 fn check_wheel_motion(
-    ui: &AppWindow,
+    _ui: &AppWindow,
     view: &crate::domain::Conversation,
     pixels: &Arc<photos::Pixels>,
 ) {
-    use std::time::{Duration, Instant};
-    ui.window().set_size(slint::LogicalSize::new(1200., 900.));
-    presentation::conversation(ui, view, true);
-    ui.set_timeline_y(0.);
-    ui.invoke_layout_timeline();
-    // At the top these photo rows have already been measured. Scroll within
-    // them so changes to the estimated height of distant history are irrelevant.
-    ui.set_timeline_y(-200.);
-    ui.invoke_layout_timeline();
-    let start = ui.get_timeline_y();
-    let data = Arc::new(photos::Snapshot {
-        rows: ui
-            .get_timeline_rows()
-            .iter()
-            .map(|row| {
-                (
-                    row.message.id,
-                    photos::Photo {
-                        state: photos::State::Ready,
-                        image: Some(pixels.clone()),
-                    },
-                )
-            })
-            .collect(),
-        viewer: None,
-        ..Default::default()
-    });
-    // The manual backend has spent time constructing/measuring the fixture
-    // without pumping events. Refresh its cached animation tick as a native
-    // event loop would before dispatch; otherwise the first frame can appear
-    // to be hundreds of milliseconds old and skip the whole animation.
-    slint::platform::update_timers_and_animations();
-    crate::presentation_scroll::dispatch_wheel(
-        ui.window(),
-        slint::LogicalPosition::new(800., 350.),
-        0.,
-        -120.,
-    );
-    assert!(
-        (ui.get_timeline_y() - start).abs() < 1.,
-        "wheel must animate instead of jumping"
-    );
-    let begun = Instant::now();
-    let mut positions = Vec::new();
-    while begun.elapsed() < Duration::from_millis(260) {
-        std::thread::sleep(Duration::from_millis(16));
-        slint::platform::update_timers_and_animations();
-        // Texture arrival and an unrelated snapshot must preserve the animation.
-        publish(ui, &data);
-        presentation::conversation(ui, view, false);
+    let view = view.clone();
+    let pixels = pixels.clone();
+    // The surrounding service suite needs system time. Give this finite check
+    // its own toolkit thread and mock clock so a busy CI runner cannot sleep
+    // through the whole 180 ms animation or advance the suite's clock.
+    std::thread::spawn(move || {
+        use std::time::Duration;
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = AppWindow::new().unwrap();
+        ui.set_demo_mode(true);
+        ui.set_show_conversation(true);
+        let _demand = bind(&ui);
+        ui.window().set_size(slint::LogicalSize::new(1200., 900.));
+        presentation::conversation(&ui, &view, true);
+        ui.set_timeline_y(0.);
         ui.invoke_layout_timeline();
-        positions.push(ui.get_timeline_y());
-    }
-    assert!(
-        (ui.get_timeline_y() - start + 120.).abs() < 1.,
-        "one wheel notch: {start} -> {:?}",
-        positions
-    );
-    assert!(
-        positions.windows(2).all(|p| p[1] <= p[0] + 0.1),
-        "no backwards jumps: {positions:?}"
-    );
-    assert!(
-        positions
-            .iter()
-            .any(|p| *p < start - 1. && *p > start - 119.),
-        "intermediate animation positions exist"
-    );
-    // Reversal cancels the previous direction without accumulating extra distance.
-    crate::presentation_scroll::dispatch_wheel(
-        ui.window(),
-        slint::LogicalPosition::new(800., 350.),
-        0.,
-        120.,
-    );
-    std::thread::sleep(Duration::from_millis(230));
-    slint::platform::update_timers_and_animations();
-    ui.invoke_layout_timeline();
-    assert!((ui.get_timeline_y() - start).abs() < 1.);
+        // At the top these photo rows have already been measured. Scroll within
+        // them so changes to the estimated height of distant history are irrelevant.
+        ui.set_timeline_y(-200.);
+        ui.invoke_layout_timeline();
+        let start = ui.get_timeline_y();
+        let data = Arc::new(photos::Snapshot {
+            rows: ui
+                .get_timeline_rows()
+                .iter()
+                .map(|row| {
+                    (
+                        row.message.id,
+                        photos::Photo {
+                            state: photos::State::Ready,
+                            image: Some(pixels.clone()),
+                        },
+                    )
+                })
+                .collect(),
+            viewer: None,
+            ..Default::default()
+        });
+        let wheel = |delta| {
+            crate::presentation_scroll::dispatch_wheel(
+                ui.window(),
+                slint::LogicalPosition::new(800., 350.),
+                0.,
+                delta,
+            );
+        };
+        let frame = || {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(16));
+            // Texture arrival and an unrelated snapshot must preserve the animation.
+            publish(&ui, &data);
+            presentation::conversation(&ui, &view, false);
+            ui.invoke_layout_timeline();
+            ui.get_timeline_y()
+        };
+        wheel(-120.);
+        assert!(
+            (ui.get_timeline_y() - start).abs() < 1.,
+            "wheel must animate instead of jumping"
+        );
+        let positions = (0..17).map(|_| frame()).collect::<Vec<_>>();
+        assert!(
+            (ui.get_timeline_y() - start + 120.).abs() < 1.,
+            "one wheel notch: {start} -> {positions:?}"
+        );
+        assert!(
+            positions.windows(2).all(|p| p[1] <= p[0] + 0.1),
+            "no backwards jumps: {positions:?}"
+        );
+        assert!(
+            positions
+                .iter()
+                .any(|p| *p < start - 1. && *p > start - 119.),
+            "intermediate animation positions exist: {positions:?}"
+        );
+        wheel(120.);
+        for _ in 0..17 {
+            frame();
+        }
+        assert!((ui.get_timeline_y() - start).abs() < 1.);
+
+        // Notches arriving before the previous animation finishes retain their
+        // combined distance, rather than dropping or doubling the remaining motion.
+        let mut positions = Vec::new();
+        for _ in 0..3 {
+            let before = ui.get_timeline_y();
+            wheel(-120.);
+            assert!((ui.get_timeline_y() - before).abs() < 1.);
+            positions.push(frame());
+        }
+        positions.extend((0..17).map(|_| frame()));
+        assert!(
+            (ui.get_timeline_y() - start + 360.).abs() < 1.,
+            "three rapid wheel notches: {start} -> {positions:?}"
+        );
+        assert!(
+            positions.windows(2).all(|p| p[1] <= p[0] + 0.1),
+            "no backwards jumps during a wheel burst: {positions:?}"
+        );
+    })
+    .join()
+    .unwrap();
 }
 
 fn check_album(ui: &AppWindow, message: &crate::domain::Message, pixels: &Arc<photos::Pixels>) {
@@ -650,6 +673,7 @@ fn check_album(ui: &AppWindow, message: &crate::domain::Message, pixels: &Arc<ph
             sender: "~Mira Sample".into(),
             date: "21 Oct 10:24".into(),
             caption: "A long caption 👩🏽‍💻\nSecond line مرحبا · こんにちは\n".repeat(20),
+            message: None,
         };
         Arc::new(photos::Snapshot {
             checked: Some((9, id)),
@@ -732,7 +756,7 @@ fn check_album(ui: &AppWindow, message: &crate::domain::Message, pixels: &Arc<ph
     ui.invoke_navigate_photo(*members.last().unwrap());
     publish(ui, &data(*members.last().unwrap()));
     assert_eq!(ui.get_photo_viewer_next(), 0);
-    let zoom = ElementHandle::find_by_accessible_label(ui, "Zoom photo")
+    let zoom = ElementHandle::find_by_accessible_label(ui, "Zoom in")
         .next()
         .unwrap();
     zoom.invoke_accessible_default_action();
@@ -742,7 +766,7 @@ fn check_album(ui: &AppWindow, message: &crate::domain::Message, pixels: &Arc<ph
         });
     assert_eq!(ui.get_photo_viewer_id(), members[members.len() - 2]);
     assert!(
-        ElementHandle::find_by_accessible_label(ui, "Zoom photo")
+        ElementHandle::find_by_accessible_label(ui, "Zoom in")
             .next()
             .is_some(),
         "changing photos resets zoom"

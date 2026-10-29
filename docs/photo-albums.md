@@ -114,6 +114,32 @@ clipboard action. Changing photos resets zoom and pan. Standalone photos do not
 acquire navigation to unrelated chat media. Videos in a mixed album are omitted
 from this photo-only viewer; video playback remains its separate existing path.
 
+## Viewer actions
+
+The photo toolbar follows the supplied WhatsApp Web reference: Zoom out/in,
+Go to message, Reply, Star/Unstar, Pin/Unpin, React, Forward, Download, More and
+Close. Narrow windows keep zoom, Download, More and Close visible; More retains
+the other message actions and Copy image. Ctrl+C (Command+C on macOS) still
+copies the original image. Zoom steps between fitted, 2× and 4× display size;
+Space switches between fitted and 2×.
+
+Go to message opens the selected original in saved chat history. Reply returns
+to the composer only after the reply draft is accepted. Forwarding, reactions,
+pin duration and More open above the viewer, preserving the selected photo and
+its album position. Pin duration offers 24 hours, 7 days and 30 days.
+
+The photo service publishes one eligible message's action metadata with the
+existing gallery snapshot. This covers album members outside the loaded chat
+page without loading the entire album into the timeline. The archive rechecks
+visibility, expiry, lock state and message identity for each operation. Queued
+star/pin changes retain the confirmed state until the existing outbox receives
+confirmation; errors and pending results stay visible. See
+[message controls](message-controls.md) for persistence and synchronization.
+
+The toolbar and icons are Heya's own code. Synthetic checks exercise queue
+rejection, delayed results, off-page actions, navigation, modal ordering and
+narrow-window access; they do not establish live account interoperability.
+
 ## Storage and protocol
 
 Archive schema 18 adds `album` and `album_index` columns plus a composite index.
@@ -257,3 +283,51 @@ measurements, not speed equivalence with another client or live CDN tests.
 The subsequent [resize investigation](resize-performance.md) identifies a Slint
 opacity-layer allocation issue and records the isolated renderer patch and
 paired offscreen measurements.
+
+## Viewer-action validation — 29 October 2026
+
+345 Linux tests passed with media and 326 without it, with strict Clippy in both
+configurations. The single-toolkit-thread suite exercises the real toolbar and
+shared callbacks with synthetic services: rejection, delayed reply results,
+Star/Pin confirmation, duration selection, off-page photo actions, More on narrow
+windows, navigation and stale-result matching. Zoom is checked at fitted, 2× and
+4× sizes. Native light/wide and dark/narrow captures cover the viewer, reaction
+picker, forwarding chooser, pin-duration dialog, More and return to the composer.
+
+The smooth-wheel regression now uses a separate joined test thread with a mock
+clock. Deterministic 16 ms frames preserve checks for intermediate positions,
+monotonic travel, reversal and rapid-wheel accumulation without depending on
+CI scheduler delays. Application scrolling is unchanged.
+
+Optimized OpenGL/Xvfb comparisons used the same synthetic SQLCipher fixture
+(10,000 messages, 100 album photos, one loaded conversation row) on the project
+filesystem, with Mesa's shader cache disabled. The first toolbar implementation
+recolored disabled SVG icons on each selection; repeated navigation render CPU
+p95 rose to 27.78–32.89 ms. Keeping ink stable and changing opacity removed that
+cache invalidation. Reusing the default empty actions model also avoids allocating
+a different model for every otherwise identical publication. Row comparison now
+includes wire/time/operation metadata, preserving capability and mark updates.
+
+| Measurement | Baseline | Final run |
+| --- | --- | --- |
+| Navigation render CPU p95 | 18.41 ms | 20.20 ms |
+| Settled resize render CPU p95 | 10.11 ms | 10.88 ms |
+| Selection to UI ready p95 (19 samples) | 149.29 ms | 159.75 ms |
+| Selection to render callback p95 (19 samples) | 225.16 ms | 235.72 ms |
+
+The intermediate rendering-fix repeat measured navigation p95 at 19.76 ms and
+selection-to-render p95 at 211.73 ms. Extra controls retain a small measured
+rendering cost; these runs do not establish identical performance or native
+GPU/compositor behavior. The final resize maximum remained 153.89 ms, comparable
+to the baseline's 149.97 ms; the existing renderer resize spikes remain open.
+Every run retained one timeline row and released the viewer on close. Separate
+synthetic close checks found no idle media thread and exited in 24–47 ms.
+
+Baseline source: `0bea7ec`; binary SHA-256:
+`4d7344cfa8861d6ebb2dc584697d13c0cc22cd633613546f2b66d750badc7d28`.
+Final tested binary SHA-256:
+`d217817cc6383836ad9361d6a940ae909db19d4670288e5c0f8e14f00b73d6c1`.
+Reproduce with `HEYA_BENCHMARK_ALBUM=1 HEYA_TEST_RENDERER=winit-skia-opengl
+MESA_SHADER_CACHE_DISABLE=true scripts/ui-offscreen.sh --ui-benchmark`; set
+`TMPDIR` to a disposable directory on the data filesystem and use
+`HEYA_TEST_BINARY` to select a baseline.

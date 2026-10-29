@@ -62,7 +62,10 @@ fn chat_row(chat: &domain::ChatSummary) -> ChatRow {
     }
 }
 
-fn message_row(message: &domain::Message, previous: Option<&domain::Message>) -> MessageRow {
+pub(crate) fn message_row(
+    message: &domain::Message,
+    previous: Option<&domain::Message>,
+) -> MessageRow {
     let first_in_run = message.starts_run(previous);
     let sender_initials: String = message
         .sender
@@ -84,6 +87,9 @@ fn message_row(message: &domain::Message, previous: Option<&domain::Message>) ->
         long_text: text.len() > 4096,
         large_emoji: crate::presentation_text::large_emoji(&text),
         wire_id: message.content.metadata.wire.as_str().into(),
+        starred: message.content.metadata.starred,
+        pinned: message.content.metadata.pinned,
+        operation_status: message.content.metadata.pending.as_str().into(),
         sent_at: message.content.metadata.stamp.to_string().into(),
         operation_busy: (message.outgoing
             && !matches!(
@@ -254,22 +260,26 @@ fn message_row(message: &domain::Message, previous: Option<&domain::Message>) ->
                 .is_some_and(|d| d.has_thumbnail)
             || message.content.video.is_some(),
         thumbnail: Default::default(),
-        actions: ModelRc::new(slint::VecModel::from(
-            message
-                .content
-                .actions
-                .iter()
-                .take(crate::message_content::MAX_ACTIONS)
-                .map(|action| crate::MessageActionRow {
-                    label: action.label.as_str().into(),
-                    kind: match action.target {
-                        crate::message_content::Target::Unavailable => 0,
-                        crate::message_content::Target::Url(_) => 1,
-                        crate::message_content::Target::Copy(_) => 2,
-                    },
-                })
-                .collect::<Vec<_>>(),
-        )),
+        actions: if message.content.actions.is_empty() {
+            Default::default()
+        } else {
+            ModelRc::new(slint::VecModel::from(
+                message
+                    .content
+                    .actions
+                    .iter()
+                    .take(crate::message_content::MAX_ACTIONS)
+                    .map(|action| crate::MessageActionRow {
+                        label: action.label.as_str().into(),
+                        kind: match action.target {
+                            crate::message_content::Target::Unavailable => 0,
+                            crate::message_content::Target::Url(_) => 1,
+                            crate::message_content::Target::Copy(_) => 2,
+                        },
+                    })
+                    .collect::<Vec<_>>(),
+            ))
+        },
     }
 }
 
@@ -317,25 +327,34 @@ pub(crate) fn conversation(
     ui.set_chat_is_group(view.is_group);
     ui.set_older_count(view.older_count as i32);
     let changed = timeline::update(ui, view, restore_draft);
+    if ui.get_demo_mode()
+        && ui.get_photo_viewer_id() > 0
+        && let Some(message) = view
+            .messages
+            .iter()
+            .find(|message| message.id == ui.get_photo_viewer_id())
+    {
+        ui.set_photo_viewer_message(message_row(message, None));
+    }
     if ui.get_selection_active() {
         ui.invoke_selection_control(4);
     }
     ui.set_action_source_actionable(
-        ui.get_timeline_rows()
-            .iter()
-            .any(|r| r.message.id == ui.get_action_message() && r.message.actionable),
+        crate::presentation_actions::source_row(ui, ui.get_action_message())
+            .is_some_and(|row| row.actionable),
     );
+    crate::presentation_actions::refresh_menu(ui);
     if ui.get_message_dialog() != 0
         && (ui.get_action_chat() != view.chat.id
             || (ui.get_message_dialog() != 4
                 && !ui.get_selection_active()
-                && !ui.get_timeline_rows().iter().any(|r| {
-                    r.message.id == ui.get_action_message()
-                        && (r.message.actionable
+                && !crate::presentation_actions::source_row(ui, ui.get_action_message())
+                    .is_some_and(|row| {
+                        row.actionable
                             || (ui.get_action_context_menu()
                                 && matches!(ui.get_message_dialog(), 3 | 7 | 8)
-                                && !r.message.system_notice))
-                })))
+                                && !row.system_notice)
+                    })))
     {
         ui.invoke_close_message_actions();
     }
@@ -1269,6 +1288,7 @@ mod tests {
         crate::presentation_hover_tests::check_action_flows();
         crate::presentation_hover_tests::check_forward_chooser();
         crate::presentation_menu_tests::check_ui();
+        crate::presentation_actions::viewer_tests::check_ui();
         crate::presentation_message_controls::tests::check_ui();
         crate::presentation_emoji_tests::check_ui();
         crate::presentation_text::check_ui();

@@ -14,12 +14,18 @@ pub struct Metadata {
     pub stamp: i64,
     pub delivery: String,
     pub pending: String,
+    pub starred: bool,
+    pub pinned: bool,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ControlKind {
     Edit,
     Revoke,
     Hide,
+    Star,
+    Unstar,
+    Pin,
+    Unpin,
 }
 impl ControlKind {
     pub fn label(self) -> &'static str {
@@ -27,6 +33,10 @@ impl ControlKind {
             Self::Edit => "Edit",
             Self::Revoke => "Delete",
             Self::Hide => "Delete for me",
+            Self::Star => "Star",
+            Self::Unstar => "Unstar",
+            Self::Pin => "Pin",
+            Self::Unpin => "Unpin",
         }
     }
 }
@@ -39,6 +49,15 @@ pub struct Control {
     pub stamp: i64,
     pub text: String,
     pub version: i64,
+}
+#[derive(Clone)]
+pub struct MarkUpdate {
+    pub jid: String,
+    pub sender: String,
+    pub wire: String,
+    pub starred: Option<bool>,
+    pub pinned_until: Option<i64>,
+    pub stamp: Option<i64>,
 }
 #[derive(Clone, Default)]
 pub struct InfoRow {
@@ -98,6 +117,19 @@ pub struct OperationReply {
     pub info: Option<Info>,
 }
 pub enum Command {
+    Star {
+        chat: i32,
+        message: i32,
+        starred: bool,
+        request: i32,
+    },
+    Pin {
+        chat: i32,
+        message: i32,
+        /// Zero unpins; otherwise 24 hours, seven days or thirty days.
+        seconds: u32,
+        request: i32,
+    },
     Edit {
         chat: i32,
         message: i32,

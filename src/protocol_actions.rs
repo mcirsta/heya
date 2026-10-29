@@ -37,6 +37,80 @@ pub fn revoke(jid: &str, wire: String) -> wa::Message {
     message
 }
 
+/// Use the public canonical send API with our durable operation ID. The SDK's
+/// pin convenience methods allocate their own ID, which cannot be ACK-correlated
+/// with an already saved outbox control.
+pub fn pin(key: wa::MessageKey, seconds: u32, stamp: i64) -> Option<wa::Message> {
+    if !matches!(seconds, 0 | 86400 | 604800 | 2592000) {
+        return None;
+    }
+    let mut pin = wa::message::PinInChatMessage::default();
+    pin.key = MessageField::some(key);
+    pin.r#type = Some(if seconds == 0 {
+        wa::message::pin_in_chat_message::Type::UNPIN_FOR_ALL
+    } else {
+        wa::message::pin_in_chat_message::Type::PIN_FOR_ALL
+    });
+    pin.sender_timestamp_ms = Some(stamp);
+    let mut context = wa::MessageContextInfo::default();
+    context.message_add_on_duration_in_secs = Some(seconds);
+    let mut message = wa::Message::default();
+    message.pin_in_chat_message = MessageField::some(pin);
+    message.message_context_info = MessageField::some(context);
+    Some(message)
+}
+
+pub fn pin_update(record: &crate::archive::Record) -> Option<crate::message_actions::MarkUpdate> {
+    let message = codec::message_decode(&record.raw).ok()?;
+    let base = message.get_base_message();
+    let pin = base.pin_in_chat_message.as_option()?;
+    let key = pin.key.as_option()?;
+    let wire = key.id.clone().filter(|id| !id.is_empty())?;
+    let sender = if record.chat.ends_with("@g.us") {
+        key.participant
+            .clone()
+            .filter(|sender| !sender.is_empty())
+            .or_else(|| {
+                (key.from_me == Some(true)).then(|| {
+                    if record.outgoing {
+                        "#self".into()
+                    } else {
+                        record.sender.clone()
+                    }
+                })
+            })?
+    } else if key.from_me? == record.outgoing {
+        "#self".into()
+    } else {
+        record.chat.clone()
+    };
+    let stamp = pin
+        .sender_timestamp_ms
+        .unwrap_or_else(|| record.timestamp.saturating_mul(1000));
+    let until = match pin.r#type? {
+        wa::message::pin_in_chat_message::Type::PIN_FOR_ALL => {
+            let seconds = base
+                .message_context_info
+                .as_option()?
+                .message_add_on_duration_in_secs?;
+            if seconds == 0 {
+                return None;
+            }
+            (stamp / 1000).saturating_add(i64::from(seconds))
+        }
+        wa::message::pin_in_chat_message::Type::UNPIN_FOR_ALL => 0,
+        _ => return None,
+    };
+    Some(crate::message_actions::MarkUpdate {
+        jid: record.chat.clone(),
+        sender,
+        wire,
+        starred: None,
+        pinned_until: Some(until),
+        stamp: Some(stamp),
+    })
+}
+
 pub fn prepare(source: &Source, operation: Operation, owner: &str, now: i64) -> Result<Prepared> {
     let original = if source.raw.is_empty() {
         wa::Message::text(source.body.clone())

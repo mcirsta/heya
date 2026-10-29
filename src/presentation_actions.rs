@@ -11,6 +11,25 @@ use std::{rc::Rc, sync::Arc};
 const MENU: i32 = 3;
 const COPY: i32 = 4;
 const DOWNLOAD: i32 = 5;
+#[cfg(test)]
+#[path = "presentation_viewer_action_tests.rs"]
+pub(crate) mod viewer_tests;
+
+/// The viewer carries one archive-validated message, independently of timeline paging.
+pub(crate) fn source_row(ui: &AppWindow, id: i32) -> Option<crate::MessageRow> {
+    let viewed = ui.get_photo_viewer_message();
+    if id > 0
+        && ui.get_photo_viewer_id() == id
+        && ui.get_photo_viewer_chat() == ui.get_selected_id()
+        && viewed.id == id
+    {
+        return Some(viewed);
+    }
+    ui.get_timeline_rows()
+        .iter()
+        .find(|row| row.message.id == id)
+        .map(|row| row.message)
+}
 
 pub fn bind(ui: &AppWindow, submit: impl Fn(Command) -> bool + 'static) {
     crate::presentation_emoji::bind(ui);
@@ -36,15 +55,13 @@ pub fn bind(ui: &AppWindow, submit: impl Fn(Command) -> bool + 'static) {
             {
                 return;
             }
-            let Some(row) = ui.get_timeline_rows().iter().find(|r| r.message.id == id) else {
+            let Some(row) = source_row(&ui, id) else {
                 return;
             };
-            if !row.message.actionable
-                && (!matches!(action, 14 | 15 | 17 | MENU) || row.message.system_notice)
-            {
+            if !row.actionable && (!matches!(action, 14 | 15 | 17 | MENU) || row.system_notice) {
                 return;
             }
-            ui.set_action_source_actionable(row.message.actionable);
+            ui.set_action_source_actionable(row.actionable);
             ui.set_action_error("".into());
             ui.set_action_message(id);
             ui.set_action_chat(ui.get_selected_id());
@@ -53,35 +70,80 @@ pub fn bind(ui: &AppWindow, submit: impl Fn(Command) -> bool + 'static) {
             ui.set_action_summary(
                 format!(
                     "{}: {}",
-                    row.message.sender,
-                    crate::domain::single_line_summary(if row.message.text.is_empty() {
-                        if row.message.has_photo {
+                    row.sender,
+                    crate::domain::single_line_summary(if row.text.is_empty() {
+                        if row.has_photo {
                             "Photo"
-                        } else if row.message.has_audio {
+                        } else if row.has_audio {
                             "Audio message"
                         } else {
                             "Message"
                         }
                     } else {
-                        &row.message.text
+                        &row.text
                     })
                 )
                 .into(),
             );
-            ui.set_action_own_emoji(
-                if row.message.reaction_status.starts_with("Reaction failed") {
-                    "".into()
-                } else {
-                    row.message.own_reaction.clone()
-                },
-            );
+            ui.set_action_own_emoji(if row.reaction_status.starts_with("Reaction failed") {
+                "".into()
+            } else {
+                row.own_reaction.clone()
+            });
             match action {
+                19 => {
+                    let previous = ui.get_navigation_request();
+                    ui.invoke_navigate_message(id, false);
+                    if ui.get_navigation_request() != previous {
+                        if ui.get_contact_info_open() {
+                            ui.invoke_close_contact_info();
+                        }
+                        ui.invoke_close_photo();
+                    } else {
+                        ui.set_action_error("Navigation is busy. Please try again.".into());
+                    }
+                }
+                DOWNLOAD => {
+                    if (1..=3).contains(&ui.get_download_phase()) {
+                        ui.set_action_error("Wait for the current download or cancel it.".into());
+                    } else {
+                        ui.invoke_download_message(ui.get_selected_id(), id);
+                    }
+                }
+                18 => ui.invoke_copy_photo(id),
+                7 => {
+                    if !ui.get_demo_mode() && ui.get_connection_state() != 5 {
+                        ui.set_action_error("Connect to change starred messages.".into());
+                    } else {
+                        request(&ui, &submit, |request| Command::Star {
+                            chat: ui.get_selected_id(),
+                            message: id,
+                            starred: !row.starred,
+                            request,
+                        });
+                    }
+                }
+                6 => {
+                    if !ui.get_demo_mode() && ui.get_connection_state() != 5 {
+                        ui.set_action_error("Connect to pin messages.".into());
+                    } else if row.pinned {
+                        request(&ui, &submit, |request| Command::Pin {
+                            chat: ui.get_selected_id(),
+                            message: id,
+                            seconds: 0,
+                            request,
+                        });
+                    } else {
+                        ui.set_pin_duration(604800);
+                        ui.invoke_open_message_control(9);
+                    }
+                }
                 11 => {
                     ui.invoke_select_message(id);
                 }
                 12 => {
-                    ui.set_action_expected_text(row.message.text.clone());
-                    ui.set_action_edit_text(row.message.text.clone());
+                    ui.set_action_expected_text(row.text.clone());
+                    ui.set_action_edit_text(row.text.clone());
                     ui.invoke_open_message_control(5);
                 }
                 13 => {
@@ -114,6 +176,8 @@ pub fn bind(ui: &AppWindow, submit: impl Fn(Command) -> bool + 'static) {
                             request,
                         });
                         ui.invoke_focus_composer();
+                    } else {
+                        ui.set_action_error("Reply is unavailable in this conversation.".into());
                     }
                 }
                 2 => {
@@ -127,8 +191,7 @@ pub fn bind(ui: &AppWindow, submit: impl Fn(Command) -> bool + 'static) {
                     ui.set_action_context_menu(action == 17);
                     ui.invoke_prepare_quick_reactions(ui.get_action_own_emoji());
                     ui.set_message_menu_entries(ModelRc::new(VecModel::from(menu_entries(
-                        &ui,
-                        &row.message,
+                        &ui, &row,
                     ))));
                     ui.set_message_menu_selection(first_menu_selection(&ui));
                     ui.set_message_dialog(MENU);
@@ -144,35 +207,27 @@ pub fn bind(ui: &AppWindow, submit: impl Fn(Command) -> bool + 'static) {
             if ui.get_message_dialog() != MENU || !current_source(&ui) {
                 return;
             }
-            let Some(row) = ui
-                .get_timeline_rows()
-                .iter()
-                .find(|r| r.message.id == ui.get_action_message())
-            else {
+            let Some(row) = source_row(&ui, ui.get_action_message()) else {
                 return;
             };
             // Re-evaluate capabilities at activation: connection and message
             // state may have changed while the menu was open.
             if action != 0
-                && !menu_entries(&ui, &row.message)
+                && !menu_entries(&ui, &row)
                     .iter()
                     .any(|e| e.action == action && e.enabled)
             {
                 return;
             }
             if action == 16 {
-                ui.invoke_copy_value(row.message.wire_id.clone());
+                ui.invoke_copy_value(row.wire_id.clone());
                 ui.invoke_close_message_actions();
             } else if action == 18 {
                 let id = ui.get_action_message();
                 ui.invoke_close_message_actions();
                 ui.invoke_copy_photo(id);
             } else if action == COPY {
-                if let crate::message_content::Target::Copy(value) =
-                    crate::presentation::timeline::action(&ui, row.message.id, -6)
-                {
-                    ui.invoke_copy_value(value.into());
-                }
+                ui.invoke_copy_value(row.text.clone());
                 ui.invoke_close_message_actions();
             } else if action == DOWNLOAD {
                 let chat = ui.get_action_chat();
@@ -181,12 +236,7 @@ pub fn bind(ui: &AppWindow, submit: impl Fn(Command) -> bool + 'static) {
                 ui.invoke_download_message(chat, message);
             } else {
                 ui.invoke_close_message_actions();
-                ui.invoke_message_action(
-                    row.message.id,
-                    action,
-                    ui.get_action_x(),
-                    ui.get_action_y(),
-                );
+                ui.invoke_message_action(row.id, action, ui.get_action_x(), ui.get_action_y());
             }
         }
     });
@@ -301,15 +351,15 @@ fn current_source(ui: &AppWindow) -> bool {
     ui.get_action_chat() == ui.get_selected_id()
         && (ui.get_demo_mode() || ui.get_live_revision() == ui.get_live_shown_revision())
         && ((ui.get_selection_active() && ui.get_selection_count() > 0)
-            || ui
-                .get_timeline_rows()
-                .iter()
-                .any(|r| r.message.id == ui.get_action_message() && !r.message.system_notice))
+            || source_row(ui, ui.get_action_message()).is_some_and(|row| !row.system_notice))
 }
 
 fn menu_entries(ui: &AppWindow, row: &crate::MessageRow) -> Vec<crate::ui::MessageMenuEntry> {
     let online = ui.get_demo_mode() || ui.get_connection_state() == 5;
     let idle = !ui.get_action_pending();
+    let mark_ready = !row.operation_busy || row.operation_status.ends_with("unconfirmed");
+    let photo_ready =
+        row.photo_state == 2 || (ui.get_photo_viewer_id() == row.id && ui.get_photo_viewer_ready());
     let mut entries = Vec::with_capacity(11);
     let mut offset = 0;
     let mut add = |action, label: &str, enabled, reason: &str, separator| {
@@ -337,7 +387,7 @@ fn menu_entries(ui: &AppWindow, row: &crate::MessageRow) -> Vec<crate::ui::Messa
             add(
                 18,
                 "Copy image",
-                row.photo_state == 2 && !ui.get_clipboard_busy(),
+                photo_ready && !ui.get_clipboard_busy(),
                 "Wait for the photo to finish loading",
                 false,
             );
@@ -359,6 +409,15 @@ fn menu_entries(ui: &AppWindow, row: &crate::MessageRow) -> Vec<crate::ui::Messa
             !row.outgoing,
         );
         return entries;
+    }
+    if ui.get_photo_viewer_id() == row.id {
+        add(
+            19,
+            "Go to message",
+            idle,
+            "Please wait for the current action",
+            false,
+        );
     }
     if ui.get_action_context_menu() {
         let now = chrono::Utc::now().timestamp();
@@ -475,7 +534,7 @@ fn menu_entries(ui: &AppWindow, row: &crate::MessageRow) -> Vec<crate::ui::Messa
         add(
             18,
             "Copy image",
-            row.photo_state == 2 && !ui.get_clipboard_busy(),
+            photo_ready && !ui.get_clipboard_busy(),
             "Wait for the photo to finish loading",
             false,
         );
@@ -520,9 +579,21 @@ fn menu_entries(ui: &AppWindow, row: &crate::MessageRow) -> Vec<crate::ui::Messa
             false,
         );
     }
-    add(6, "Pin", false, "Not implemented yet", false);
+    add(
+        6,
+        if row.pinned { "Unpin" } else { "Pin" },
+        online && idle && mark_ready,
+        "Connect, or wait for the pending message operation",
+        false,
+    );
     add(10, "Ask Meta AI", false, "Not available in Heya", false);
-    add(7, "Star", false, "Not implemented yet", false);
+    add(
+        7,
+        if row.starred { "Unstar" } else { "Star" },
+        online && idle && mark_ready,
+        "Connect, or wait for the pending message operation",
+        false,
+    );
     if !row.outgoing {
         add(8, "Report", false, "Not implemented yet", true);
     }
@@ -550,6 +621,23 @@ fn menu_entries(ui: &AppWindow, row: &crate::MessageRow) -> Vec<crate::ui::Messa
         !row.outgoing,
     );
     entries
+}
+
+/// Keep open menu labels/capabilities aligned with the latest source projection.
+pub(crate) fn refresh_menu(ui: &AppWindow) {
+    if ui.get_message_dialog() != MENU {
+        return;
+    }
+    if let Some(row) = source_row(ui, ui.get_action_message()) {
+        let entries = menu_entries(ui, &row);
+        if ui
+            .get_message_menu_entries()
+            .iter()
+            .ne(entries.iter().cloned())
+        {
+            ui.set_message_menu_entries(ModelRc::new(VecModel::from(entries)));
+        }
+    }
 }
 
 fn menu_selections(ui: &AppWindow) -> Vec<i32> {
@@ -671,7 +759,10 @@ pub fn publish(ui: &AppWindow, result: Option<&OperationReply>, destinations: &A
                 .collect::<Vec<_>>(),
         )));
         search(ui, &ui.get_forward_query());
-    } else if matches!(result.kind, 1 | 2 | 4 | 5 | 6) {
+    } else if result.kind == 0 && ui.get_photo_viewer_id() == ui.get_action_message() {
+        ui.invoke_close_photo();
+        ui.invoke_focus_composer();
+    } else if matches!(result.kind, 1 | 2 | 4 | 5 | 6 | 8 | 9) {
         ui.invoke_close_message_actions();
         if matches!(result.kind, 2 | 6) && ui.get_selection_active() {
             ui.invoke_selection_control(0);
@@ -687,6 +778,10 @@ pub fn publish(ui: &AppWindow, result: Option<&OperationReply>, destinations: &A
                 "Edit queued"
             } else if result.kind == 5 {
                 "Delete queued"
+            } else if result.kind == 8 {
+                "Star change queued"
+            } else if result.kind == 9 {
+                "Pin change queued"
             } else {
                 "Deleted for you · linked-device sync queued"
             }
