@@ -65,8 +65,11 @@ native validation. GIF looping, animated stickers, video notes and video sending
 remain separate increments. See [video playback](video-playback.md) for bounds,
 teardown and reproducible offscreen checks.
 
-The photo viewer now uses explicit album associations for navigation, counters and
-a bounded thumbnail strip, independently of timeline paging. See
+The photo viewer now uses explicit album associations and inferred consecutive
+photo batches for navigation, counters and
+a bounded thumbnail strip, independently of timeline paging. The timeline groups
+compatible consecutive album photos into at most four previews with a `+N`
+overlay; selection exposes the original messages. See
 [photo albums](photo-albums.md) for storage, decoding bounds and validation limits.
 
 Performance regression checks accompany each increment. Existing before/after

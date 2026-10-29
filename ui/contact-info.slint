@@ -1,0 +1,397 @@
+import { ScrollView, ListView } from "std-widgets.slint";
+import { Theme, Metrics } from "theme.slint";
+import { Avatar, IconButton, Pill } from "components.slint";
+
+export struct ContactInfoMedia {
+    id: int,
+    // Photo, video, document or link, respectively.
+    kind: int,
+    thumbnail: image,
+    label: string,
+    detail: string,
+    url: string,
+}
+
+component ContactAction inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    in property <string> accessible-name: root.label;
+    in property <bool> enabled: true;
+    callback activated();
+    width: 78px; height: 86px;
+    IconButton {
+        x: (parent.width - self.width) / 2; y: 0px;
+        width: 54px; height: 54px; icon-size: 23px;
+        muted-background: true; ink: root.enabled ? Theme.text : Theme.dim;
+        icon: root.icon; label: root.accessible-name; enabled: root.enabled;
+        activated => { root.activated(); }
+    }
+    Text {
+        y: 64px; width: parent.width; height: 20px;
+        text: root.label; color: root.enabled ? Theme.text : Theme.dim;
+        font-size: 12px; horizontal-alignment: center; overflow: elide;
+    }
+}
+
+component InfoRow inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    in property <string> detail;
+    in property <string> trailing;
+    in property <bool> enabled: true;
+    in property <bool> interactive: true;
+    in property <bool> toggle;
+    in property <bool> checked;
+    callback activated();
+    height: root.detail == "" ? 58px : 70px;
+    border-radius: 8px;
+    background: root.enabled && root.interactive && (hit.has-hover || focus.has-focus) ? Theme.surface : transparent;
+    accessible-role: button;
+    accessible-label: root.label + (root.detail == "" ? "" : ", " + root.detail);
+    accessible-enabled: root.enabled && root.interactive;
+    accessible-action-default => { if root.enabled && root.interactive { root.activated(); } }
+    Image {
+        x: 12px; y: (parent.height - self.height) / 2; width: 22px; height: 22px;
+        source: root.icon; colorize: Theme.secondary;
+    }
+    Text {
+        x: 52px; y: root.detail == "" ? 0px : 12px;
+        width: max(0px, parent.width - self.x - (root.toggle ? 64px : root.trailing != "" ? 50px : 12px));
+        height: root.detail == "" ? parent.height : 23px;
+        text: root.label; color: Theme.text; font-size: Metrics.body;
+        overflow: elide; vertical-alignment: center;
+    }
+    if root.detail != "": Text {
+        x: 52px; y: 36px; width: max(0px, parent.width - 64px); height: 20px;
+        text: root.detail; color: Theme.secondary; font-size: 12px; overflow: elide;
+    }
+    if root.trailing != "": Text {
+        x: parent.width - 48px; width: 36px; height: parent.height;
+        text: root.trailing; color: Theme.secondary; font-size: 13px;
+        horizontal-alignment: right; vertical-alignment: center;
+    }
+    if root.toggle: Rectangle {
+        x: parent.width - 52px; y: (parent.height - self.height) / 2;
+        width: 38px; height: 22px; border-radius: 11px;
+        background: root.checked ? Theme.accent : Theme.surface;
+        border-width: root.checked ? 0px : 1.5px; border-color: Theme.dim;
+        Rectangle {
+            x: root.checked ? 18px : 4px; y: 4px; width: 14px; height: 14px;
+            border-radius: 7px; background: root.checked ? Theme.on-accent : Theme.dim;
+        }
+    }
+    focus := FocusScope {
+        enabled: root.enabled && root.interactive;
+        key-pressed(event) => {
+            if event.text == Key.Return || event.text == " " { root.activated(); return accept; }
+            return reject;
+        }
+    }
+    border-width: focus.has-focus ? 1px : 0px; border-color: Theme.accent;
+    hit := TouchArea {
+        enabled: root.enabled && root.interactive;
+        mouse-cursor: root.enabled && root.interactive ? pointer : default;
+        clicked => { focus.focus(); root.activated(); }
+    }
+}
+
+component MediaTile inherits Rectangle {
+    in property <ContactInfoMedia> item;
+    callback activated();
+    tile := Rectangle {
+        width: parent.width; height: parent.height; border-radius: 8px;
+        background: Theme.surface; clip: true;
+        accessible-role: button; accessible-label: root.item.label;
+        accessible-action-default => { root.activated(); }
+        if root.item.thumbnail.width > 0: image := Image {
+            width: parent.width; height: parent.height;
+            source: root.item.thumbnail; image-fit: cover;
+        }
+        if root.item.thumbnail.width == 0: Image {
+            x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+            width: min(30px, parent.width * 0.4); height: self.width;
+            source: root.item.kind == 1 ? @image-url("icons/call-video.svg") : root.item.kind == 2 ? @image-url("icons/document.svg") : root.item.kind == 3 ? @image-url("icons/external-link.svg") : @image-url("icons/photo.svg");
+            colorize: Theme.secondary;
+        }
+        if root.item.kind == 1 && root.item.thumbnail.width > 0: Rectangle {
+            x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+            width: 30px; height: 30px; border-radius: 15px; background: #0008;
+            Image { x: 7px; y: 7px; width: 16px; height: 16px; source: @image-url("icons/play.svg"); colorize: #fff; }
+        }
+        border-width: focus.has-focus ? 2px : 0px; border-color: Theme.accent;
+        focus := FocusScope {
+            key-pressed(event) => {
+                if event.text == Key.Return || event.text == " " { root.activated(); return accept; }
+                return reject;
+            }
+        }
+        TouchArea { mouse-cursor: pointer; clicked => { focus.focus(); root.activated(); } }
+    }
+}
+
+// Only instantiated while the panel is open. Data, image decode and mutations
+// stay in the existing archive/media services; this component owns navigation.
+export component ContactInfo inherits Rectangle {
+    in property <string> title: root.group ? @tr("Group info") : @tr("Contact info");
+    in property <string> name;
+    in property <string> phone;
+    in property <string> status;
+    in property <string> ephemeral-label;
+    in property <bool> group;
+    in property <bool> self-chat;
+    in property <image> avatar;
+    in property <string> initials;
+    in property <color> tint: #91d6bc;
+    in property <bool> loading;
+    in property <string> error;
+    in property <int> media-count;
+    in property <[ContactInfoMedia]> media;
+    in property <bool> muted;
+    in property <bool> archived;
+    in property <bool> management-enabled: true;
+    in property <bool> management-busy;
+    in property <string> management-status;
+    in property <bool> calls-enabled: true;
+    in property <bool> search-enabled: true;
+    in property <[ContactInfoMedia]> media-items;
+    in-out property <bool> media-view;
+    in-out property <int> media-tab;
+    in property <bool> media-more;
+    in property <string> media-status;
+    callback close();
+    callback voice();
+    callback video();
+    callback search();
+    callback media-open(int, int);
+    callback media-request(int);
+    callback media-range(int, int);
+    callback manage(int);
+    private property <bool> mute-choices;
+    private property <int> media-columns: root.width < 440px ? 2 : 3;
+    background: Theme.panel;
+    Rectangle { x: 0px; y: 0px; width: 1px; height: parent.height; background: Theme.outline; }
+    FocusScope {
+        x: 0px; y: 0px; width: parent.width; height: parent.height;
+        init => { self.focus(); }
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                if root.media-view { root.media-request(-1); }
+                else if root.mute-choices { root.mute-choices = false; }
+                else { root.close(); }
+                return accept;
+            }
+            return reject;
+        }
+        header := Rectangle {
+            x: 1px; y: 0px; width: parent.width - 1px; height: Metrics.header;
+            background: Theme.panel;
+            if root.media-view: back-button := IconButton {
+                x: 12px; y: (parent.height - self.height) / 2;
+                icon: @image-url("icons/back.svg"); label: @tr("Back to contact info");
+                activated => { root.media-request(-1); }
+            }
+            Text {
+                x: root.media-view ? 54px : 24px; width: max(0px, parent.width - self.x - 58px);
+                height: parent.height; text: root.media-view ? @tr("Media, links and docs") : root.title;
+                font-size: 18px; color: Theme.text; vertical-alignment: center; overflow: elide;
+            }
+            close-button := IconButton {
+                x: parent.width - self.width - 16px; y: (parent.height - self.height) / 2;
+                icon: @image-url("icons/close.svg"); label: root.group ? @tr("Close group info") : @tr("Close contact info");
+                activated => { root.close(); }
+            }
+            Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: Theme.outline; }
+        }
+        if !root.media-view: scroll := ScrollView {
+            x: 1px; y: Metrics.header; width: parent.width - 1px; height: max(0px, parent.height - Metrics.header);
+            content-width: self.visible-width; horizontal-scrollbar-policy: always-off;
+            content-height: column.height + 24px;
+            column := VerticalLayout {
+                x: 0px; y: 0px; width: scroll.visible-width; height: self.preferred-height; spacing: 0px;
+                profile := Rectangle {
+                    height: actions.y + actions.height + 24px;
+                    avatar := Avatar {
+                        x: (parent.width - self.width) / 2; y: 24px;
+                        width: min(132px, parent.width * 0.45); height: self.width;
+                        picture: root.avatar; initials: root.initials; tint: root.tint;
+                    }
+                    name := Text {
+                        x: 24px; y: avatar.y + avatar.height + 20px; width: max(0px, parent.width - 48px);
+                        height: min(60px, self.preferred-height); text: root.name;
+                        color: Theme.text; font-size: 24px; horizontal-alignment: center;
+                        wrap: word-wrap; overflow: elide; max-lines: 2;
+                        accessible-label: root.name;
+                    }
+                    phone := TextInput {
+                        x: 24px; y: name.y + name.height + (root.phone == "" ? 0px : 8px);
+                        width: max(0px, parent.width - 48px); height: root.phone == "" ? 0px : 24px;
+                        text: root.phone; color: Theme.secondary; font-size: 16px;
+                        read-only: true; single-line: true;
+                        horizontal-alignment: center; vertical-alignment: center;
+                        selection-background-color: Theme.accent;
+                        selection-foreground-color: Theme.on-accent;
+                        accessible-label: @tr("Contact phone number");
+                    }
+                    profile-status := Text {
+                        x: 24px; y: phone.y + phone.height + (root.status == "" ? 0px : 8px);
+                        width: max(0px, parent.width - 48px); height: root.status == "" ? 0px : min(36px, self.preferred-height);
+                        text: root.status; color: Theme.secondary; font-size: 12px;
+                        horizontal-alignment: center; wrap: word-wrap; overflow: elide; max-lines: 2;
+                    }
+                    actions := HorizontalLayout {
+                        x: max(8px, (parent.width - self.width) / 2); y: profile-status.y + profile-status.height + 20px;
+                        width: root.group || root.self-chat ? 78px : min(260px, parent.width - 16px);
+                        height: 86px; alignment: center; spacing: 8px;
+                        if !root.group && !root.self-chat: voice-action := ContactAction {
+                            label: @tr("Voice"); icon: @image-url("icons/call-voice.svg"); enabled: root.calls-enabled;
+                            accessible-name: @tr("Voice call");
+                            activated => { root.voice(); }
+                        }
+                        if !root.group && !root.self-chat: video-action := ContactAction {
+                            label: @tr("Video"); icon: @image-url("icons/call-video.svg"); enabled: root.calls-enabled;
+                            accessible-name: @tr("Video call");
+                            activated => { root.video(); }
+                        }
+                        search-action := ContactAction {
+                            label: @tr("Search"); icon: @image-url("icons/search.svg"); enabled: root.search-enabled;
+                            accessible-name: @tr("Search messages");
+                            activated => { root.search(); }
+                        }
+                    }
+                }
+                if root.loading || root.error != "": Text {
+                    x: 24px; width: max(0px, parent.width - 48px); height: 40px;
+                    text: root.error != "" ? root.error : @tr("Loading contact details…");
+                    color: Theme.secondary; font-size: 12px; wrap: word-wrap; overflow: elide;
+                }
+                media-section := VerticalLayout {
+                    padding-left: 16px; padding-right: 16px; spacing: 0px;
+                    Rectangle { height: 1px; background: Theme.outline; }
+                    media-heading := InfoRow {
+                        icon: @image-url("icons/photo.svg"); label: @tr("Media, links and docs");
+                        trailing: root.media-count > 0 ? root.media-count : "";
+                        enabled: !root.loading;
+                        activated => { root.media-request(root.media-tab); }
+                    }
+                    if root.media.length > 0: preview-strip := Rectangle {
+                        height: self.width / 4 - 6px; width: max(0px,scroll.visible-width - 32px);
+                        for item[index] in root.media: MediaTile {
+                            x: index * (parent.width + 8px) / 4; width: (parent.width - 24px) / 4; height: self.width;
+                            item: item; activated => { root.media-open(item.id, item.kind); }
+                        }
+                    }
+                    Text {
+                        height: root.media.length > 0 ? 36px : 32px;
+                        text: root.loading ? "" : root.media-count == 0 ? @tr("No shared media in saved history") : @tr("From saved history on this device");
+                        color: Theme.secondary; font-size: 11px; vertical-alignment: center;
+                        horizontal-alignment: center; overflow: elide;
+                    }
+                    Rectangle { height: 1px; background: Theme.outline; }
+                }
+                VerticalLayout {
+                    padding-left: 16px; padding-right: 16px; padding-top: 6px; padding-bottom: 12px; spacing: 0px;
+                    mute-row := InfoRow {
+                        icon: @image-url("icons/contact-notifications.svg"); label: @tr("Mute notifications");
+                        detail: root.management-busy ? @tr("Updating chat…") : !root.management-enabled ? @tr("Connect to change") : root.muted ? @tr("On") : @tr("Off");
+                        enabled: root.management-enabled && !root.management-busy;
+                        toggle: true; checked: root.muted;
+                        activated => { if root.muted { root.manage(3); } else { root.mute-choices = !root.mute-choices; } }
+                    }
+                    if root.mute-choices && !root.muted: VerticalLayout {
+                        padding-left: 40px; spacing: 0px;
+                        for choice[index] in [@tr("For 8 hours"), @tr("For 1 week"), @tr("Always")]: InfoRow {
+                            label: choice; icon: @image-url("icons/muted.svg");
+                            enabled: root.management-enabled && !root.management-busy;
+                            activated => { root.mute-choices = false; root.manage(index); }
+                        }
+                    }
+                    if root.ephemeral-label != "": InfoRow {
+                        icon: @image-url("icons/contact-timer.svg"); label: @tr("Disappearing messages");
+                        detail: root.ephemeral-label; interactive: false;
+                    }
+                    archive-row := InfoRow {
+                        icon: @image-url("icons/contact-archive.svg"); label: root.archived ? @tr("Unarchive chat") : @tr("Archive chat");
+                        enabled: root.management-enabled && !root.management-busy;
+                        activated => { root.manage(root.archived ? 5 : 4); }
+                    }
+                    lock-row := InfoRow {
+                        icon: @image-url("icons/contact-lock.svg"); label: @tr("Lock chat"); detail: @tr("Unlock on your phone");
+                        enabled: root.management-enabled && !root.management-busy;
+                        activated => { root.manage(6); }
+                    }
+                }
+                if root.management-status != "": Text {
+                    x: 24px; width: max(0px,parent.width - 48px); height: max(36px,self.preferred-height + 16px);
+                    text: root.management-status; color: Theme.secondary; font-size: 12px;
+                    wrap: word-wrap; vertical-alignment: center;
+                }
+
+            }
+        }
+        if root.media-view: Rectangle {
+            x: 1px; y: Metrics.header; width: parent.width - 1px; height: max(0px,parent.height - Metrics.header);
+            media-tabs := HorizontalLayout {
+                x: 16px; y: 12px; width: parent.width - 32px; height: 32px; spacing: 8px;
+                for label[index] in [@tr("Media"), @tr("Links"), @tr("Docs")]: Pill {
+                    label: label; active: root.media-tab == index;
+                    activated => { if root.media-tab != index { root.media-request(index); } }
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            Text {
+                x: 20px; y: 54px; width: parent.width - 40px; height: 34px;
+                text: root.error != "" ? root.error : root.loading ? @tr("Loading saved items…") : root.media-status != "" ? root.media-status : root.media-items.length == 0 ? @tr("Nothing here in saved history") : root.media-more ? @tr("Latest 100 items from saved history") : @tr("From saved history on this device");
+                color: Theme.secondary; font-size: 11px; wrap: word-wrap; overflow: elide; max-lines: 2;
+            }
+            if root.media-tab == 0: media-browser := ListView {
+                x: 16px; y: 96px; width: parent.width - 32px; height: max(0px,parent.height - 108px);
+                horizontal-scrollbar-policy: always-off;
+                private property <length> row-height: (self.visible-width - (root.media-columns - 1) * 8px) / root.media-columns + 8px;
+                private property <int> first: max(0, floor(-self.content-y / self.row-height) * root.media-columns);
+                private property <int> count: min(16, (ceil(self.visible-height / self.row-height) + 1) * root.media-columns);
+                function request-range() { root.media-range(self.first, self.count); }
+                init => { self.request-range(); }
+                changed first => { self.request-range(); }
+                changed count => { self.request-range(); }
+                for row in ceil(root.media-items.length / root.media-columns): Rectangle {
+                    height: media-browser.row-height;
+                    for column in root.media-columns: Rectangle {
+                        x: column * media-browser.row-height; width: media-browser.row-height - 8px; height: self.width;
+                        if row * root.media-columns + column < root.media-items.length: MediaTile {
+                            width: parent.width; height: parent.height;
+                            item: root.media-items[row * root.media-columns + column];
+                            activated => { root.media-open(self.item.id, self.item.kind); }
+                        }
+                    }
+                }
+            }
+            if root.media-tab != 0: file-browser := ListView {
+                x: 16px; y: 96px; width: parent.width - 32px; height: max(0px,parent.height - 108px);
+                horizontal-scrollbar-policy: always-off;
+                private property <int> first: max(0, floor(-self.content-y / 84px));
+                private property <int> count: min(16, ceil(self.visible-height / 84px) + 1);
+                function request-range() { root.media-range(self.first, self.count); }
+                init => { self.request-range(); }
+                changed first => { self.request-range(); }
+                changed count => { self.request-range(); }
+                for item in root.media-items: Rectangle {
+                    height: 84px; border-radius: 8px;
+                    background: hit.has-hover || item-focus.has-focus ? Theme.surface : transparent;
+                    Rectangle {
+                        x: 8px; y: 12px; width: 56px; height: 56px; border-radius: 7px; background: Theme.surface; clip: true;
+                        if item.thumbnail.width > 0: Image { width: parent.width; height: parent.height; source: item.thumbnail; image-fit: cover; }
+                        if item.thumbnail.width == 0: Image { x: 16px; y: 16px; width: 24px; height: 24px; source: item.kind == 3 ? @image-url("icons/external-link.svg") : @image-url("icons/document.svg"); colorize: Theme.secondary; }
+                    }
+                    Text { x: 76px; y: 12px; width: max(0px,parent.width - 88px); height: 40px; text: item.label; color: Theme.text; font-size: 13px; wrap: word-wrap; max-lines: 2; overflow: elide; }
+                    Text { x: 76px; y: 55px; width: max(0px,parent.width - 88px); height: 17px; text: item.detail; color: Theme.secondary; font-size: 11px; overflow: elide; }
+                    accessible-role: button; accessible-label: item.label + ", " + item.detail;
+                    accessible-action-default => { root.media-open(item.id,item.kind); }
+                    item-focus := FocusScope {
+                        key-pressed(event) => { if event.text == Key.Return || event.text == " " { root.media-open(item.id,item.kind); return accept; } return reject; }
+                    }
+                    hit := TouchArea { mouse-cursor: pointer; clicked => { item-focus.focus(); root.media-open(item.id,item.kind); } }
+                }
+            }
+        }
+    }
+}

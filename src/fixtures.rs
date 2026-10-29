@@ -443,7 +443,66 @@ pub fn demo() -> DemoState {
         draft: String::new(),
         visible_count: PAGE_SIZE,
     });
+    let unlinked = std::env::var_os("HEYA_DEMO_UNLINKED_ALBUM").is_some();
+    if unlinked || std::env::var_os("HEYA_DEMO_ALBUM_GRID").is_some() {
+        let chat = chats.iter_mut().find(|c| c.id == 9).unwrap();
+        chat.messages = if unlinked {
+            unlinked_album_messages(&chat.messages[0], 38)
+        } else {
+            album_messages(&chat.messages[0], 38)
+        };
+    }
     DemoState::new(chats)
+}
+
+pub(crate) fn unlinked_album_messages(seed: &Message, count: usize) -> Vec<Message> {
+    let mut messages = album_messages(seed, count);
+    for (i, m) in messages.iter_mut().enumerate() {
+        let content = std::sync::Arc::make_mut(&mut m.content);
+        content.album = None;
+        content.album_count = 0;
+        content.metadata.stamp = 1_700_000_040 + i as i64;
+        m.date = crate::message_time::local(content.metadata.stamp).map(|t| t.date_naive());
+    }
+    let groups = crate::photo_albums::inferred(&crate::photo_albums::candidates(&messages));
+    crate::photo_albums::annotate(&mut messages, &groups);
+    messages
+}
+
+pub(crate) fn album_messages(seed: &Message, count: usize) -> Vec<Message> {
+    (0..count)
+        .map(|i| {
+            let mut message = seed.clone();
+            message.id = 44000 + i as i32;
+            message.outgoing = false;
+            message.local = false;
+            message.sender = "Mira Sample".into();
+            message.sender_id = "demo:album-grid".into();
+            message.time = "10:56".into();
+            message.text = "[Photo]".into();
+            message.content = crate::message_content::Content {
+                album: Some(crate::photo_albums::Group {
+                    key: crate::photo_albums::Key::Explicit("synthetic-grid".into()),
+                    index: Some(i as u32),
+                }),
+                album_count: count,
+                body: Some(String::new()),
+                forwarded: true,
+                photo: Some(crate::message_content::Photo {
+                    width: 900,
+                    height: 1200,
+                    size: Some(12345),
+                }),
+                metadata: crate::message_actions::Metadata {
+                    wire: format!("SYNTHETIC-GRID-{i}"),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .into();
+            message
+        })
+        .collect()
 }
 
 pub fn fill_calls(messages: &mut [Message]) {

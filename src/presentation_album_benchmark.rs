@@ -13,6 +13,10 @@ pub fn start(
     ui: &AppWindow,
     runtime: &Runtime,
 ) -> Result<Benchmark, slint::SetRenderingNotifierError> {
+    let unlinked = std::env::var_os("HEYA_BENCHMARK_UNLINKED_ALBUM").is_some();
+    if unlinked {
+        println!("Album membership: inferred from unlinked synthetic photos");
+    }
     let (temp,db)=runtime.block_on(runtime.spawn_blocking(|| {
         struct Vault;
         impl storage::SecretVault for Vault {
@@ -29,6 +33,7 @@ pub fn start(
             encoder.set_color(png::ColorType::Rgba);encoder.set_depth(png::BitDepth::Eight);
             encoder.write_header().unwrap().write_image_data(&p.rgba).unwrap();bytes
         };
+        let unlinked=std::env::var_os("HEYA_BENCHMARK_UNLINKED_ALBUM").is_some();
         let originals=(0..3).map(|i|encode(photos::VIEWER_EDGE,i)).collect::<Vec<_>>();
         let previews=(0..3).map(|i|encode(photos::INLINE_EDGE,i)).collect::<Vec<_>>();
         db.blocking(|c| {
@@ -36,8 +41,8 @@ pub fn start(
             tx.execute("INSERT INTO chats(id,jid,name) VALUES(1,'synthetic-album','Synthetic album')",[])?;
             for id in 1_i32..=10000 {
                 let photo=id>9900;
-                let content=if photo {serde_json::to_string(&crate::message_content::Content{body:Some(format!("Synthetic album photo {} · こんにちは 👋",id-9900)),photo:Some(crate::message_content::Photo{width:2048,height:1536,size:Some(12345)}),..Default::default()}).unwrap()}else{String::new()};
-                tx.execute("INSERT INTO messages(id,chat_id,sender,wire_id,stamp,outgoing,sender_name,body,raw,visible,source_chat,source_sender,content,album,album_index) VALUES(?1,1,'synthetic',?1,1700000000+?1,0,'Mira Sample','Synthetic text',X'00',1,'synthetic','synthetic',?2,?3,?4)",rusqlite::params![id,content,photo.then_some("explicit-album"),photo.then_some(id-9901)])?;
+                let content=if photo {serde_json::to_string(&crate::message_content::Content{body:Some(if unlinked {String::new()} else {format!("Synthetic album photo {} · こんにちは 👋",id-9900)}),photo:Some(crate::message_content::Photo{width:2048,height:1536,size:Some(12345)}),..Default::default()}).unwrap()}else{String::new()};
+                tx.execute("INSERT INTO messages(id,chat_id,sender,wire_id,stamp,outgoing,sender_name,body,raw,visible,source_chat,source_sender,content,album,album_index) VALUES(?1,1,'synthetic',?1,1700000000+?1,0,'Mira Sample','Synthetic text',X'00',1,'synthetic','synthetic',?2,?3,?4)",rusqlite::params![id,content,(photo && !unlinked).then_some("explicit-album"),(photo && !unlinked).then_some(id-9901)])?;
                 if photo {tx.execute("INSERT INTO message_photos(message_id,original,preview,state,revision) VALUES(?1,?2,?3,2,1)",rusqlite::params![id,originals[id as usize%3],previews[id as usize%3]])?;}
             }
             tx.commit()?;Ok(())
@@ -153,7 +158,7 @@ pub fn start(
     ];
     const ENDS: [u64; 8] = [2, 6, 9, 12, 15, 18, 21, 23];
     println!(
-        "Album benchmark: SQLCipher with 10,000 messages, 100 explicitly linked photos, ONE loaded timeline row; one 2048px viewer and seven 96px cached thumbnails. Resize repeats the same size sequence with the strip removed, then the photo removed, then the viewer closed. Timings exclude network/GPU completion/compositor presentation; frame callbacks force full redraws."
+        "Album benchmark: SQLCipher with 10,000 messages, 100 album photos, ONE loaded timeline row; one 2048px viewer and seven 96px cached thumbnails. Resize repeats the same size sequence with the strip removed, then the photo removed, then the viewer closed. Timings exclude network/GPU completion/compositor presentation; frame callbacks force full redraws."
     );
     timer.start(TimerMode::Repeated, TICK, move || {
         let Some(ui) = weak.upgrade() else {

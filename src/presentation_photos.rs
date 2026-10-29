@@ -21,13 +21,29 @@ pub fn bind(ui: &AppWindow) -> watch::Receiver<photos::Demand> {
         };
         let viewer = (ui.get_photo_viewer_id() > 0).then_some(ui.get_photo_viewer_id());
         timeline::refresh_photo_viewer(&ui);
-        let visible = ui
+        let timeline_visible = ui
             .get_timeline_rows()
             .iter()
             .filter(|r| r.message.has_photo)
-            .map(|r| r.message.id)
+            .flat_map(|r| {
+                if r.message.album_photos.row_count() > 0 {
+                    r.message
+                        .album_photos
+                        .iter()
+                        .map(|p| p.id)
+                        .collect::<Vec<_>>()
+                } else {
+                    vec![r.message.id]
+                }
+            })
             .take(photos::MAX_DEMAND)
-            .collect();
+            .collect::<Vec<_>>();
+        let mut visible = crate::presentation_contact_info::photo_demand(&ui);
+        for id in timeline_visible {
+            if !visible.contains(&id) && visible.len() < photos::MAX_DEMAND {
+                visible.push(id);
+            }
+        }
         tx.send_if_modified(|old| {
             let next = photos::Demand {
                 chat: ui.get_selected_id(),
@@ -50,12 +66,21 @@ pub fn bind(ui: &AppWindow) -> watch::Receiver<photos::Demand> {
         let Some(ui) = weak.upgrade() else {
             return;
         };
-        if timeline::has_photo(&ui, id) || (ui.get_photo_viewer_id() == id && id > 0) {
+        if timeline::has_photo(&ui, id)
+            || crate::presentation_contact_info::has(&ui, id, crate::contact_info::Kind::Photo)
+            || (ui.get_photo_viewer_id() == id && id > 0)
+        {
             let cached_or_busy = ui
                 .get_timeline_rows()
                 .iter()
                 .find(|r| r.message.id == id)
                 .is_some_and(|r| matches!(r.message.photo_state, 1 | 2))
+                || ui.get_timeline_rows().iter().any(|r| {
+                    r.message
+                        .album_photos
+                        .iter()
+                        .any(|p| p.id == id && matches!(p.state, 1 | 2))
+                })
                 || (ui.get_photo_viewer_id() == id && ui.get_photo_viewer_ready());
             open(&ui, id, &tx, &retry_serial, !cached_or_busy);
         }
@@ -111,6 +136,7 @@ fn open(
 
 pub fn publish(ui: &AppWindow, snapshot: &Arc<photos::Snapshot>) {
     timeline::photos(ui, snapshot);
+    crate::presentation_contact_info::publish_photos(ui, snapshot);
     let id = ui.get_photo_viewer_id();
     if snapshot.checked != Some((ui.get_selected_id(), id)) {
         return;

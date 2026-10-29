@@ -78,6 +78,31 @@ pub enum Command {
         revision: i32,
     },
 }
+
+// Drafts are replaceable state, but sends and navigation are ordering barriers.
+// Drain only consecutive edits for the same chat; retain the first other
+// command so it is neither lost nor moved ahead of the latest draft.
+async fn next_command(
+    commands: &mut mpsc::Receiver<Command>,
+    pending: &mut Option<Command>,
+) -> Option<Command> {
+    let mut command = match pending.take() {
+        Some(command) => command,
+        None => commands.recv().await?,
+    };
+    if let Command::Draft(chat, ..) = &command {
+        let chat = *chat;
+        while let Ok(next) = commands.try_recv() {
+            if matches!(&next, Command::Draft(id, ..) if *id == chat) {
+                command = next;
+            } else {
+                *pending = Some(next);
+                break;
+            }
+        }
+    }
+    Some(command)
+}
 #[derive(Clone)]
 pub struct SendReply {
     pub request: i32,
@@ -192,6 +217,7 @@ pub async fn run_with_chat_sources(
     let mut phone_sources_open = true;
     let mut archives_open = true;
     let mut preferences_open = true;
+    let mut pending_command = None;
     let mut expiry = tokio::time::interval(std::time::Duration::from_secs(30));
     loop {
         let mut notice = String::new();
@@ -246,7 +272,7 @@ pub async fn run_with_chat_sources(
                     }
                 }
             }
-            command = commands.recv() => {
+            command = next_command(&mut commands, &mut pending_command) => {
                 let Some(command) = command else { return; };
                 let Some(db) = &archive else {
                     if let Command::Send {chat,text,request,..}=command {

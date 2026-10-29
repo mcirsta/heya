@@ -187,6 +187,7 @@ pub fn attach(
     ui.set_chat_title("Select a conversation".into());
     crate::presentation_presence::clear(ui);
     let (archives, archive_rx) = watch::channel(None);
+    let contact_info = crate::presentation_contact_info::attach(ui, archive_rx.clone());
     let (upload_sources, upload_rx) = watch::channel(None);
     let (upload_commands, uploads) =
         crate::presentation_attachments::attach(ui, archive_rx.clone(), upload_rx.clone(), false);
@@ -362,6 +363,7 @@ pub fn attach(
             avatar_presentation,
             presentation,
             message_presentation,
+            contact_info,
             badge
         );
     })
@@ -393,6 +395,11 @@ pub(crate) fn bind_messages(ui: &AppWindow, commands: mpsc::Sender<Command>) {
             if enqueue(&ui, &tx, Command::ManageChat { chat, action }) {
                 ui.set_chat_management_busy(true);
                 ui.set_notice("Updating chat…".into());
+                if ui.get_contact_info_open() {
+                    ui.set_contact_info_management_status("Updating chat…".into());
+                }
+            } else if ui.get_contact_info_open() {
+                ui.set_contact_info_management_status("Heya is busy. Please try again.".into());
             }
         }
     });
@@ -614,6 +621,7 @@ pub(crate) fn bind_messages(ui: &AppWindow, commands: mpsc::Sender<Command>) {
                     ui.set_send_request_id(request);
                     ui.set_send_draft_version(ui.get_draft_revision());
                     ui.set_send_pending(true);
+                    messaging::trace_send("queued", request);
                 }
             }
         }
@@ -621,6 +629,9 @@ pub(crate) fn bind_messages(ui: &AppWindow, commands: mpsc::Sender<Command>) {
 }
 
 pub(crate) fn publish_messages(ui: &AppWindow, snapshot: &messaging::Snapshot) {
+    if ui.get_contact_info_open() && ui.get_chat_management_busy() && !snapshot.chat_busy {
+        ui.set_contact_info_management_status(snapshot.notice.as_str().into());
+    }
     ui.set_chat_management_busy(snapshot.chat_busy);
     if let Some(reply) = &snapshot.reply
         && reply.request == ui.get_send_request_id()
@@ -714,4 +725,7 @@ pub(crate) fn publish_messages(ui: &AppWindow, snapshot: &messaging::Snapshot) {
         presentation::timeline::history_finished(ui, reply);
     }
     ui.invoke_request_avatars();
+    if let Some(reply) = &snapshot.reply {
+        messaging::trace_send("ui_view", reply.request);
+    }
 }

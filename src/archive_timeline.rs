@@ -6,7 +6,7 @@ use std::time::Instant;
 const SELECT: &str =
     "SELECT m.id,coalesce(nullif(trim(n.saved_name),''),nullif(trim(n.profile_name),''),m.sender_name),
     m.sender,m.body,m.stamp,m.outgoing,m.delivery,m.content,m.wire_id,m.deleted,length(m.raw),
-    nullif(trim(n.saved_name),'') IS NOT NULL
+    nullif(trim(n.saved_name),'') IS NOT NULL,m.album,m.album_index
     FROM messages m LEFT JOIN contacts n ON n.jid=m.sender
     WHERE m.chat_id=?1 AND m.visible=1 AND (m.stamp,m.id)<=(?5,?6)";
 fn query(append: bool) -> String {
@@ -78,7 +78,7 @@ pub(super) fn install(db: &Connection) -> Result<()> {
             // a newly arrived message unread must not defeat the append path.
             let trigger = format!("heya_timeline_{table}_{event}");
             let event = if table == "messages" && event == "UPDATE" {
-                "UPDATE OF id,chat_id,sender,wire_id,stamp,outgoing,sender_name,body,raw,visible,deleted,expires,delivery,content"
+                "UPDATE OF id,chat_id,sender,wire_id,stamp,outgoing,sender_name,body,raw,visible,deleted,expires,delivery,content,album,album_index"
             } else {
                 event
             };
@@ -182,6 +182,8 @@ impl Cache {
         // Avoid materializing SELECT * (including envelopes/thumbnails) and a
         // second SQL sort just to restore chronological display order.
         let mut stmt = db.prepare(&query(cached.is_some()))?;
+        let mut album_counts =
+            std::collections::HashMap::<String, std::collections::HashMap<String, usize>>::new();
         let decode = |r: &rusqlite::Row<'_>| {
             let outgoing: bool = r.get(5)?;
             let name: String = r.get(1)?;
@@ -191,6 +193,32 @@ impl Cache {
             let mut content =
                 serde_json::from_str::<crate::message_content::Content>(&r.get::<_, String>(7)?)
                     .unwrap_or_default();
+            if let Some(parent) = r.get::<_, Option<String>>(12)?
+                && content.photo.is_some()
+            {
+                let count = if let Some(count) = album_counts
+                    .get(&sender)
+                    .and_then(|albums| albums.get(&parent))
+                {
+                    *count
+                } else {
+                    let count = db.query_row(&format!(
+                        "SELECT count(*) FROM messages m WHERE m.chat_id=?1 AND m.sender=?2 AND m.album=?3 AND {}",
+                        photos::ELIGIBLE,
+                    ), params![chat,sender,parent], |r| r.get::<_,i64>(0))?;
+                    let count = count as usize;
+                    album_counts
+                        .entry(sender.clone())
+                        .or_default()
+                        .insert(parent.clone(), count);
+                    count
+                };
+                content.album = Some(crate::photo_albums::Group {
+                    key: crate::photo_albums::Key::Explicit(parent),
+                    index: r.get(13)?,
+                });
+                content.album_count = count;
+            }
             content.metadata = crate::message_actions::Metadata {
                 wire: r.get(8)?,
                 stamp: r.get(4)?,
@@ -278,6 +306,15 @@ impl Cache {
             combined.extend_from_slice(retained);
             combined.append(&mut messages);
             messages = combined;
+        }
+        // A strict text append cannot change existing photo membership. Keep
+        // the cached metadata; edits/reactions/deletions already force rebuilds.
+        if cached.is_none()
+            || messages[appended_start..]
+                .iter()
+                .any(|m| m.content.photo.is_some())
+        {
+            photo_groups::annotate(db, chat, &mut messages)?;
         }
         if let (Some(probe), Some(started)) = (probe, started) {
             probe.record(

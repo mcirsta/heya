@@ -381,10 +381,12 @@ pub async fn demo_present(
     }
 }
 
-/// Only the explicit synthetic photo fixture forms a demo album. Other photos
-/// remain standalone; production associations always come from the protocol.
+/// Only the designated synthetic photo fixtures form demo albums. Production
+/// membership is resolved by the archive from associations or consecutive photos.
 fn demo_gallery(chat: i32, id: i32) -> Gallery {
-    let members = if chat == 9 && (22002..=22004).contains(&id) {
+    let members = if chat == 9 && (44000..44038).contains(&id) {
+        (44000..44038).collect::<Vec<_>>()
+    } else if chat == 9 && (22002..=22004).contains(&id) {
         (22002..=22004).collect::<Vec<_>>()
     } else {
         vec![id]

@@ -53,7 +53,15 @@ pub fn bind_actions(ui: &AppWindow, runtime: &Runtime) {
         let Some(ui) = weak.upgrade() else {
             return;
         };
-        match timeline::action(&ui, id, index) {
+        let target = if index == -1 {
+            crate::presentation_contact_info::item(&ui, id)
+                .filter(|row| row.kind == crate::contact_info::Kind::Link as i32)
+                .map(|row| Target::Url(row.url.to_string()))
+                .unwrap_or_default()
+        } else {
+            timeline::action(&ui, id, index)
+        };
+        match target {
             Target::Copy(value) => ui.invoke_copy_value(value.into()),
             Target::Url(value) => {
                 if let Some(url) = message_content::web_url(&value) {

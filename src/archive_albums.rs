@@ -44,7 +44,7 @@ impl Archive {
             let members = if let Some(album) = album {
                 db.prepare_cached(&format!("SELECT m.id FROM messages m WHERE m.chat_id=?1 AND m.sender=?2 AND m.album=?3 AND {} ORDER BY m.album_index IS NULL,m.album_index,m.stamp,m.id", photos::ELIGIBLE))?
                     .query_map(params![chat,author,album],|r|r.get::<_,i32>(0))?.collect::<std::result::Result<Vec<_>,_>>()?
-            } else { vec![id] };
+            } else { photo_groups::members(db,chat,id,stamp)? };
             let Some(position)=members.iter().position(|&member|member==id) else { return Ok(None); };
             let content = serde_json::from_str::<crate::message_content::Content>(&content).unwrap_or_default();
             Ok(Some(Gallery {
@@ -70,5 +70,101 @@ impl Archive {
             }
             Ok(rows)
         }).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::archive::tests::{PN, fixture, record};
+    #[tokio::test]
+    async fn timeline_album_counts_cover_other_pages_and_refresh_after_changes() {
+        let (_temp, db) = fixture();
+        let records = (0..38)
+            .map(|i| {
+                let mut m = record(&format!("grid-{i}"));
+                m.timestamp += i64::from(i);
+                m.album = Some(Album {
+                    parent: "grid-parent".into(),
+                    index: Some(i),
+                });
+                m.content = crate::message_content::Content {
+                    body: Some(String::new()),
+                    photo: Some(crate::message_content::Photo {
+                        width: 900,
+                        height: 1200,
+                        size: Some(1),
+                    }),
+                    ..Default::default()
+                };
+                m
+            })
+            .collect();
+        db.ingest(Batch {
+            messages: records,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let chat = db.create_chat(PN.into()).await.unwrap();
+        let page = db
+            .view(chat, 2, String::new(), false, false)
+            .await
+            .unwrap()
+            .conversation
+            .unwrap();
+        assert_eq!(page.messages.len(), 2);
+        assert!(page.messages.iter().all(|m| m.content.album_count == 38));
+        assert_eq!(
+            crate::photo_albums::Layout::new(&page.messages, true).grids[&0].total,
+            38
+        );
+        let gallery = db
+            .photo_gallery(chat, page.messages[0].id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(gallery.members.len(), 38);
+        db.call(|c| {
+            c.execute(
+                "UPDATE messages SET deleted=1,content='' WHERE wire_id='grid-0'",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        let page = db
+            .view(chat, 2, String::new(), false, false)
+            .await
+            .unwrap()
+            .conversation
+            .unwrap();
+        assert!(page.messages.iter().all(|m| m.content.album_count == 37));
+        // Album-only association repair must invalidate an already cached view.
+        db.call(|c| {
+            c.execute(
+                "UPDATE messages SET album='another-parent' WHERE wire_id='grid-37'",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        let page = db
+            .view(chat, 2, String::new(), false, false)
+            .await
+            .unwrap()
+            .conversation
+            .unwrap();
+        assert_eq!(
+            page.messages[1].content.album.as_ref().unwrap().key,
+            crate::photo_albums::Key::Explicit("another-parent".into())
+        );
+        assert!(
+            crate::photo_albums::Layout::new(&page.messages, true)
+                .grids
+                .is_empty()
+        );
     }
 }

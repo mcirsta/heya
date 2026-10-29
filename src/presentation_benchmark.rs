@@ -16,6 +16,8 @@ use tokio::{runtime::Runtime, sync::watch, task::JoinHandle};
 mod album_viewer;
 #[path = "presentation_archive_benchmark.rs"]
 mod archive_pipeline;
+#[path = "presentation_contact_info_benchmark.rs"]
+mod contact_panel;
 #[path = "presentation_photo_benchmark.rs"]
 mod photo_archive;
 #[path = "presentation_video_benchmark.rs"]
@@ -103,6 +105,9 @@ pub fn start(
     ui: &AppWindow,
     runtime: &Runtime,
 ) -> Result<Benchmark, slint::SetRenderingNotifierError> {
+    if std::env::var_os("HEYA_BENCHMARK_CONTACT_INFO").is_some() {
+        return contact_panel::start(ui, runtime);
+    }
     if std::env::var_os("HEYA_BENCHMARK_ALBUM").is_some() {
         return album_viewer::start(ui, runtime);
     }
@@ -206,7 +211,8 @@ pub fn start(
         "UI benchmark received audio: {}",
         if audio { "on" } else { "off" }
     );
-    let photos = std::env::var_os("HEYA_BENCHMARK_PHOTOS").is_some();
+    let album_grid = std::env::var_os("HEYA_BENCHMARK_ALBUM_GRID").is_some();
+    let photos = album_grid || std::env::var_os("HEYA_BENCHMARK_PHOTOS").is_some();
     let wheel = std::env::var_os("HEYA_BENCHMARK_WHEEL").is_some();
     println!(
         "UI benchmark scroll input: {}",
@@ -223,6 +229,23 @@ pub fn start(
     if photos {
         fixtures::fill_photos(&mut state.chats[5].messages);
     }
+    if album_grid {
+        for (index, chunk) in state.chats[5].messages.chunks_mut(38).enumerate() {
+            let album = fixtures::album_messages(&chunk[0], chunk.len());
+            for (message, mut photo) in chunk.iter_mut().zip(album) {
+                photo.id = message.id;
+                Arc::make_mut(&mut photo.content)
+                    .album
+                    .as_mut()
+                    .unwrap()
+                    .key = crate::photo_albums::Key::Explicit(format!("synthetic-grid-{index}"));
+                *message = photo;
+            }
+        }
+        println!(
+            "Album grids: 10,000 original messages, explicit 38-photo groups, at most four previews per grid; cached originals only."
+        );
+    }
     let documents = std::env::var_os("HEYA_BENCHMARK_DOCUMENTS").is_some();
     if documents {
         fixtures::fill_documents(&mut state.chats[5].messages);
@@ -235,7 +258,7 @@ pub fn start(
             state.chats[5].messages.clone(),
             photo_archive::Media::Documents,
         )
-    } else if photos && std::env::var_os("HEYA_BENCHMARK_PHOTO_ARCHIVE").is_some() {
+    } else if photos && (album_grid || std::env::var_os("HEYA_BENCHMARK_PHOTO_ARCHIVE").is_some()) {
         println!("Photo source: temporary encrypted archive, per-message worker decoding");
         photo_archive::start(
             ui,
@@ -534,8 +557,18 @@ pub fn start(
                 let rows = ui.get_timeline_rows();
                 let images = rows
                     .iter()
-                    .filter(|r| r.message.photo_image.size().width > 0)
-                    .count();
+                    .map(|r| {
+                        if r.message.album_photos.row_count() > 0 {
+                            r.message
+                                .album_photos
+                                .iter()
+                                .filter(|p| p.picture.size().width > 0)
+                                .count()
+                        } else {
+                            usize::from(r.message.photo_image.size().width > 0)
+                        }
+                    })
+                    .sum::<usize>();
                 println!(
                     "Photo residency: {} instantiated timeline rows, {images} loaded inline images",
                     rows.row_count()

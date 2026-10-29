@@ -137,7 +137,7 @@ pub(crate) fn publish(ui: &AppWindow, snapshot: &Snapshot) {
         {
             ui.set_notice("The original position is no longer available in saved history.".into());
         }
-        ui.set_highlighted_message(jump.message);
+        ui.set_highlighted_message(timeline::display_id(ui, jump.message));
         ui.set_navigation_shown(jump.request);
     }
 }

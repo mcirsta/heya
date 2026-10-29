@@ -79,7 +79,7 @@ pub(crate) fn context_pointer(
 ) -> bool {
     let hit = ui
         .invoke_context_allowed(p.x, p.y)
-        .then(|| crate::presentation::timeline::context_target(ui, p.y))
+        .then(|| crate::presentation::timeline::context_target(ui, p.x, p.y))
         .flatten();
     if pressed {
         *target = hit;

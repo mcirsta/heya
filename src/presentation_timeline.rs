@@ -34,7 +34,7 @@ pub(crate) fn take_samples() -> LayoutSamples {
 /// Reuse the height index and exact cached prefix, including date chips. Native
 /// right clicks are intercepted once at the window boundary, over child media
 /// as well as text; this never measures or constructs another timeline row.
-pub(crate) fn context_target(ui: &AppWindow, y: f32) -> Option<i32> {
+pub(crate) fn context_target(ui: &AppWindow, x: f32, y: f32) -> Option<i32> {
     let model = ui.get_messages();
     let timeline = model.as_any().downcast_ref::<Timeline>()?;
     let s = timeline.state.borrow();
@@ -43,8 +43,22 @@ pub(crate) fn context_target(ui: &AppWindow, y: f32) -> Option<i32> {
     let row = s.source.get(i)?;
     let cache = s.cache.get(i)?;
     let top = s.heights.prefix(i) + cache.prefix?;
-    (y >= top && y < top + f64::from(cache.body_height) && row.content.notice.is_none())
-        .then_some(row.id)
+    if y < top || y >= top + f64::from(cache.body_height) || row.content.notice.is_some() {
+        return None;
+    }
+    if let Some(grid) = s.albums.grids.get(&i) {
+        let (left, above, width, height) = cache.album_bounds;
+        if let Some(tile) = crate::photo_albums::tile_at(
+            grid.members.len().min(4),
+            width,
+            height,
+            x - ui.get_timeline_left() - left,
+            (y - top) as f32 - above,
+        ) {
+            return Some(s.source[grid.members[tile]].id);
+        }
+    }
+    Some(row.id)
 }
 
 #[derive(Default)]
@@ -116,6 +130,7 @@ struct Cache {
     prefix: Option<f64>,
     body_height: f32,
     measured_at: u64,
+    album_bounds: (f32, f32, f32, f32),
 }
 
 struct PhotoImage {
@@ -143,6 +158,8 @@ struct State {
     today: chrono::NaiveDate,
     photos: HashMap<i32, PhotoImage>,
     viewer: Option<(i32, Arc<crate::photos::Pixels>, slint::Image)>,
+    albums: crate::photo_albums::Layout,
+    compact: bool,
 }
 
 impl State {
@@ -156,7 +173,7 @@ impl State {
         self.offset = if self.bottom || self.source.is_empty() {
             maximum
         } else {
-            let index = anchor.0.min(self.source.len() - 1);
+            let index = self.albums.owner(anchor.0.min(self.source.len() - 1));
             // Stay inside the anchor if a reflow/removal replaces a tall row
             // with a shorter one; its bottom boundary belongs to the next row.
             (self.heights.prefix(index) + anchor.1.min((self.heights.values[index] - 1.).max(0.)))
@@ -192,6 +209,30 @@ impl State {
             row.photo_state = photo.state as i32;
             row.photo_status = photo.state.label().into();
         }
+        if let Some(grid) = self.albums.grids.get(&index) {
+            let tiles = grid
+                .members
+                .iter()
+                .take(4)
+                .map(|&i| {
+                    let member = &self.source[i];
+                    let photo = self.photos.get(&member.id);
+                    let status = photo.map_or(crate::photos::State::Idle, |p| p.state);
+                    crate::ui::AlbumPhotoRow {
+                        id: member.id,
+                        time: member.time.as_str().into(),
+                        picture: photo.map(|p| p.image.clone()).unwrap_or_default(),
+                        state: status as i32,
+                        status: status.label().into(),
+                    }
+                })
+                .collect::<Vec<_>>();
+            row.album_more = grid
+                .total
+                .saturating_sub(tiles.len())
+                .min(i32::MAX as usize) as i32;
+            row.album_photos = ModelRc::new(VecModel::from(tiles));
+        }
         Some(row)
     }
 
@@ -212,7 +253,7 @@ impl State {
             message: self.row(index).expect("visible row is in range"),
             top: self.heights.prefix(index) as f32,
             first: index == 0,
-            last: index + 1 == self.source.len(),
+            last: self.albums.is_last(index, self.source.len()),
             day_label,
             body_height: self.cache[index].body_height,
         }
@@ -231,8 +272,18 @@ impl State {
         true
     }
 
-    fn update(&mut self, source: Arc<[domain::Message]>, reset: bool, group: bool) -> bool {
-        if !reset && Arc::ptr_eq(&self.source, &source) && self.group == group {
+    fn update(
+        &mut self,
+        source: Arc<[domain::Message]>,
+        reset: bool,
+        group: bool,
+        compact: bool,
+    ) -> bool {
+        if !reset
+            && Arc::ptr_eq(&self.source, &source)
+            && self.group == group
+            && self.compact == compact
+        {
             return false;
         }
         let old_anchor = self.anchor();
@@ -244,6 +295,7 @@ impl State {
             .map(|(i, m)| (m.id, i))
             .collect();
         let mut old_cache = std::mem::take(&mut self.cache);
+        let albums = crate::photo_albums::Layout::new(&source, compact);
         let mut values = Vec::with_capacity(source.len());
         let mut changed = reset || self.source.len() != source.len() || self.group != group;
         let mut anchor_index = None;
@@ -257,13 +309,26 @@ impl State {
                     && starts_run(&self.source, j) == starts_run(&source, i)
                     && starts_day(&self.source, j) == starts_day(&source, i)
                     && (j == 0) == (i == 0)
-                    && (j + 1 == self.source.len()) == (i + 1 == source.len())
+                    && self.albums.is_last(j, self.source.len()) == albums.is_last(i, source.len())
+                    && self.albums.hidden(j) == albums.hidden(i)
+                    && self.albums.grids.get(&j) == albums.grids.get(&i)
+                    && albums.grids.get(&i).is_none_or(|g| {
+                        g.members.iter().all(|&member| {
+                            old_indices
+                                .get(&source[member].id)
+                                .is_some_and(|&old| self.source[old] == source[member])
+                        })
+                    })
             });
             changed |= !same || old != Some(i);
             if same && !reset && self.group == group {
                 let j = old.unwrap();
                 self.cache.push(std::mem::take(&mut old_cache[j]));
-                values.push(self.heights.values[j]);
+                values.push(if albums.hidden(i) {
+                    0.
+                } else {
+                    self.heights.values[j].max(1.)
+                });
             } else {
                 self.cache.push(Cache {
                     prefix: old.and_then(|j| old_cache[j].prefix),
@@ -271,7 +336,17 @@ impl State {
                 });
                 // Reuse a previous height as an estimate after an edit. New
                 // text rows start at a modest estimate; visible rows are exact.
-                values.push(old.map_or(72., |j| self.heights.values[j]));
+                values.push(if albums.hidden(i) {
+                    0.
+                } else {
+                    old.map_or(72., |j| {
+                        if self.heights.values[j] > 0. {
+                            self.heights.values[j]
+                        } else {
+                            72.
+                        }
+                    })
+                });
             }
         }
         // If expiration removed the anchor, keep the next surviving message.
@@ -285,6 +360,8 @@ impl State {
                 .unwrap_or(old_anchor.0.min(source.len().saturating_sub(1)))
         });
         self.source = source;
+        self.albums = albums;
+        self.compact = compact;
         self.heights = Heights::new(values);
         self.group = group;
         if reset {
@@ -409,6 +486,15 @@ impl Timeline {
             self.read_scroll(ui);
         }
         let mut state = self.state.borrow_mut();
+        let compact = !ui.get_selection_active();
+        if state.compact != compact {
+            let source = state.source.clone();
+            let group = state.group;
+            state.update(source, false, group, compact);
+            drop(state);
+            self.notify.reset();
+            state = self.state.borrow_mut();
+        }
         let width = ui.get_timeline_width();
         let viewport = f64::from(ui.get_timeline_visible());
         if width <= 0. || viewport <= 0. {
@@ -439,6 +525,9 @@ impl Timeline {
                 .min(state.source.len());
             let mut measured = false;
             for i in start..end {
+                if state.albums.hidden(i) {
+                    continue;
+                }
                 if state.cache[i].measured_at == state.generation {
                     continue;
                 }
@@ -446,6 +535,12 @@ impl Timeline {
                 let height = f64::from(ui.get_timeline_measured_height());
                 state.cache[i].body_height = ui.get_timeline_measured_body_height();
                 state.cache[i].prefix = Some(f64::from(ui.get_timeline_measured_prefix()));
+                state.cache[i].album_bounds = (
+                    ui.get_timeline_album_x(),
+                    ui.get_timeline_album_y(),
+                    ui.get_timeline_album_width(),
+                    ui.get_timeline_album_height(),
+                );
                 // A malformed/temporarily unavailable measurement must not
                 // produce a zero-height infinite virtualization loop.
                 if height.is_finite() && height >= 1. {
@@ -474,7 +569,12 @@ impl Timeline {
             let start = state.heights.row_at((state.offset - overscan).max(0.));
             let end = (state.heights.row_at(state.offset + viewport + overscan) + 1)
                 .min(state.source.len());
-            (start..end).map(|i| state.displayed(i)).collect()
+            (start..end)
+                .filter(|&i| !state.albums.hidden(i))
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|i| state.displayed(i))
+                .collect()
         };
         // A read boundary comes from the laid-out source, not the archive's
         // newest row (which might have arrived since this snapshot).
@@ -573,7 +673,12 @@ impl Timeline {
         drop(history);
         self.read_scroll(ui);
         let mut state = self.state.borrow_mut();
-        let changed = state.update(view.messages.clone(), reset, view.is_group);
+        let changed = state.update(
+            view.messages.clone(),
+            reset,
+            view.is_group,
+            !ui.get_selection_active(),
+        );
         state.transcript = view.transcript.clone();
         drop(state);
         if changed {
@@ -671,6 +776,8 @@ fn same_row(a: &TimelineRow, b: &TimelineRow) -> bool {
         && am.audio_waveform == bm.audio_waveform
         && am.audio_duration == bm.audio_duration
         && am.has_photo == bm.has_photo
+        && am.album_more == bm.album_more
+        && same_album(&am.album_photos, &bm.album_photos)
         && am.has_video == bm.has_video
         && am.video_duration == bm.video_duration
         && am.photo_width == bm.photo_width
@@ -684,6 +791,20 @@ fn same_row(a: &TimelineRow, b: &TimelineRow) -> bool {
 
 fn same_image(a: &slint::Image, b: &slint::Image) -> bool {
     (a.size().width == 0 && b.size().width == 0) || a == b
+}
+
+fn same_album(
+    a: &ModelRc<crate::ui::AlbumPhotoRow>,
+    b: &ModelRc<crate::ui::AlbumPhotoRow>,
+) -> bool {
+    a.row_count() == b.row_count()
+        && a.iter().zip(b.iter()).all(|(a, b)| {
+            a.id == b.id
+                && a.time == b.time
+                && a.state == b.state
+                && a.status == b.status
+                && same_image(&a.picture, &b.picture)
+        })
 }
 
 pub(crate) fn avatars(ui: &AppWindow, snapshot: &crate::avatars::Snapshot) {
@@ -729,6 +850,16 @@ pub(crate) fn has_photo(ui: &AppWindow, id: i32) -> bool {
     found
 }
 
+pub(crate) fn cached_photo(ui: &AppWindow, id: i32) -> slint::Image {
+    let mut image = slint::Image::default();
+    with(ui, |model| {
+        if let Some(photo) = model.state.borrow().photos.get(&id) {
+            image = photo.image.clone();
+        }
+    });
+    image
+}
+
 fn viewer(ui: &AppWindow, state: &mut State) {
     let id = ui.get_photo_viewer_id();
     if state.viewer.as_ref().is_some_and(|v| v.0 != id) {
@@ -752,8 +883,14 @@ fn viewer(ui: &AppWindow, state: &mut State) {
             && status != crate::photos::State::Ready
         {
             "Connect to download this photo"
-        } else if status == crate::photos::State::Ready && state.viewer.is_none() {
-            "Opening photo…"
+        } else if matches!(
+            status,
+            crate::photos::State::Idle
+                | crate::photos::State::Loading
+                | crate::photos::State::Ready
+        ) {
+            // Reserve visible status text for failures; loading leaves the image unobstructed.
+            ""
         } else {
             status.label()
         }
@@ -817,6 +954,27 @@ pub(crate) fn photos(ui: &AppWindow, snapshot: &crate::photos::Snapshot) {
         for i in 0..model.visible.row_count() {
             let mut row = model.visible.row_data(i).unwrap();
             if !row.message.has_photo {
+                continue;
+            }
+            if row.message.album_photos.row_count() > 0 {
+                let tiles = row
+                    .message
+                    .album_photos
+                    .iter()
+                    .map(|mut tile| {
+                        let photo = state.photos.get(&tile.id);
+                        let status = photo.map_or(crate::photos::State::Idle, |p| p.state);
+                        tile.picture = photo.map(|p| p.image.clone()).unwrap_or_default();
+                        tile.state = status as i32;
+                        tile.status = status.label().into();
+                        tile
+                    })
+                    .collect::<Vec<_>>();
+                let tiles = ModelRc::new(VecModel::from(tiles));
+                if !same_album(&row.message.album_photos, &tiles) {
+                    row.message.album_photos = tiles;
+                    model.visible.set_row_data(i, row);
+                }
                 continue;
             }
             let photo = state.photos.get(&row.message.id);
@@ -1005,7 +1163,7 @@ pub(super) fn append(ui: &AppWindow, message: domain::Message, transcript: Arc<s
         let mut messages = state.source.to_vec();
         messages.push(message);
         let group = state.group;
-        state.update(messages.into(), false, group);
+        state.update(messages.into(), false, group, !ui.get_selection_active());
         state.transcript = transcript.clone();
         state.bottom = true;
         drop(state);
@@ -1041,6 +1199,7 @@ pub(crate) fn navigate(ui: &AppWindow, message: i32, returning: bool) -> bool {
         if let Some((id, within, bottom)) = target
             && let Some(index) = state.source.iter().position(|m| m.id == id)
         {
+            let index = state.albums.owner(index);
             // Measure the destination before restoring an offset inside its
             // bubble. A window boundary can add/remove a date chip above it.
             state.bottom = false;
@@ -1049,6 +1208,7 @@ pub(crate) fn navigate(ui: &AppWindow, message: i32, returning: bool) -> bool {
             model.layout(ui, false);
             state = model.state.borrow_mut();
             if let Some(index) = state.source.iter().position(|m| m.id == id) {
+                let index = state.albums.owner(index);
                 let prefix = if returning {
                     state.cache[index].prefix.unwrap_or(0.)
                 } else {
@@ -1067,6 +1227,17 @@ pub(crate) fn navigate(ui: &AppWindow, message: i32, returning: bool) -> bool {
         model.layout(ui, false);
     });
     found.get()
+}
+
+pub(crate) fn display_id(ui: &AppWindow, id: i32) -> i32 {
+    let mut result = id;
+    with(ui, |model| {
+        let state = model.state.borrow();
+        if let Some(i) = state.source.iter().position(|m| m.id == id) {
+            result = state.source[state.albums.owner(i)].id;
+        }
+    });
+    result
 }
 
 #[cfg(test)]
@@ -1117,19 +1288,19 @@ pub(super) mod tests {
             generation: 1,
             ..State::default()
         };
-        state.update(original.clone(), true, false);
+        state.update(original.clone(), true, false, true);
         state.bottom = false;
         state.offset = state.heights.prefix(30) + 17.;
         let id = original[30].id;
         demo.load_older(6);
         view = demo.conversation();
-        state.update(view.messages.clone(), false, false);
+        state.update(view.messages.clone(), false, false, true);
         let (row, within) = state.anchor();
         assert_eq!(state.source[row].id, id);
         assert_eq!(within, 17.);
         let mut edited = view.messages.to_vec();
         edited[0].text = "edited above the viewport\n".repeat(100);
-        state.update(edited.clone().into(), false, false);
+        state.update(edited.clone().into(), false, false, true);
         let anchor = state.anchor();
         state.heights.set(0, 5000.);
         state.restore(anchor);
@@ -1137,14 +1308,14 @@ pub(super) mod tests {
         assert_eq!(state.anchor().1, 17.);
         let next = edited[row + 1].id;
         edited.remove(row);
-        state.update(edited.into(), false, false);
+        state.update(edited.into(), false, false, true);
         assert_eq!(state.source[state.anchor().0].id, next);
         let anchor = state.anchor();
         state.heights.set(anchor.0, 2.);
         state.restore((anchor.0, 1000.));
         assert_eq!(state.source[state.anchor().0].id, next);
         assert_eq!(state.anchor().1, 1.);
-        state.update(Arc::from([]), false, false);
+        state.update(Arc::from([]), false, false, true);
         assert_eq!(state.offset, 0.);
         assert_eq!(state.heights.total(), 0.);
     }
@@ -1160,7 +1331,7 @@ pub(super) mod tests {
             generation: 1,
             ..State::default()
         };
-        state.update(messages.clone().into(), true, false);
+        state.update(messages.clone().into(), true, false, true);
         for i in 0..messages.len() {
             state.displayed(i);
             state.cache[i].measured_at = 1;
@@ -1178,24 +1349,24 @@ pub(super) mod tests {
         messages[1].sender = "Another sender".into();
         messages[1].sender_id = "demo:another".into();
         messages[1].date = messages[2].date;
-        state.update(messages.clone().into(), false, false);
+        state.update(messages.clone().into(), false, false, true);
         assert_eq!(state.cache[2].measured_at, 0);
         assert!(state.displayed(2).day_label.is_empty());
         assert!(state.displayed(2).message.first_in_run);
         // Deleting the first message of a day moves its chip to the next one.
         messages.remove(1);
-        state.update(messages.clone().into(), false, false);
+        state.update(messages.clone().into(), false, false, true);
         assert_eq!(state.displayed(1).day_label, "Yesterday");
         // A paged view starts with a chip even in the middle of a day. Loading
         // earlier messages on that day removes the duplicate boundary.
-        state.update(messages[2..].to_vec().into(), true, false);
+        state.update(messages[2..].to_vec().into(), true, false, true);
         assert_eq!(state.displayed(0).day_label, "Yesterday");
-        state.update(messages.clone().into(), false, false);
+        state.update(messages.clone().into(), false, false, true);
         assert!(state.displayed(2).day_label.is_empty());
         assert_eq!(state.cache[2].measured_at, 0);
         // Unknown timestamps must never acquire a fabricated Today chip.
         messages[1].date = None;
-        state.update(messages.into(), false, false);
+        state.update(messages.into(), false, false, true);
         assert!(state.displayed(1).day_label.is_empty());
         assert_eq!(state.displayed(2).day_label, "Yesterday");
     }

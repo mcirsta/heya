@@ -26,6 +26,7 @@ fn contains(parent: &ElementHandle, item: &ElementHandle) {
 }
 // Runs within the suite's one toolkit thread; synthetic pixels, private test backend.
 pub(crate) fn check_ui() {
+    check_grid();
     let ui = AppWindow::new().unwrap();
     ui.set_demo_mode(true);
     ui.set_show_conversation(true);
@@ -46,6 +47,7 @@ pub(crate) fn check_ui() {
                 assert_eq!(demand.borrow().visible, vec![message.id]);
                 let before = (ui.get_timeline_height(), ui.get_timeline_y());
                 for state in [
+                    photos::State::Idle,
                     photos::State::Loading,
                     photos::State::Ready,
                     photos::State::Failed,
@@ -78,7 +80,7 @@ pub(crate) fn check_ui() {
                     contains(&bubble, &photo);
                     contains(&bubble, &stamp);
                     assert!(photo.size().height <= 440.5 && photo.size().width <= 320.5);
-                    if state != photos::State::Ready {
+                    if state == photos::State::Failed {
                         let disc = child(&photo, "PhotoTile::status-disc");
                         contains(&photo, &disc);
                         assert_eq!(disc.size(), slint::LogicalSize::new(44., 44.));
@@ -88,6 +90,15 @@ pub(crate) fn check_ui() {
                                 .find_all()
                                 .is_empty(),
                             "no loading banner over the photo"
+                        );
+                    } else {
+                        assert!(
+                            photo
+                                .query_descendants()
+                                .match_id("PhotoTile::status-disc")
+                                .find_all()
+                                .is_empty(),
+                            "automatic photo loading has no overlay"
                         );
                     }
                     if message.content.body.as_deref() == Some("") {
@@ -147,6 +158,20 @@ pub(crate) fn check_ui() {
     ui.set_auto_download_photos(false);
     ui.invoke_request_photos();
     assert!(!demand.borrow().automatic);
+    publish(
+        &ui,
+        &Arc::new(photos::Snapshot {
+            rows: [(
+                id,
+                photos::Photo {
+                    state: photos::State::Idle,
+                    image: Some(sample.clone()),
+                },
+            )]
+            .into(),
+            ..Default::default()
+        }),
+    );
     let tile = ElementHandle::find_by_element_type_name(&ui, "PhotoTile")
         .find(|e| e.absolute_position().x >= 0.)
         .unwrap();
@@ -155,6 +180,7 @@ pub(crate) fn check_ui() {
         .match_type_name("ContentTarget")
         .find_first()
         .unwrap();
+    contains(&tile, &child(&tile, "PhotoTile::status-disc"));
     target.invoke_accessible_default_action();
     assert_eq!(ui.get_photo_viewer_id(), id);
     assert_eq!(demand.borrow().viewer, Some(id));
@@ -248,6 +274,274 @@ pub(crate) fn check_ui() {
         }
     }
     check_wheel_motion(&ui, &view, &sample);
+}
+
+fn check_grid() {
+    let ui = AppWindow::new().unwrap();
+    ui.set_demo_mode(true);
+    ui.set_show_conversation(true);
+    let demand = bind(&ui);
+    let mut demo = fixtures::demo();
+    demo.select(9);
+    let mut view = demo.conversation();
+    let seed = view.messages[0].clone();
+    let pixels = Arc::new(fixtures::photo_pixels(0, photos::INLINE_EDGE));
+    for count in [2, 3, 4, 37, 38, 1000] {
+        view.messages = if count == 37 {
+            fixtures::unlinked_album_messages(&seed, count)
+        } else {
+            fixtures::album_messages(&seed, count)
+        }
+        .into();
+        if count == 4 {
+            let messages = Arc::make_mut(&mut view.messages);
+            for message in messages.iter_mut() {
+                message.outgoing = true;
+                message.time = format!("10:56 · {}", "Synthetic delivery status ".repeat(6));
+            }
+            let content = Arc::make_mut(&mut messages[0].content);
+            content.body = Some("Album caption 👩🏽‍💻\nA second line stays visible.".into());
+            content.quote = Some(crate::message_content::Quote {
+                sender: "Sample".into(),
+                text: "An album reply".into(),
+            });
+            content.reaction_summary = "❤️ 2".into();
+        }
+        view.transcript = view
+            .messages
+            .iter()
+            .map(|m| m.transcript_line())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .into();
+        for dark in [false, true] {
+            ui.global::<Theme>().set_dark(dark);
+            for (width, height) in [(1200., 900.), (800., 720.), (520., 720.)] {
+                ui.window().set_size(slint::LogicalSize::new(width, height));
+                presentation::conversation(&ui, &view, true);
+                ui.show().unwrap();
+                ui.invoke_layout_timeline();
+                assert_eq!(ui.get_messages().row_count(), count);
+                assert_eq!(ui.get_timeline_rows().row_count(), 1);
+                let row = ui.get_timeline_rows().row_data(0).unwrap();
+                assert_eq!(row.message.album_photos.row_count(), count.min(4));
+                assert_eq!(row.message.album_more, count.saturating_sub(4) as i32);
+                if count == 4 {
+                    assert_eq!(
+                        row.message.text,
+                        view.messages[0].content.body.as_deref().unwrap()
+                    );
+                    assert_eq!(row.message.quote_text, "An album reply");
+                    assert_eq!(row.message.reactions, "❤️ 2");
+                }
+                assert_eq!(
+                    demand.borrow().visible,
+                    (44000..44000 + count.min(4) as i32).collect::<Vec<_>>()
+                );
+                let before = (ui.get_timeline_height(), ui.get_timeline_y());
+                let mut data = Arc::new(photos::Snapshot {
+                    rows: (44000..44000 + count.min(4) as i32)
+                        .map(|id| {
+                            (
+                                id,
+                                photos::Photo {
+                                    state: photos::State::Loading,
+                                    image: Some(pixels.clone()),
+                                },
+                            )
+                        })
+                        .collect(),
+                    ..Default::default()
+                });
+                publish(&ui, &data);
+                assert_eq!(
+                    before,
+                    (ui.get_timeline_height(), ui.get_timeline_y()),
+                    "previews do not reflow grids"
+                );
+                let item = ElementHandle::find_by_element_type_name(&ui, "TimelineItem")
+                    .find(|e| e.id().as_deref() != Some("AppWindow::measure-row"))
+                    .unwrap();
+                let grid = item
+                    .query_descendants()
+                    .match_type_name("PhotoGrid")
+                    .find_first()
+                    .unwrap();
+                contains(&child(&item, "MessageBubble::bubble"), &grid);
+                if count == 4 {
+                    let bubble = child(&item, "MessageBubble::bubble");
+                    let body = child(&item, "MessageBubble::body");
+                    contains(&bubble, &body);
+                    assert!(
+                        body.absolute_position().y
+                            >= grid.absolute_position().y + grid.size().height
+                    );
+                }
+                let tiles = grid
+                    .query_descendants()
+                    .match_type_name("PhotoTile")
+                    .find_all();
+                assert_eq!(tiles.len(), count.min(4));
+                for (index, tile) in tiles.iter().enumerate() {
+                    contains(&grid, tile);
+                    assert_eq!(
+                        tile.query_descendants()
+                            .match_id("PhotoTile::status-disc")
+                            .find_all()
+                            .len(),
+                        0,
+                        "album photos load without overlays"
+                    );
+                    let p = tile.absolute_position();
+                    let size = tile.size();
+                    let id = crate::presentation::timeline::context_target(
+                        &ui,
+                        p.x + size.width / 2.,
+                        p.y + size.height / 2.,
+                    );
+                    assert_eq!(
+                        id,
+                        Some(44000 + index as i32),
+                        "native context menus target the clicked photo"
+                    );
+                }
+                for photo in Arc::make_mut(&mut data).rows.values_mut() {
+                    photo.state = photos::State::Ready;
+                }
+                publish(&ui, &data);
+                assert_eq!(before, (ui.get_timeline_height(), ui.get_timeline_y()));
+                assert!(crate::presentation::timeline::navigate(
+                    &ui,
+                    44000 + count as i32 - 1,
+                    false
+                ));
+                assert_eq!(
+                    crate::presentation::timeline::display_id(&ui, 44000 + count as i32 - 1),
+                    44000
+                );
+            }
+        }
+    }
+    view.messages = fixtures::album_messages(&seed, 38).into();
+    ui.window().set_size(slint::LogicalSize::new(1200., 900.));
+    presentation::conversation(&ui, &view, true);
+    ui.invoke_layout_timeline();
+    let compact_height = ui.get_timeline_height();
+    ui.set_selection_active(true);
+    ui.invoke_layout_timeline();
+    assert!(
+        ui.get_timeline_height() > compact_height * 3.,
+        "selection exposes the originals"
+    );
+    assert_eq!(
+        crate::presentation::timeline::selected_ids(&ui, &[44037].into()),
+        [44037]
+    );
+    ui.set_selection_active(false);
+    ui.invoke_layout_timeline();
+    assert!((ui.get_timeline_height() - compact_height).abs() < 1.);
+    let item = ElementHandle::find_by_element_type_name(&ui, "TimelineItem")
+        .find(|e| e.id().as_deref() != Some("AppWindow::measure-row"))
+        .unwrap();
+    let tiles = child(&item, "MessageBubble::bubble")
+        .query_descendants()
+        .match_type_name("PhotoTile")
+        .find_all();
+    let position = tiles[3].absolute_position();
+    let size = tiles[3].size();
+    let position =
+        slint::LogicalPosition::new(position.x + size.width / 2., position.y + size.height / 2.);
+    let clicked = Rc::new(Cell::new((0, -1)));
+    let recorded = clicked.clone();
+    ui.on_message_action(move |id, action, _, _| recorded.set((id, action)));
+    ui.window()
+        .dispatch_event(slint::platform::WindowEvent::PointerMoved { position });
+    child(&item, "MessageHoverControls::forward").invoke_accessible_default_action();
+    assert_eq!(
+        clicked.get(),
+        (44003, 2),
+        "hover actions retain the hovered photo's identity"
+    );
+    for pressed in [true, false] {
+        ui.window().dispatch_event(if pressed {
+            slint::platform::WindowEvent::PointerPressed {
+                position,
+                button: slint::platform::PointerEventButton::Left,
+            }
+        } else {
+            slint::platform::WindowEvent::PointerReleased {
+                position,
+                button: slint::platform::PointerEventButton::Left,
+            }
+        });
+    }
+    assert_eq!(
+        ui.get_photo_viewer_id(),
+        44003,
+        "the actual counter tile receives pointer clicks"
+    );
+    ui.invoke_close_photo();
+    tiles[3]
+        .query_descendants()
+        .match_type_name("ContentTarget")
+        .find_first()
+        .unwrap()
+        .invoke_accessible_default_action();
+    assert_eq!(
+        ui.get_photo_viewer_id(),
+        44003,
+        "the +N tile opens its photo in the full viewer"
+    );
+    assert_eq!(demand.borrow().viewer, Some(44003));
+    let members = (44000..44038).collect::<Vec<_>>();
+    publish(
+        &ui,
+        &Arc::new(photos::Snapshot {
+            checked: Some((9, 44003)),
+            gallery: Some(Arc::new(photos::Gallery {
+                id: 44003,
+                members,
+                position: 3,
+                sender: "Mira Sample".into(),
+                date: "Today".into(),
+                caption: String::new(),
+            })),
+            viewer: Some((44003, pixels.clone())),
+            ..Default::default()
+        }),
+    );
+    assert_eq!(ui.get_photo_gallery_ids().row_count(), 38);
+    assert_eq!(ui.get_photo_viewer_next(), 44004);
+    ui.invoke_navigate_photo(44004);
+    assert_eq!(demand.borrow().viewer, Some(44004));
+    ui.invoke_close_photo();
+    assert_eq!(ui.get_photo_viewer_id(), 0);
+    // The same album can straddle a cached page; don't use the page size as
+    // the count, or request originals for its off-page members.
+    view.messages = view.messages[36..].to_vec().into();
+    presentation::conversation(&ui, &view, true);
+    ui.invoke_layout_timeline();
+    let row = ui.get_timeline_rows().row_data(0).unwrap();
+    assert_eq!(row.message.album_photos.row_count(), 2);
+    assert_eq!(row.message.album_more, 36);
+    assert_eq!(demand.borrow().visible, [44036, 44037]);
+    let item = ElementHandle::find_by_element_type_name(&ui, "TimelineItem")
+        .find(|e| e.id().as_deref() != Some("AppWindow::measure-row"))
+        .unwrap();
+    let download_icons = || {
+        item.query_descendants()
+            .match_id("PhotoTile::status-disc")
+            .find_all()
+            .len()
+    };
+    ui.set_auto_download_photos(false);
+    assert_eq!(
+        download_icons(),
+        1,
+        "manual download remains available; +N keeps its own affordance"
+    );
+    ui.set_auto_download_photos(true);
+    assert_eq!(download_icons(), 0, "automatic loading stays unobstructed");
 }
 
 fn check_wheel_motion(

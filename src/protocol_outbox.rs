@@ -9,6 +9,7 @@ use whatsapp_rust::{
 
 #[derive(Clone, Copy)]
 enum Attempt {
+    Submitted,
     Confirmed,
     Rejected,
     Unconfirmed,
@@ -51,18 +52,7 @@ impl Transport for WhatsApp {
             message
         };
         let request = SendRequest::new(&jid, message).with_options(options);
-        use whatsapp_rust::send::SendError;
-        match self.0.send(request).await {
-            Err(
-                SendError::InvalidRequest(_)
-                | SendError::MessageRef(_)
-                | SendError::NotLoggedIn
-                | SendError::NoRecipientDevice(_)
-                | SendError::PrimaryDeviceRejected(_),
-            ) => Attempt::Rejected,
-            // Only the ACK/receipt event path establishes successful delivery.
-            _ => Attempt::Unconfirmed,
-        }
+        submitted(self.0.send(request).await)
     }
 }
 
@@ -112,18 +102,41 @@ async fn worker(
             let Some(job) = archive.claim_next().await? else {
                 break;
             };
-            let (jid, id) = (job.jid.clone(), job.id.clone());
+            let (chat, jid, id) = (job.chat, job.jid.clone(), job.id.clone());
+            let send = async {
+                let attempt = transport.send(job).await;
+                if matches!(attempt, Attempt::Submitted) {
+                    // A successful socket write isn't an ACK, nor is the short
+                    // wait for its event a failure. Keep Sending until the
+                    // existing event path records evidence, within the same
+                    // overall send deadline. No polling or extra task.
+                    loop {
+                        changed.borrow_and_update();
+                        if !archive.send_pending(chat, id.clone()).await? {
+                            break;
+                        }
+                        changed
+                            .changed()
+                            .await
+                            .map_err(|_| archive::Error::Database)?;
+                    }
+                }
+                Ok::<_, archive::Error>(attempt)
+            };
             let result = tokio::select! {
                 biased;
                 _ = stop.changed() => None,
-                result = tokio::time::timeout(send_timeout, transport.send(job)) => Some(result),
+                result = tokio::time::timeout(send_timeout, send) => Some(result),
             };
-            let status = if matches!(result, Some(Ok(Attempt::Confirmed))) {
-                "accepted"
-            } else if matches!(result, Some(Ok(Attempt::Rejected))) {
-                "failed"
-            } else {
-                "uncertain"
+            let attempt = match result {
+                Some(Ok(result)) => result?,
+                _ => Attempt::Unconfirmed,
+            };
+            let status = match attempt {
+                Attempt::Submitted => continue, // Evidence is already durable.
+                Attempt::Confirmed => "accepted",
+                Attempt::Rejected => "failed",
+                Attempt::Unconfirmed => "uncertain",
             };
             // An ACK can race with send completion, cancellation or timeout.
             // Archive::delivery never downgrades that stronger evidence.
@@ -142,9 +155,7 @@ async fn send_control(
     control: crate::message_actions::Control,
 ) -> Attempt {
     use crate::message_actions::{self as action, ControlKind};
-    use whatsapp_rust::{
-        EditOptions, EditRequest, MessageId, MessageRef, StanzaId, send::SendError,
-    };
+    use whatsapp_rust::{EditOptions, EditRequest, MessageId, MessageRef, StanzaId};
     if control.kind != ControlKind::Hide
         && !action::within_window(
             control.stamp,
@@ -204,7 +215,15 @@ async fn send_control(
             )
             .await
     };
+    submitted(result)
+}
+
+fn submitted(
+    result: Result<whatsapp_rust::send::SendResult, whatsapp_rust::send::SendError>,
+) -> Attempt {
+    use whatsapp_rust::send::SendError;
     match result {
+        Ok(_) => Attempt::Submitted,
         Err(
             SendError::InvalidRequest(_)
             | SendError::MessageRef(_)
@@ -212,7 +231,7 @@ async fn send_control(
             | SendError::NoRecipientDevice(_)
             | SendError::PrimaryDeviceRejected(_),
         ) => Attempt::Rejected,
-        _ => Attempt::Unconfirmed,
+        Err(_) => Attempt::Unconfirmed,
     }
 }
 
@@ -244,6 +263,7 @@ mod tests {
                     Attempt::Unconfirmed
                 }
                 1 => Attempt::Rejected,
+                4 | 5 => Attempt::Submitted,
                 _ => std::future::pending().await,
             }
         }
@@ -393,7 +413,7 @@ mod tests {
     }
     #[tokio::test]
     async fn real_worker_handles_offline_ack_rejection_timeout_and_cancellation() {
-        for mode in 0..4 {
+        for mode in 0..6 {
             let (_temp, db) = fixture();
             let chat = db.create_chat(PN.into()).await.unwrap();
             db.queue(
@@ -427,7 +447,7 @@ mod tests {
                 .await
                 .unwrap()
                 .unwrap();
-            if mode == 3 {
+            if matches!(mode, 3 | 5) {
                 stop.send_replace(true);
             }
             let expected = match mode {
@@ -442,7 +462,7 @@ mod tests {
             })
             .await
             .unwrap();
-            if mode != 3 {
+            if !matches!(mode, 3 | 5) {
                 stop.send_replace(true);
             }
             tokio::time::timeout(Duration::from_secs(3), task)
@@ -456,5 +476,139 @@ mod tests {
                 "attempted sends never auto-requeue"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn delayed_ack_keeps_sending_without_delaying_local_saves_or_views() {
+        use crate::messaging::{self, Command, Snapshot};
+        let (_temp, db) = fixture();
+        let chat = db.create_chat(PN.into()).await.unwrap();
+        let (archives, receiver) = watch::channel(None);
+        let (commands, rx) = tokio::sync::mpsc::channel(16);
+        let (updates, mut views) = watch::channel(Snapshot::empty());
+        let actor = tokio::spawn(messaging::run(receiver, rx, updates));
+        archives.send_replace(Some(db.clone()));
+        views.changed().await.unwrap();
+        commands
+            .send(Command::Select {
+                id: chat,
+                previous: 0,
+                draft: String::new(),
+                draft_version: 0,
+                revision: 1,
+            })
+            .await
+            .unwrap();
+
+        let (_online, online) = watch::channel(true);
+        let (stop, stopped) = watch::channel(false);
+        let (started, _beginning) = watch::channel(false);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let network = tokio::spawn(worker(
+            db.clone(),
+            Fake {
+                archive: db.clone(),
+                calls: calls.clone(),
+                started,
+                mode: 4,
+            },
+            online,
+            stopped,
+            Duration::from_secs(3),
+        ));
+
+        for request in 1..=2 {
+            commands
+                .send(Command::Send {
+                    chat,
+                    text: format!("Synthetic message {request} 👩🏽‍💻\nSecond line"),
+                    request,
+                    draft_version: request,
+                })
+                .await
+                .unwrap();
+            tokio::time::timeout(Duration::from_secs(2), async {
+                loop {
+                    {
+                        let snapshot = views.borrow_and_update();
+                        if snapshot
+                            .reply
+                            .as_ref()
+                            .is_some_and(|r| r.request == request && r.saved)
+                            && snapshot
+                                .view
+                                .as_ref()
+                                .and_then(|v| v.conversation.as_ref())
+                                .is_some_and(|c| c.messages.len() == request as usize)
+                        {
+                            break;
+                        }
+                    }
+                    views.changed().await.unwrap();
+                }
+            })
+            .await
+            .expect("local save and bubble must not wait for a network ACK");
+        }
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while calls.load(Ordering::SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let rows = db
+            .call(|c| {
+                Ok(
+                    c.prepare("SELECT wire_id,delivery FROM messages ORDER BY id")?
+                        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+                        .collect::<std::result::Result<Vec<_>, _>>()?,
+                )
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "network delivery remains serial"
+        );
+        assert_eq!(
+            rows[0].1, "sending",
+            "a pending ACK must not flash a warning"
+        );
+        assert_eq!(
+            rows[1].1, "queued",
+            "the second bubble is already durable and visible"
+        );
+        db.delivery(PN.into(), rows[0].0.clone(), "delivered")
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while calls.load(Ordering::SeqCst) < 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        // A negative ACK must not be overwritten as a successful submission.
+        db.delivery(PN.into(), rows[1].0.clone(), "failed")
+            .await
+            .unwrap();
+        stop.send_replace(true);
+        network.await.unwrap().unwrap();
+        assert!(!db.send_pending(chat, rows[0].0.clone()).await.unwrap());
+        assert!(!db.send_pending(chat, rows[1].0.clone()).await.unwrap());
+        let statuses = db
+            .call(|c| {
+                Ok(c.prepare("SELECT delivery FROM messages ORDER BY id")?
+                    .query_map([], |r| r.get::<_, String>(0))?
+                    .collect::<std::result::Result<Vec<_>, _>>()?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(statuses, ["delivered", "failed"]);
+        drop(commands);
+        actor.await.unwrap();
     }
 }

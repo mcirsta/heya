@@ -167,15 +167,34 @@ mark bridges the independently committed SDK cursor and archive writes.
 Outgoing text and its stable protocol ID commit before network I/O; the composer
 clears only after that commit. The serialized messaging actor submits the full
 composer text and atomically clears its stored draft with the outbox insert,
-including when an earlier edit notification could not be queued. Subsequent
+including when an earlier edit notification could not be queued. Consecutive
+queued edits for the same chat collapse to the latest draft; sends, navigation
+and edits for other chats remain ordering barriers. Subsequent
 edits are separate commands and remain saved. Navigation saves the previous
 draft before changing the selected chat; a failed write retains the visible
 chat and in-memory draft. Claiming a queued row first persists `sending`.
 Restart/disconnect converts interrupted sends to `uncertain`, never back to
 `queued`. Server acknowledgments, recipient receipts and own-device echoes
 reconcile monotonically. PN/LID merges preserve tombstones, delivery evidence,
-drafts and redirected UI selections. A rejected durability hook both returns an
+drafts and redirected UI selections. A successful socket submission stays
+`sending` while the existing ACK/receipt path records its result, within the
+same 45-second send deadline. It does not briefly become `uncertain` just because
+the ACK event has not been processed yet. Network errors, timeout and interrupted
+attempts remain uncertain and never automatically resend. A rejected durability hook both returns an
 error to suppress the SDK acknowledgment and notifies the connection supervisor.
+
+`HEYA_TRACE_SEND=1` enables content-free local request/stage timings from command
+acceptance through save, composer acknowledgement and view application. For a
+synthetic offscreen check including 200 queued edits, short text and 8/32/64 KiB messages,
+run this with an optimized build:
+
+```sh
+HEYA_BENCHMARK_ARCHIVE=1 HEYA_BENCHMARK_LONG_DRAFT=1 HEYA_BENCHMARK_TYPING=1 scripts/ui-offscreen.sh --ui-benchmark
+```
+
+This measures local archive/presentation latency, not live network delivery.
+For durability measurements, set `TMPDIR` to a disposable directory on the data
+filesystem; `/tmp` may be RAM-backed and hide disk commit costs.
 
 History staging accepts up to 16 MiB per compressed chunk and 256 MiB in total,
 with a 64 MiB decompression limit. Import commits 100-message batches and

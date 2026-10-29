@@ -30,7 +30,7 @@ case "${1:-}" in
                 --light|--dark) heya_args+=("$1"); shift ;;
                 --click)
                     [[ "${heya_args[0]}" == --framebuffer && $# -ge 2 && "$2" =~ ^[0-9]+x[0-9]+$ ]] || usage
-                    heya_click=$2
+                    heya_click="${heya_click:+$heya_click }$2"
                     shift 2
                     ;;
                 --hover)
@@ -167,18 +167,27 @@ if [[ "${heya_args[0]}" == --framebuffer ]]; then
         # Mapping precedes first-frame layout/font work; let the static demo settle.
         sleep 2
         if [[ -n "$heya_click" ]]; then
-            xdotool mousemove --window "$heya_window" "${heya_click%x*}" "${heya_click#*x}" click 1
+            # Every point was validated above. Multiple clicks allow testing a
+            # menu followed by its action without touching the working desktop.
             # Cold plugin initialization can outlast one frame. Capture the
             # requested synthetic state without touching the working desktop.
             heya_wait=${HEYA_TEST_CLICK_WAIT:-1}
             [[ "$heya_wait" =~ ^[1-5]$ ]] || exit 2
-            sleep "$heya_wait"
+            for heya_point in $heya_click; do
+                xdotool mousemove --window "$heya_window" "${heya_point%x*}" "${heya_point#*x}" click 1
+                sleep "$heya_wait"
+            done
         fi
         if [[ -n "$heya_hover" ]]; then
             xdotool mousemove --window "$heya_window" "${heya_hover%x*}" "${heya_hover#*x}"
             sleep 1
         fi
-        import -window "$heya_window" "$heya_output"
+        if [[ "${HEYA_TEST_FRAMEBUFFER_ROOT:-0}" == 1 ]]; then
+            # This root belongs to the private X server, including native popups.
+            import -window root "$heya_output"
+        else
+            import -window "$heya_window" "$heya_output"
+        fi
         echo "Saved synthetic X11 framebuffer to $heya_output"
     ' bash "${heya_args[1]}" "$heya_click" "$heya_hover" "$heya_binary" --demo "${heya_args[@]:2}")
 fi

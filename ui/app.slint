@@ -21,6 +21,8 @@ import { MessageOperationDialog, ForwardDestination } from "message-actions.slin
 import { EmojiPicker, EmojiChoice, EmojiGridRow, EmojiCategory } from "emoji-picker.slint";
 import { MessageMenu, MessageMenuEntry } from "message-menu.slint";
 import { ChatMenu } from "chat-menu.slint";
+import { ContactInfo, ContactInfoMedia } from "contact-info.slint";
+export { ContactInfoMedia }
 import { MessageDetails, MessageInfoRow, SelectionBar } from "message-details.slint";
 export { MessageInfoRow }
 import { AttachmentMenu, AttachmentReview, AttachmentItem } from "attachments.slint";
@@ -29,7 +31,7 @@ import { DownloadStatus } from "download-status.slint";
 export { EmojiChoice, EmojiGridRow, EmojiCategory, ForwardDestination }
 import { VideoViewer, VideoPlayback } from "video.slint";
 export { VideoPlayback }
-import { MessageBubble, MessageRow, MessageActionRow } from "message.slint";
+import { MessageBubble, MessageRow, MessageActionRow, AlbumPhotoRow } from "message.slint";
 import { SystemNotice } from "system-notice.slint";
 import { StorageDialog } from "storage.slint";
 import { SessionView } from "session.slint";
@@ -44,7 +46,7 @@ import {
 import { NewChatDialog } from "new-chat.slint";
 import { CompactChat } from "compact-chat.slint";
 import { ConnectionBanner, AccountDialog } from "connection.slint";
-export { Theme, MessageRow, MessageActionRow, TimelineRow, SettingRow, SettingSection, AudioDeviceRow }
+export { Theme, MessageRow, MessageActionRow, AlbumPhotoRow, TimelineRow, SettingRow, SettingSection, AudioDeviceRow }
 export { ThemeColors } from "theme.slint";
 
 export struct ChatRow {
@@ -77,6 +79,36 @@ export component AppWindow inherits Window {
     in-out property <bool> archived-only;
     in property <int> archived-count;
     callback manage-chat(int,int);
+    in-out property <bool> contact-info-open;
+    in-out property <bool> contact-info-loading;
+    in-out property <int> contact-info-request;
+    in-out property <int> contact-info-chat;
+    in-out property <string> contact-info-name;
+    in-out property <string> contact-info-phone;
+    in-out property <string> contact-info-ephemeral;
+    in-out property <string> contact-info-management-status;
+    private property <image> contact-info-empty-avatar;
+    in-out property <string> contact-info-error;
+    in-out property <bool> contact-info-group;
+    in-out property <bool> contact-info-own;
+    in-out property <bool> contact-info-muted;
+    in-out property <bool> contact-info-archived;
+    in-out property <int> contact-info-media-count;
+    in-out property <[ContactInfoMedia]> contact-info-media;
+    in-out property <[ContactInfoMedia]> contact-info-items;
+    in-out property <bool> contact-info-more;
+    in-out property <bool> contact-info-media-view;
+    in-out property <int> contact-info-tab;
+    in-out property <int> contact-info-first;
+    in-out property <int> contact-info-count: 8;
+    private property <bool> contact-info-docked: root.width - root.conversation-left >= 780px;
+    private property <length> contact-info-width: root.contact-info-docked ? 380px : root.width - root.conversation-left;
+    callback show-contact-info();
+    callback close-contact-info();
+    callback request-contact-media(int);
+    callback open-contact-media(int,int);
+    changed contact-info-open => {root.request-photos();root.layout-timeline();}
+    changed contact-info-media-view => {root.request-photos();}
     callback change-chat-folder(bool);
     private property <int> chat-menu-id;
     private property <bool> chat-menu-muted;
@@ -134,7 +166,7 @@ export component AppWindow inherits Window {
     out property <int> composer-anchor: composer.anchor;
     out property <int> composer-cursor: composer.cursor;
     public pure function can-import() -> bool {
-        return !AudioCall.shown && root.selected-id>0 && (root.demo-mode || root.live-can-send) && !root.storage-dialog && !root.settings-open && !root.new-chat-open && root.account-dialog==0 && root.photo-viewer-id==0 && !root.video-expanded && root.message-dialog==0 && root.attachment-phase==0 && root.voice-phase==0 && !root.microphone-dialog && !root.selection-active && (!root.narrow || root.show-conversation);
+        return !AudioCall.shown && !root.contact-info-open && root.selected-id>0 && (root.demo-mode || root.live-can-send) && !root.storage-dialog && !root.settings-open && !root.new-chat-open && root.account-dialog==0 && root.photo-viewer-id==0 && !root.video-expanded && root.message-dialog==0 && root.attachment-phase==0 && root.voice-phase==0 && !root.microphone-dialog && !root.selection-active && (!root.narrow || root.show-conversation);
     }
     callback attachment-control(int,int,string);
 
@@ -169,6 +201,14 @@ export component AppWindow inherits Window {
     callback confirm-message-control();
     callback close-message-info();
     in-out property <bool> selection-active;
+    changed selection-active=>{root.layout-timeline();}
+    function menu-for(row:MessageRow)->bool {
+        return root.message-dialog==3 && (root.action-message==row.id
+            || (row.album-photos.length>0 && root.action-message==row.album-photos[0].id)
+            || (row.album-photos.length>1 && root.action-message==row.album-photos[1].id)
+            || (row.album-photos.length>2 && root.action-message==row.album-photos[2].id)
+            || (row.album-photos.length>3 && root.action-message==row.album-photos[3].id));
+    }
     in-out property <int> selection-count;
     in-out property <int> selection-revision;
     pure callback message-selected(int,int)->bool;
@@ -292,6 +332,7 @@ export component AppWindow inherits Window {
         && !root.message-search-open && !root.browsing-history && root.navigation-request==root.navigation-shown
         && root.read-window-active && !root.read-window-occluded && !root.minimized
         && !root.storage-dialog && !root.settings-open && !root.new-chat-open && root.account-dialog==0
+        && !root.contact-info-open
         && root.photo-viewer-id==0 && !root.video-expanded && root.message-dialog==0 && !root.attachment-modal && !root.microphone-dialog
         && (!root.narrow || root.show-conversation)
         && root.live-revision==root.live-shown-revision ? root.read-tail : 0;
@@ -322,11 +363,12 @@ export component AppWindow inherits Window {
     pure callback cached-avatar(int,int) -> image;
     changed avatar-first => { root.request-avatars(); }
     changed avatar-count => { root.request-avatars(); }
-    changed selected-id => { root.paste-generation += 1; root.message-search-open=false;root.message-search-query="";root.browsing-history=false;root.highlighted-message=0; if root.message-dialog==8 {root.close-message-info();} root.selection-control(0); if root.voice-phase>0 && root.voice-phase!=5 {root.voice-control(1);} root.attachment-menu=false; root.message-dialog=0; root.audio-control(0,3,0);root.video-control(0,3,0); root.photo-viewer-id = 0; root.request-avatars(); }
+    changed selected-id => { if root.contact-info-open && root.contact-info-chat!=root.selected-id {root.contact-info-open=false;root.close-contact-info();} root.paste-generation += 1; root.message-search-open=false;root.message-search-query="";root.browsing-history=false;root.highlighted-message=0; if root.message-dialog==8 {root.close-message-info();} root.selection-control(0); if root.voice-phase>0 && root.voice-phase!=5 {root.voice-control(1);} root.attachment-menu=false; root.message-dialog=0; root.audio-control(0,3,0);root.video-control(0,3,0); root.photo-viewer-id = 0; root.request-avatars(); }
     in property <string> chat-presence;
     in property <bool> chat-online;
     out property <int> presence-chat: !root.demo-mode && root.live-chat-view
         && !root.settings-open && !root.minimized
+        && (!root.contact-info-open || root.contact-info-docked)
         && (!root.narrow || root.show-conversation)
         && root.live-revision==root.live-shown-revision ? root.selected-id : 0;
     callback request-presence();
@@ -358,6 +400,7 @@ export component AppWindow inherits Window {
     in-out property <length> timeline-height <=> timeline.content-height;
     out property <length> timeline-width: timeline.visible-width;
     out property <length> timeline-top: timeline.absolute-position.y;
+    out property <length> timeline-left: timeline.absolute-position.x;
     private property <length> status-height:104px;
     private property <length> status-width:min(360px,root.width - 24px);
     private property <length> status-left:max(8px,root.width - root.status-width - 12px);
@@ -375,6 +418,10 @@ export component AppWindow inherits Window {
     in property <TimelineRow> timeline-probe;
     out property <length> timeline-measured-height: measure-row.height;
     out property <length> timeline-measured-prefix: measure-row.bubble-offset;
+    out property <length> timeline-album-x: measure-bubble.album-x;
+    out property <length> timeline-album-y: measure-bubble.album-y;
+    out property <length> timeline-album-width: measure-bubble.album-width;
+    out property <length> timeline-album-height: measure-bubble.album-height;
     out property <length> timeline-measured-body-height: root.timeline-probe.message.call-kind > 0 ? 88px : root.timeline-probe.message.system-notice ? measure-notice.height : measure-bubble.height;
     callback layout-timeline();
     callback follow-timeline-bottom();
@@ -459,6 +506,10 @@ export component AppWindow inherits Window {
             if root.selection-active && event.text==Key.Return {return accept;}
             if root.video-expanded {if event.text==Key.Escape {root.video-expanded=false;return accept;}return reject;}
             if root.photo-viewer-id != 0 { if event.text == Key.Escape { root.close-photo(); return accept; } return reject; }
+            if root.contact-info-open && event.text==Key.Escape {
+                if root.contact-info-media-view {root.request-contact-media(-1);}else{root.close-contact-info();}
+                return accept;
+            }
             if event.modifiers.control && event.text == "," { root.toggle-settings(); return accept; }
             if event.modifiers.control && (event.text == "b" || event.text == "B") { root.sidebar-hidden = !root.sidebar-hidden; return accept; }
             if event.modifiers.control && (event.text == "n" || event.text == "N") { root.new-chat-open = true; return accept; }
@@ -489,6 +540,7 @@ export component AppWindow inherits Window {
                 visible: false; width: root.timeline-width;
                 message: root.timeline-probe.message;
                 group: root.chat-is-group; tint: root.chat-tint;
+                auto-download-photos:root.auto-download-photos;
             }
             measure-notice := SystemNotice {
                 visible: false; width: root.timeline-width;
@@ -880,7 +932,7 @@ export component AppWindow inherits Window {
                     visible: !root.settings-open && (!root.narrow || root.show-conversation);
                     x: root.conversation-left;
                     y: 0px;
-                    width: root.width - self.x;
+                    width: root.width - self.x - (root.contact-info-open && root.contact-info-docked ? root.contact-info-width : 0px);
                     height: root.height;
                     background: Theme.window;
                     connection-banner := ConnectionBanner {
@@ -957,15 +1009,38 @@ export component AppWindow inherits Window {
                                         label: @tr("Back to chats");
                                         activated => { root.show-conversation = false; }
                                     }
-                                    Avatar {
+                                    header-avatar := Avatar {
                                         initials: root.chat-initials;
                                         picture: root.chat-avatar;
                                         tint: root.chat-tint;
+                                        accessible-role: button;
+                                        accessible-label: root.chat-is-group ? @tr("Open group info") : @tr("Open contact info");
+                                        accessible-enabled: root.selected-id > 0;
+                                        accessible-action-default => { if root.selected-id > 0 { root.show-contact-info(); } }
+                                        header-avatar-focus := FocusScope {
+                                            enabled: root.selected-id > 0;
+                                            key-pressed(event) => {
+                                                if event.text == Key.Return || event.text == " " { root.show-contact-info(); return accept; }
+                                                return reject;
+                                            }
+                                        }
+                                        if header-avatar-focus.has-focus: Rectangle {
+                                            width: parent.width; height: parent.height;
+                                            border-radius: self.width / 2; border-width: 1px; border-color: Theme.accent;
+                                        }
+                                        TouchArea {
+                                            enabled: root.selected-id > 0; mouse-cursor: pointer;
+                                            clicked => { header-avatar-focus.focus(); root.show-contact-info(); }
+                                        }
                                     }
 
                                     header-info := Rectangle {
                                         horizontal-stretch: 1;
                                         clip: true;
+                                        accessible-role: button;
+                                        accessible-label: root.chat-is-group ? @tr("Open group info") : @tr("Open contact info");
+                                        accessible-enabled: root.selected-id > 0;
+                                        accessible-action-default => { if root.selected-id > 0 { root.show-contact-info(); } }
                                         header-name := Text {
                                             x: 0px;
                                             y: 0px;
@@ -989,6 +1064,21 @@ export component AppWindow inherits Window {
                                             font-size: 12.5px;
                                             vertical-alignment: center;
                                             overflow: elide;
+                                        }
+                                        header-info-focus := FocusScope {
+                                            enabled: root.selected-id > 0;
+                                            key-pressed(event) => {
+                                                if event.text == Key.Return || event.text == " " { root.show-contact-info(); return accept; }
+                                                return reject;
+                                            }
+                                        }
+                                        if header-info-focus.has-focus: Rectangle {
+                                            width: parent.width; height: parent.height;
+                                            border-radius: 4px; border-width: 1px; border-color: Theme.accent;
+                                        }
+                                        TouchArea {
+                                            enabled: root.selected-id > 0; mouse-cursor: pointer;
+                                            clicked => { header-info-focus.focus(); root.show-contact-info(); }
                                         }
                                     }
 
@@ -1026,7 +1116,7 @@ export component AppWindow inherits Window {
                                             x: -250px;
                                             y: 34px;
                                             width: 280px;
-                                            height: 120px;
+                                            height: 162px;
                                             Rectangle {
                                                 background: Theme.panel;
                                                 border-radius: 8px;
@@ -1037,6 +1127,10 @@ export component AppWindow inherits Window {
                                                 drop-shadow-color: Theme.modal-shadow;
                                                 VerticalLayout {
                                                     padding: 6px;
+                                                    SoftButton {
+                                                        text: root.chat-is-group ? @tr("Group info") : @tr("Contact info");
+                                                        activated => {conversation-menu.close();root.show-contact-info();}
+                                                    }
                                                     SoftButton {
                                                         text: @tr("Fetch older messages from phone");
                                                         enabled: root.phone-history-available && !root.phone-history-loading;
@@ -1102,7 +1196,8 @@ export component AppWindow inherits Window {
                                     selection-mode:root.selection-active;
                                     selected:root.selection-active && root.message-selected(row.message.id,root.selection-revision);
                                     actions-enabled: !root.selection-active && root.voice-phase==0 && !root.microphone-dialog && !root.settings-open && !root.new-chat-open && root.account-dialog == 0 && root.photo-viewer-id == 0 && !root.video-expanded && root.message-dialog==0;
-                                    menu-open:root.message-dialog==3 && root.action-message==row.message.id;
+                                    auto-download-photos:root.auto-download-photos;
+                                    menu-open:root.menu-for(row.message);
                                     can-reply: (root.demo-mode || root.live-can-send) && root.voice-phase==0;
                                     viewport-top: -timeline.content-y - row.top * 1px;
                                     viewport-bottom: -timeline.content-y - row.top * 1px + timeline.visible-height;
@@ -1288,6 +1383,31 @@ export component AppWindow inherits Window {
             }
         }
 
+        if root.contact-info-open && !root.settings-open && !AudioCall.shown: contact-panel := ContactInfo {
+            x:root.width - root.contact-info-width;y:0px;width:root.contact-info-width;height:root.height;
+            name:root.contact-info-name;phone:root.contact-info-phone;
+            group:root.contact-info-group;self-chat:root.contact-info-own;
+            avatar:root.contact-info-chat>0 && root.contact-info-error=="" ? root.chat-avatar : root.contact-info-empty-avatar;initials:root.contact-info-error=="" ? root.chat-initials : "";tint:root.chat-tint;
+            loading:root.contact-info-loading;error:root.contact-info-error;status:root.chat-presence;
+            ephemeral-label:root.contact-info-ephemeral;
+            media-count:root.contact-info-media-count;media:root.contact-info-media;
+            media-items:root.contact-info-items;media-more:root.contact-info-more;
+            media-view<=>root.contact-info-media-view;media-tab<=>root.contact-info-tab;
+            muted:root.contact-info-muted;archived:root.contact-info-archived;
+            management-enabled:!root.demo-mode && root.connection-state==5 && !root.contact-info-loading && root.contact-info-error=="";
+            management-busy:root.chat-management-busy;
+            management-status:root.contact-info-management-status;
+            calls-enabled:!root.contact-info-group && !root.contact-info-own && !root.contact-info-loading && root.contact-info-error=="" && AudioCall.phase==0;
+            search-enabled:!root.contact-info-loading && root.contact-info-error=="";
+            close=>{root.close-contact-info();}
+            voice=>{root.close-contact-info();AudioCall.action(0);}
+            video=>{root.close-contact-info();AudioCall.action(7);}
+            search=>{root.close-contact-info();root.message-search-open=true;root.search-messages("");}
+            manage(action)=>{root.manage-chat(root.selected-id,action);}
+            media-request(tab)=>{root.request-contact-media(tab);}
+            media-open(id,kind)=>{root.open-contact-media(id,kind);}
+            media-range(first,count)=>{root.contact-info-first=first;root.contact-info-count=count;root.request-photos();}
+        }
         if root.new-chat-open && !AudioCall.shown: NewChatDialog {
             error: root.new-chat-error;
             available: !root.demo-mode && root.archive-ready && root.connection-state == 5;

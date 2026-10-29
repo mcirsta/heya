@@ -178,6 +178,8 @@ fn message_row(message: &domain::Message, previous: Option<&domain::Message>) ->
             .unwrap_or_else(|| "Audio".into())
             .into(),
         has_photo: message.content.photo.is_some(),
+        album_photos: Default::default(),
+        album_more: 0,
         has_video: message.content.video.is_some(),
         video_duration: message
             .content
@@ -418,6 +420,7 @@ pub fn attach(
     preferences: tokio::sync::watch::Receiver<crate::preferences::Preferences>,
 ) -> JoinHandle<()> {
     let state = fixtures::demo();
+    let contact_info = crate::presentation_contact_info::attach_demo(ui);
     // Static, synthetic UI capture only; never attaches an account or a device.
     if let Some(phase) = std::env::var("HEYA_TEST_CALL_STATE")
         .ok()
@@ -589,6 +592,7 @@ pub fn attach(
             downloads,
             uploads,
             voice,
+            contact_info,
             service::run(state, rx, move |update| weak
                 .upgrade_in_event_loop(move |ui| publish(&ui, update))
                 .is_ok()),
@@ -1256,6 +1260,7 @@ mod tests {
         super::notice_tests::check_ui();
         super::call_tests::check_ui();
         crate::presentation_photos::check_ui();
+        crate::presentation_contact_info::tests::check_ui();
         crate::presentation_audio::check_ui();
         crate::presentation_calling::check_ui();
         crate::presentation_calling::workflow_tests::check_ui_flow(&runtime);

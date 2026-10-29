@@ -16,6 +16,7 @@ mod calling_tests;
 mod chat_management;
 mod clipboard;
 mod connection;
+mod contact_info;
 mod document_previews;
 mod domain;
 mod downloads;
@@ -54,6 +55,7 @@ mod messaging;
 mod pdf_preview;
 mod performance;
 mod phone_history;
+mod photo_albums;
 mod photos;
 mod preferences;
 mod presence;
@@ -64,6 +66,7 @@ mod presentation_audio;
 mod presentation_avatars;
 mod presentation_calling;
 mod presentation_clipboard;
+mod presentation_contact_info;
 mod presentation_content;
 mod presentation_downloads;
 mod presentation_emoji;
@@ -379,7 +382,8 @@ fn run(options: Options, trace: &startup::Trace) -> Result<(), Box<dyn std::erro
     }
     let service = if options.demo
         && options.ui_benchmark
-        && std::env::var_os("HEYA_BENCHMARK_ALBUM").is_some()
+        && (std::env::var_os("HEYA_BENCHMARK_ALBUM").is_some()
+            || std::env::var_os("HEYA_BENCHMARK_CONTACT_INFO").is_some())
     {
         // The archive-backed viewer benchmark supplies its own model and photo
         // publisher. A second demo publisher would race its startup snapshot.

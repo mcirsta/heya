@@ -48,6 +48,12 @@ fn prepare() -> (tempfile::TempDir, Archive) {
     let files = storage::prepare_at(temp.path(), &Vault).unwrap();
     let db = Archive::open(files.clone(), &files.key_sql).unwrap();
     let settings = std::env::var_os("HEYA_BENCHMARK_CHAT_SETTINGS").is_some();
+    let unlinked = std::env::var_os("HEYA_BENCHMARK_UNLINKED_ALBUM").is_some();
+    if unlinked {
+        println!(
+            "Archive benchmark: unlinked 37-photo batches separated by text; inferred metadata uses production queries"
+        );
+    }
     if settings {
         println!("Archive benchmark chat settings: 1500 indexed flags, 250 muted chats");
     }
@@ -69,7 +75,11 @@ fn prepare() -> (tempfile::TempDir, Archive) {
                 2=>format!("Synthetic long message {i}. {}","A line that wraps when the window is resized. ".repeat(12)),
                 _=>format!("Short message {i}"),
             };
-            tx.execute("INSERT INTO messages(chat_id,sender,wire_id,stamp,outgoing,sender_name,body,raw,visible,source_chat,source_sender) VALUES(?1,'synthetic',?2,?3,0,'Synthetic',?4,X'00',1,'synthetic','synthetic')",rusqlite::params![chat,format!("SEED-{i}"),1700000000+i,text])?;
+            let photo=unlinked && i<10000 && i%38!=37;
+            let content=if photo {serde_json::to_string(&crate::message_content::Content {
+                body:Some(String::new()),photo:Some(crate::message_content::Photo {width:900,height:1200,size:Some(12345)}),..Default::default()
+            }).unwrap()} else {String::new()};
+            tx.execute("INSERT INTO messages(chat_id,sender,wire_id,stamp,outgoing,sender_name,body,raw,visible,source_chat,source_sender,content) VALUES(?1,'synthetic',?2,?3,0,'Synthetic',?4,X'00',1,'synthetic','synthetic',?5)",rusqlite::params![chat,format!("SEED-{i}"),1700000000+i,if photo {"[Photo]".into()} else {text},content])?;
         }
         tx.commit()?;Ok(())
     }).unwrap();
@@ -118,10 +128,15 @@ async fn check_long_sends(
     db: &Archive,
 ) -> Result<(), ()> {
     const LINE: &str = "Long synthetic message 👩🏽‍💻 ăâîșț.\n";
-    for size in [8 * 1024, 32 * 1024, 64 * 1024] {
+    for size in [128, 8 * 1024, 32 * 1024, 64 * 1024] {
         let text = LINE.repeat(size / LINE.len());
         let bytes = text.len();
         let expected = text.clone();
+        let queued_edits = if std::env::var_os("HEYA_BENCHMARK_TYPING").is_some() {
+            200
+        } else {
+            0
+        };
         let setup_started = Instant::now();
         let (answer, result) = tokio::sync::oneshot::channel();
         window
@@ -129,6 +144,10 @@ async fn check_long_sends(
                 ui.set_demo_mode(false);
                 ui.set_connection_state(5);
                 ui.set_show_conversation(true);
+                for version in 0..queued_edits {
+                    ui.set_draft(format!("{text}{version}").into());
+                    ui.invoke_draft_edited(ui.get_draft());
+                }
                 ui.set_draft(text.into());
                 ui.invoke_draft_edited(ui.get_draft());
                 ui.invoke_focus_composer();
@@ -199,7 +218,7 @@ async fn check_long_sends(
             return Err(());
         }
         println!(
-            "Native long send: bytes={bytes}, Enter-to-saved-snapshot={:.2}ms, Enter-to-UI-reply={:.2}ms, Enter-to-UI-view={:.2}ms, composer-setup-to-UI-view={:.2}ms, archived_copies={count}; synthetic account, no network delivery",
+            "Native long send: bytes={bytes}, queued_edits={queued_edits}, Enter-to-saved-snapshot={:.2}ms, Enter-to-UI-reply={:.2}ms, Enter-to-UI-view={:.2}ms, composer-setup-to-UI-view={:.2}ms, archived_copies={count}; synthetic account, no network delivery",
             saved.as_secs_f64() * 1000.,
             applied.as_secs_f64() * 1000.,
             view_applied.as_secs_f64() * 1000.,

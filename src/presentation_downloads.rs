@@ -37,16 +37,21 @@ pub(crate) fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>) {
         {
             return;
         }
-        let Some(row) = ui
+        let row = ui
             .get_timeline_rows()
             .iter()
-            .find(|r| r.message.id == message && r.message.has_attachment && r.message.actionable)
-        else {
+            .find(|r| r.message.id == message && r.message.has_attachment && r.message.actionable);
+        let panel = crate::presentation_contact_info::item(&ui, message)
+            .filter(|row| matches!(row.kind, 0..=2));
+        if row.is_none() && panel.is_none() {
             return;
-        };
-        let demo = ui.get_demo_mode().then_some(if row.message.has_photo {
+        }
+        let photo = row.as_ref().is_some_and(|row| row.message.has_photo)
+            || panel.as_ref().is_some_and(|row| row.kind == 0);
+        let audio = row.as_ref().is_some_and(|row| row.message.has_audio);
+        let demo = ui.get_demo_mode().then_some(if photo {
             Kind::Photo
-        } else if row.message.has_audio {
+        } else if audio {
             Kind::Audio
         } else {
             Kind::Document

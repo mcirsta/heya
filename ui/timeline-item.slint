@@ -29,6 +29,7 @@ export component TimelineItem inherits Rectangle {
     callback video-control(int,int,float);
     callback message-action(int,int,length,length);
     in property <bool> actions-enabled;
+    in property <bool> auto-download-photos: true;
     in property <bool> menu-open;
     in property <bool> can-reply: true;
     in property <bool> selection-mode;
@@ -77,6 +78,7 @@ export component TimelineItem inherits Rectangle {
         width: root.width;
         message: root.message; group: root.group; tint: root.tint;
         actions-enabled: root.actions-enabled; can-reply: root.can-reply;
+        auto-download-photos:root.auto-download-photos;
         menu-open: root.menu-open;
         viewport-top: root.viewport-top - root.before-bubble;
         viewport-bottom: root.viewport-bottom - root.before-bubble;
@@ -84,6 +86,8 @@ export component TimelineItem inherits Rectangle {
         audio-control(action,value) => {root.audio-control(root.message.id,action,value);}
         video-control(action,value) => {root.video-control(root.message.id,action,value);}
         activate(index) => { root.activate(root.message.id,index); }
+        photo-activate(id)=>{root.activate(id,-5);}
+        photo-action(id,action,x,y)=>{root.message-action(id,action,x,y);}
     }
     if root.selection-mode && !root.measurement-only && root.message.actionable:TouchArea {
         y:root.before-bubble;width:root.width;height:root.body-height;

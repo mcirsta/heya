@@ -14,6 +14,10 @@ pub struct Album {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Content {
     #[serde(skip)]
+    pub album: Option<crate::photo_albums::Group>,
+    #[serde(skip)]
+    pub album_count: usize,
+    #[serde(skip)]
     pub metadata: crate::message_actions::Metadata,
     /// A timeline event, not a message that can be replied to or forwarded.
     #[serde(default, skip_serializing_if = "Option::is_none")]

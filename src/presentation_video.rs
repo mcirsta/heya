@@ -58,10 +58,13 @@ pub(crate) fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>) {
             return;
         };
         let global = ui.global::<VideoPlayback>();
-        let visible = ui
-            .get_timeline_rows()
-            .iter()
-            .any(|r| r.message.id == id && r.message.has_video && r.message.actionable);
+        let contact_video =
+            crate::presentation_contact_info::has(&ui, id, crate::contact_info::Kind::Video);
+        let visible = contact_video
+            || ui
+                .get_timeline_rows()
+                .iter()
+                .any(|r| r.message.id == id && r.message.has_video && r.message.actionable);
         let command = match action {
             3 => Command::Stop,
             5 => {
@@ -105,6 +108,9 @@ pub(crate) fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>) {
                     ui.set_video_expanded(false);
                 } else if action == 0 {
                     ui.invoke_audio_control(0, 3, 0.);
+                    if contact_video {
+                        ui.set_video_expanded(true);
+                    }
                 }
                 permit.send(command);
             }

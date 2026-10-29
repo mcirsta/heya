@@ -17,6 +17,8 @@ pub use contacts::Contact;
 mod avatars;
 #[path = "archive_chat_settings.rs"]
 mod chat_settings;
+#[path = "archive_contact_info.rs"]
+mod contact_info;
 pub use avatars::AvatarEntry;
 #[path = "archive_reads.rs"]
 mod reads;
@@ -49,6 +51,8 @@ mod edits;
 mod history;
 #[path = "archive_navigation.rs"]
 mod navigation;
+#[path = "archive_photo_groups.rs"]
+mod photo_groups;
 #[path = "archive_photos.rs"]
 mod photos;
 #[path = "archive_repair.rs"]
@@ -499,6 +503,15 @@ impl Archive {
             self.changed();
         }
         Ok(result)
+    }
+    pub async fn send_pending(&self, chat: i32, id: String) -> Result<bool> {
+        self.call(move |db| {
+            let chat = local_chat(db, chat)?;
+            Ok(db.query_row(
+                "SELECT EXISTS(SELECT 1 FROM messages WHERE chat_id=?1 AND sender='#self' AND wire_id=?2 AND delivery='sending')",
+                params![chat,id], |r| r.get(0),
+            )?)
+        }).await
     }
     pub async fn delivery(&self, jid: String, id: String, status: &'static str) -> Result<()> {
         self.delivery_at(jid, id, status, None).await

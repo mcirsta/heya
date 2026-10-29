@@ -316,9 +316,23 @@ stay in the encrypted archive, so downloaded photos also open offline. Switching
 chats cancels work that is no longer needed; image work stays off the UI thread.
 Older saved photo envelopes are upgraded locally on startup.
 
+Photo albums use compact two-, three- or four-tile cards, with a `+N`
+overlay for larger albums. Clicking a tile opens the full album viewer. Captions,
+per-photo actions and individual selection remain available. Only the visible
+previews load for a card; grouping does not download the entire album. See
+[photo albums](docs/photo-albums.md) for grouping rules and validation.
+Older or forwarded batches without album IDs use the same paths when consecutive
+photos have matching senders and states, stay on the same day and are no more
+than 60 seconds apart. This grouping does not change the saved messages.
+
 Sidebar photo previews use `Photo` or `Photo: <first caption line>`. Incoming
 group previews include the sender's short name; unsaved profile names carry
 `~`, while saved contact names take precedence. Closed chats' drafts override message previews.
+
+The conversation’s **⋮ → Contact info** opens a profile panel with a photo,
+phone number, call/search actions, saved media and existing chat controls.
+Media, links and documents have separate tabs; counts describe available saved
+history. See [contact info](docs/contact-info.md) for supported actions and scope.
 These display summaries leave complete captions and copied transcripts intact.
 
 Received documents show a native file card with a two-line filename, file type,

@@ -1,7 +1,103 @@
-# Photo albums in the viewer
+# Photo albums in chat and the viewer
 
-The photo viewer follows explicit `MEDIA_ALBUM` associations. It does not guess
-from adjacent messages, matching names or timestamps. Album headers remain
+## Compact timeline grids
+
+Consecutive album photos share a two-, three- or four-tile
+card. Larger runs shade the last preview and show `+N` for the remaining photos.
+Tiles crop to their reserved cells; the viewer keeps the original proportions.
+Each tile retains its timestamp and message identity. Clicking the counter opens
+that photo in the existing full-album viewer, with navigation to the other members.
+Native right-clicks and hover actions target the individual photo under the pointer.
+
+The first photo's caption, quote and reactions stay on the card. A later caption,
+quote or reaction starts a separate card, preserving its visible text/state.
+Different participants, dates, forwarding state, unrelated messages and deleted
+photos also break a run.
+
+Explicit protocol associations take priority. Without an association, consecutive
+photos can form a local display album when they have the same canonical sender,
+sent/received direction, forwarding state and local calendar day, with at most
+60 seconds between adjacent photos. Text, other media, visible deleted items,
+explicitly linked photos and later per-photo details break these inferred runs.
+Missing or invalid timestamps do not qualify. Both old and new cached messages
+use this rule; no envelope reprocessing is needed.
+
+Inferred identities use the first member's local row ID in a distinct key type.
+They are transient view metadata, never written to protocol association columns,
+envelopes or outgoing messages. Every original message keeps its own identity,
+caption, receipts, actions and cached media.
+
+Selection mode exposes the original individual messages for batch operations.
+Search and quote navigation to a collapsed member highlight its containing card.
+
+The raw conversation, transcript, message IDs and archive rows remain intact.
+Counts use available eligible photos, including cached members outside the current
+page; split runs retain their own count. Loading history preserves the position
+inside the card. Only four previews per visible card enter the existing bounded
+photo demand; the counter does not fetch the remaining originals. Loading previews
+does not change card geometry. Text-only timelines skip the grouping allocation.
+
+Synthetic UI checks cover 2/3/4/37/38/1,000 photos, light/dark and narrow layouts,
+per-tile context targeting, counter activation, off-page counts, selection and
+unchanged geometry during image publication. Archive tests cover count refresh
+and association-only invalidation. Reproduce native checks offscreen:
+
+```sh
+HEYA_DEMO_ALBUM_GRID=1 scripts/ui-offscreen.sh --framebuffer /tmp/heya-grid.png --demo-chat 9 --size 1200x900 --light
+HEYA_BENCHMARK_ALBUM_GRID=1 scripts/ui-offscreen.sh --ui-benchmark
+HEYA_DEMO_UNLINKED_ALBUM=1 scripts/ui-offscreen.sh --framebuffer /tmp/heya-inferred.png --demo-chat 9 --size 1200x900 --light
+```
+
+These use synthetic photos. They do not establish live-account grouping or
+native macOS rendering compatibility.
+
+### Linux offscreen validation — 27 October 2026
+
+325 application tests passed with media and 306 without it; strict Clippy passed
+for both configurations. Checks include real pointer and keyboard activation,
+per-tile context targeting, caption/quote/reaction retention, long outgoing
+status text, selection expansion and image-loading geometry. Light/wide and
+dark/narrow native framebuffer captures were inspected. Clicking `+34` opened
+photo 4 of 38 in the full viewer. Native synthetic close checks found no idle
+media thread and exited in 30–47 ms.
+
+Optimized OpenGL/Xvfb measurements used a synthetic SQLCipher photo cache on the
+project filesystem. The control contains 10,000 standalone photo messages; the
+album stress contains 10,000 original messages in groups of 38. Results are CPU
+timings, not GPU completion or compositor presentation:
+
+| Measurement | Before | After |
+| --- | --- | --- |
+| Standalone photo scroll render CPU p95, paired repeat | 11.39 ms | 10.94 ms |
+| Standalone photo scroll layout p95, paired repeat | 0.17 ms | 0.17 ms |
+| Standalone photo resize render CPU p95, paired repeat | 11.09 ms | 9.89 ms |
+| Album grid scroll render CPU / layout p95 | — | 13.92 / 0.27 ms |
+| Album grid resize render CPU / layout p95 | — | 13.73 / 0.39 ms |
+
+Visible album cards held 8–12 previews across two or three cards, never all
+members. The reference-photo repeat remained comparable at p95, but isolated
+resize render outliers reached 94.61 ms afterward versus 19.02 ms beforehand
+(the first pair reached 96.33 / 12.08 ms). The earlier cold resize phase reached
+roughly 400 ms in both builds. These outliers have not been attributed; Xvfb
+reported unavailable DRI3 acceleration and Mesa fallback. These results do not
+establish smooth native GPU resizing, and the album increment does not claim to
+resolve renderer resize spikes.
+
+Baseline binary SHA-256: `656b2edf81784d2b2d4b0ee392ebe60b1ba26471e5b2ec5d97b16a08476ef7e5`.
+Album binary SHA-256: `21afe4a293c4da3ca48e5867530f85a40d364c8acde4cf05d58a9a23c9078be1`.
+Both use the same pinned dependencies. Reproduce the control with
+`HEYA_BENCHMARK_PHOTOS=1 HEYA_BENCHMARK_PHOTO_ARCHIVE=1` and the grid with
+`HEYA_BENCHMARK_ALBUM_GRID=1`, passing `HEYA_TEST_RENDERER=winit-skia-opengl` to
+`scripts/ui-offscreen.sh --ui-benchmark`. `HEYA_TEST_BINARY` selects a baseline.
+The repeat disabled Mesa's shader cache in both runs with
+`MESA_SHADER_CACHE_DISABLE=true`; it did not remove the resize outlier.
+
+## Full album viewer
+
+The archive resolves both explicit `MEDIA_ALBUM` associations and inferred photo
+batches into the same gallery model. The timeline and viewer share the inference
+rule, including members beyond the loaded history page. The viewer has no second
+grouping algorithm or separate download path. Album headers remain
 invisible metadata; their advertised photo/video counts are not used as the
 number of available photos.
 
@@ -42,10 +138,58 @@ The archive resolves membership independently of the loaded conversation page.
 Deleted, hidden, expired and locked photos are excluded. The viewer revalidates
 on archive changes; an unavailable current item closes the viewer. Remaining
 photos have a fresh counter. Missing originals show the existing download/retry
-state, and cached originals work offline. Opening a photo is explicit demand,
+state, and cached originals work offline. Automatic photo loading keeps only the
+available image in chat, album grids and the viewer, without loading labels or
+spinners. Manual download and retry controls remain available; the viewer reserves
+status text for errors or a missing connection. Opening a photo is explicit demand,
 even when automatic photo downloads are disabled. The filmstrip never marks other album
 members viewed or queues their originals; existing chat auto-download preferences
 still apply to the photos already visible in the transcript.
+
+Inference reads only cached photo metadata for relevant calendar days, using the
+timeline index and indexed predecessor lookups to preserve intervening-message
+boundaries. It does not decode envelopes or media. Timeline cache hits skip this
+work; rebuilding a view queries only days containing a potential loaded pair.
+Strict text appends retain existing group metadata rather than scanning those
+days again; appending a photo refreshes membership through the same resolver.
+A viewer click independently resolves the complete cached run, including when
+only one member is loaded in the conversation. Edits, reactions, deletion,
+expiry, history import and alias changes use existing archive invalidation.
+No persistent inferred-album table, new service or polling timer is added.
+
+The existing optimized benchmarks also accept unlinked-photo fixtures:
+
+```sh
+HEYA_BENCHMARK_ALBUM=1 HEYA_BENCHMARK_UNLINKED_ALBUM=1 scripts/ui-offscreen.sh --ui-benchmark
+HEYA_BENCHMARK_ARCHIVE=1 HEYA_BENCHMARK_UNLINKED_ALBUM=1 scripts/ui-offscreen.sh --ui-benchmark
+```
+
+The first exercises cached originals, gallery navigation and teardown. The
+second measures the full SQLCipher-to-UI path with 37-photo runs separated by text
+in a 10,000-message conversation.
+
+### Inferred-batch validation — 27 October 2026
+
+331 application tests passed with media and 312 without it; strict Clippy passed
+for both configurations. Synthetic checks cover strict photo/text appends,
+barriers, reactions, aliases, midnight, paging, reopening and unchanged stored
+records/media. A read-only check using the production resolver returned all 37
+members of the reported older batch without modifying the archive.
+
+Optimized OpenGL/Xvfb archive measurements found an unnecessary repeated metadata
+scan on text appends. Retaining existing groups reduced SQLCipher view/projection
+p95 from 58.67 to 10.54 ms at 100 loaded messages and from 73.28 to 15.95 ms at
+10,000. Final UI publication p95 was 2.45 / 12.10 ms respectively; unchanged
+timeline cache reuse stayed at 0.05 ms. Full rebuilding still has a cost:
+99 paging commands took 8.66 seconds in the photo-heavy stress, with projection
+p95 of 119.05 ms on the archive worker and UI publication p95 of 18.63 ms.
+
+The separate inferred 100-photo viewer benchmark retained one timeline row,
+reported UI publication p95 of 1.57 ms and selection-to-ready p95 of 157.32 ms,
+and passed navigation/resource cleanup assertions. Light/wide and dark/narrow
+native captures were inspected. Private-display close checks found no idle
+media thread and exited in 24–47 ms. These are synthetic offscreen measurements
+with Mesa fallback, not native GPU/compositor or macOS validation.
 
 ## Work and memory bounds
 
@@ -55,7 +199,7 @@ Slint loop. Navigation coalesces through the existing latest-value channel.
 Only the selected photo has a full decode, capped at a 2048px edge. The strip
 holds at most seven 96px previews from cached/embedded thumbnails, centered on
 the selected member. Overlapping thumbnails retain their pixels and toolkit
-images. No original prefetch or per-photo widget is added to the timeline.
+images. Gallery navigation adds no original prefetch or extra timeline widgets.
 Closing clears viewer pixels, album metadata and strip textures.
 
 Synthetic tests cover wrapped/ordinary children, privacy, missing headers,
