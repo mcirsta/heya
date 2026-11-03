@@ -42,6 +42,7 @@ unsafe extern "C" {
         limit: usize,
         output: *mut *mut u8,
         size: *mut usize,
+        pages: *mut usize,
     ) -> i32;
     fn heya_native_free(bytes: *mut c_void);
 }
@@ -192,7 +193,9 @@ pub async fn choose(kind: u32, name: &str, folder: Option<&Path>, control: &Cont
 }
 
 /// Called before UI/account initialization, in a bounded, kill-on-drop child.
-pub fn pdf_worker() -> ! {
+/// `page` renders the whole page for sending and prefixes the PNG with the
+/// page count; otherwise it renders the received-card strip.
+pub fn pdf_worker(page: bool) -> ! {
     use std::io::{Read, Write};
     let mut bytes = Vec::new();
     let read = std::io::stdin()
@@ -206,25 +209,41 @@ pub fn pdf_worker() -> ! {
     }
     let mut png = std::ptr::null_mut();
     let mut size = 0;
+    let mut pages = 0;
+    // Height 0 asks the bridge for the whole page, longest edge = width.
+    let (width, height) = if page {
+        (crate::pdf_preview::PAGE_EDGE, 0)
+    } else {
+        (
+            crate::document_previews::WIDTH,
+            crate::document_previews::HEIGHT,
+        )
+    };
     let ok = unsafe {
         heya_pdf_render(
             bytes.as_ptr(),
             bytes.len(),
-            crate::document_previews::WIDTH,
-            crate::document_previews::HEIGHT,
+            width,
+            height,
             crate::document_previews::MAX_BYTES,
             &mut png,
             &mut size,
+            &mut pages,
         )
     };
     if ok == 0 || png.is_null() {
         std::process::exit(1);
     }
     let pixels = unsafe { std::slice::from_raw_parts(png, size) };
+    let mut output = Vec::with_capacity(size + 4);
+    if page {
+        output.extend_from_slice(&u32::try_from(pages).unwrap_or(0).to_be_bytes());
+    }
+    output.extend_from_slice(pixels);
     let written = if cfg!(test) {
-        std::io::stderr().write_all(pixels)
+        std::io::stderr().write_all(&output)
     } else {
-        std::io::stdout().write_all(pixels)
+        std::io::stdout().write_all(&output)
     };
     unsafe {
         heya_native_free(png.cast());

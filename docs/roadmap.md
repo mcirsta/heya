@@ -320,7 +320,9 @@ authenticated originals to a private staging file, and publishes the selected
 file only after verification. One transfer runs at a time with a 2 GiB limit,
 Cancel/Retry and independent progress. Cached photo/audio exports work offline.
 Outgoing file/photo selection, review, captions, streaming upload and durable
-queueing are now implemented through the SDK public API. Up to ten files share a
+queueing are now implemented through the SDK public API. Outgoing PDFs up to
+16 MiB carry a page-one thumbnail and page count; live recipient display is
+unverified. Up to ten files share a
 2 GiB selection limit; JPEG/PNG photo originals are bounded to 20 MiB/32 MP.
 Retries retain unsent items without duplicating queued ones, and protocol source
 ownership is released on shutdown. Upload-specific workers are created on demand

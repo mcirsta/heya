@@ -12,6 +12,7 @@ pub(crate) fn prepared(file: &Staged, caption: String, destination: &Destination
             url: "https://example.invalid/synthetic".into(),
             direct_path: "/synthetic".into(),
             timestamp: 1_700_000_000,
+            thumbnail: None,
         },
     )
     .unwrap()
@@ -298,4 +299,136 @@ async fn imported_files_share_encrypted_staging_and_preserve_photo_kind() {
         .await
         .is_err()
     );
+}
+
+#[tokio::test]
+async fn staged_pdf_carries_page_thumbnails_and_failures_still_send() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("Synthetic résumé 你好.PDF");
+    let pdf = include_bytes!("../tests/fixtures/preview-portrait.pdf");
+    std::fs::write(&path, pdf).unwrap();
+    let files = stage(vec![path], Kind::Document, Control::default())
+        .await
+        .unwrap();
+    let file = &files[0];
+    assert_eq!(file.mime, "application/pdf");
+    let page = file.document.as_ref().expect("page-one thumbnails");
+    assert_eq!((page.width, page.height, page.pages), (360, 480, Some(2)));
+    let mut plain = Vec::new();
+    whatsapp_rust::wacore::download::DownloadUtils::decrypt_stream_to_writer_with_hashes(
+        test_reader(file.clone()),
+        &file.key,
+        MediaType::Document,
+        Some(&file.encrypted_hash),
+        Some(&file.hash),
+        &mut plain,
+    )
+    .unwrap();
+    assert_eq!(plain, pdf, "rendering must not alter the sent document");
+
+    let destination = Destination {
+        chat: 1,
+        title: "Synthetic recipient".into(),
+        owner: "15550000000@s.whatsapp.net".into(),
+        reply: None,
+    };
+    // A failed thumbnail upload keeps the embedded image and page count.
+    let without = prepared(file, String::new(), &destination);
+    let doc = codec::message_decode(&without.raw)
+        .unwrap()
+        .document_message
+        .unwrap();
+    assert_eq!(
+        doc.jpeg_thumbnail.as_deref(),
+        Some(page.embedded.as_slice())
+    );
+    assert_eq!(doc.page_count, Some(2));
+    assert!(doc.thumbnail_direct_path.is_none() && doc.thumbnail_width.is_none());
+    assert_eq!(without.thumbnail, page.embedded);
+    assert_eq!(without.content.document.as_ref().unwrap().pages, Some(2));
+
+    // The uploaded thumbnail is the large JPEG under the document's own key,
+    // with the document-thumbnail key derivation, not the document's.
+    let encrypted = whatsapp_rust::wacore::upload::encrypt_media_with_key(
+        &page.jpeg,
+        MediaType::DocumentThumbnail,
+        Some(&file.key),
+    )
+    .unwrap();
+    let with = message(
+        file,
+        String::new(),
+        &destination,
+        Uploaded {
+            url: "https://example.invalid/synthetic".into(),
+            direct_path: "/synthetic".into(),
+            timestamp: 1_700_000_000,
+            thumbnail: Some(Thumbnail {
+                direct_path: "/synthetic-thumbnail".into(),
+                hash: encrypted.file_sha256,
+                encrypted_hash: encrypted.file_enc_sha256,
+            }),
+        },
+    )
+    .unwrap();
+    let doc = codec::message_decode(&with.raw)
+        .unwrap()
+        .document_message
+        .unwrap();
+    assert_eq!(
+        doc.thumbnail_direct_path.as_deref(),
+        Some("/synthetic-thumbnail")
+    );
+    assert_eq!(
+        (doc.thumbnail_width, doc.thumbnail_height),
+        (Some(360), Some(480))
+    );
+    assert!(crate::protocol_document_previews::available(&doc));
+    let mut decrypted = Vec::new();
+    whatsapp_rust::wacore::download::DownloadUtils::decrypt_stream_to_writer_with_hashes(
+        encrypted.data_to_upload.as_slice(),
+        doc.media_key.as_deref().unwrap(),
+        MediaType::DocumentThumbnail,
+        doc.thumbnail_enc_sha256.as_deref(),
+        doc.thumbnail_sha256.as_deref(),
+        &mut decrypted,
+    )
+    .unwrap();
+    assert_eq!(decrypted, page.jpeg);
+    assert!(
+        whatsapp_rust::wacore::download::DownloadUtils::decrypt_stream_to_writer_with_hashes(
+            encrypted.data_to_upload.as_slice(),
+            &file.key,
+            MediaType::Document,
+            None,
+            None,
+            &mut Vec::new(),
+        )
+        .is_err()
+    );
+
+    // Corrupt, oversized and non-PDF documents stage and send without images.
+    let corrupt = temp.path().join("corrupt.pdf");
+    std::fs::write(&corrupt, b"%PDF-1.7 corrupt synthetic file").unwrap();
+    let large = temp.path().join("large.pdf");
+    let mut bytes = pdf.to_vec();
+    bytes.resize(crate::pdf_preview::MAX_PDF_BYTES + 1, b' ');
+    std::fs::write(&large, bytes).unwrap();
+    let text = temp.path().join("notes.txt");
+    std::fs::write(&text, b"%PDF-1.7 but named as text").unwrap();
+    let files = stage(
+        vec![corrupt, large, text],
+        Kind::Document,
+        Control::default(),
+    )
+    .await
+    .unwrap();
+    for file in &files {
+        assert!(file.document.is_none(), "{}", file.name);
+        let doc = codec::message_decode(&prepared(file, String::new(), &destination).raw)
+            .unwrap()
+            .document_message
+            .unwrap();
+        assert!(doc.jpeg_thumbnail.is_none() && doc.page_count.is_none());
+    }
 }

@@ -304,6 +304,8 @@ and is first-party client evidence for it. It is not a live CDN download.
    render or thumbnail upload must not block or retry the document send. Other
    document types need no generated image. A larger HD edge would help Heya
    receivers, but how other clients handle one is not established.
+   *Implemented 3 November 2026 as described in [attachments](attachments.md);
+   not yet verified with a live account or on macOS.*
 3. **The SDK patch mapping is confirmed** by first-party web-client code: media
    type, MMS path, HKDF info and use of the parent media key. Before an upstream
    submission, add one read-only live download of a real `thumbnail-document`

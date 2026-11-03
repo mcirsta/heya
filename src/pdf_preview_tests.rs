@@ -4,8 +4,8 @@ use super::*;
 #[test]
 #[ignore = "subprocess fixture, invoked only by synthetic PDF tests"]
 fn native_pdf_child() {
-    if std::env::var_os("HEYA_TEST_PDF_WORKER").is_some() {
-        crate::macos::pdf_worker();
+    if let Some(job) = std::env::var_os("HEYA_TEST_PDF_WORKER") {
+        crate::macos::pdf_worker(job == "page");
     }
 }
 
@@ -189,4 +189,15 @@ async fn renderer_timeout_output_limits_and_cancellation_reap_the_process() {
     })
     .await
     .expect("cancelled renderer must not linger or remain a zombie");
+}
+
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn page_count_reads_only_a_positive_pages_line() {
+    let mut info = b"Title:           Synthetic \xff\xfe metadata\n".to_vec();
+    info.extend_from_slice(b"Pages:           12\nPage size:       612 x 792 pts\n");
+    assert_eq!(page_count(&info), Some(12));
+    assert_eq!(page_count(b"Pages:           0\n"), None);
+    assert_eq!(page_count(b"Title: Pages: 4\n"), None);
+    assert_eq!(page_count(b""), None);
 }

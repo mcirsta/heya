@@ -38,7 +38,10 @@ The additive enum variants are appended to preserve existing numeric casts. Heya
 adapts `thumbnail_direct_path`, `thumbnail_sha256`, `thumbnail_enc_sha256` and the
 parent `media_key` through public `DownloadParams`; the SDK still performs route
 validation, authenticated streaming, decryption and both hash checks. No PDF
-parser, custom crypto, HTTP bypass or cache tuning is introduced.
+parser, custom crypto, HTTP bypass or cache tuning is introduced. Outgoing PDF
+thumbnails use the same variant through the public `Client::upload` with
+`UploadOptions::with_media_key`, so the SDK encrypts under the document's key and
+uploads to `/mms/thumbnail-document`.
 
 The HKDF context is `WhatsApp Document Thumbnail Keys`, matching the
 [Baileys media-type mapping](https://github.com/WhiskeySockets/Baileys/blob/master/src/Defaults/index.ts).

@@ -1,4 +1,4 @@
-//! Render page one's strip in a short-lived helper: Quartz on macOS, Poppler on Linux.
+//! Render page one in a short-lived helper: Quartz on macOS, Poppler on Linux.
 //! PDF bytes and pixels travel over pipes, never through plaintext cache files.
 use crate::document_previews::MAX_BYTES;
 #[cfg(any(not(target_os = "macos"), test))]
@@ -10,7 +10,11 @@ use tokio::{
 };
 
 pub const MAX_PDF_BYTES: usize = 16 * 1024 * 1024;
+/// Longest edge of an outgoing document's thumbnail, as WhatsApp Web sends it.
+pub const PAGE_EDGE: u32 = 480;
 const TIMEOUT: Duration = Duration::from_secs(8);
+/// Sending waits for this render, so it gets WhatsApp Web's shorter budget.
+const PAGE_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
@@ -20,7 +24,23 @@ pub enum Error {
     Timeout,
 }
 
-fn command() -> Command {
+/// Page one of an outgoing PDF, and its page count when the helper reports one.
+pub struct Page {
+    pub png: Vec<u8>,
+    pub pages: Option<u32>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Job {
+    /// The received-card strip, WIDTH x HEIGHT from the top of the page.
+    Strip,
+    /// The whole page, longest edge PAGE_EDGE.
+    Page,
+    #[cfg(not(target_os = "macos"))]
+    Info,
+}
+
+fn command(job: Job) -> Command {
     #[cfg(target_os = "linux")]
     {
         // Only system libraries/fonts are visible. No account files, network,
@@ -75,7 +95,11 @@ fn command() -> Command {
             "--fsize=33554432",
             "--core=0",
             "--",
-            "/usr/bin/pdftoppm",
+            if job == Job::Info {
+                "/usr/bin/pdfinfo"
+            } else {
+                "/usr/bin/pdftoppm"
+            },
         ]);
         command
     }
@@ -84,7 +108,12 @@ fn command() -> Command {
         // The helper exits before creating UI, preferences or account services.
         let mut command = Command::new(std::env::current_exe().unwrap_or_default());
         #[cfg(not(test))]
-        command.arg("--heya-pdf-worker");
+        {
+            command.arg("--heya-pdf-worker");
+            if job == Job::Page {
+                command.arg("page");
+            }
+        }
         #[cfg(test)]
         command
             .args([
@@ -93,12 +122,19 @@ fn command() -> Command {
                 "--ignored",
                 "--nocapture",
             ])
-            .env("HEYA_TEST_PDF_WORKER", "1");
+            .env(
+                "HEYA_TEST_PDF_WORKER",
+                if job == Job::Page { "page" } else { "1" },
+            );
         command
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
-        Command::new("pdftoppm")
+        Command::new(if job == Job::Info {
+            "pdfinfo"
+        } else {
+            "pdftoppm"
+        })
     }
 }
 
@@ -108,7 +144,7 @@ pub async fn render(bytes: Vec<u8>) -> Result<Vec<u8>, Error> {
     if bytes.len() > MAX_PDF_BYTES || !bytes.starts_with(b"%PDF-") {
         return Err(Error::Invalid);
     }
-    let command = command();
+    let command = command(Job::Strip);
     #[cfg(not(target_os = "macos"))]
     let mut command = command;
     #[cfg(not(target_os = "macos"))]
@@ -137,6 +173,64 @@ pub async fn render(bytes: Vec<u8>) -> Result<Vec<u8>, Error> {
         "-",
     ]);
     run(command, bytes, TIMEOUT).await
+}
+
+/// The whole first page, scaled so its longest edge is PAGE_EDGE. The page
+/// count is best effort: a PDF that renders but hides its count still gets an
+/// image.
+pub async fn first_page(bytes: Vec<u8>) -> Result<Page, Error> {
+    if bytes.len() > MAX_PDF_BYTES || !bytes.starts_with(b"%PDF-") {
+        return Err(Error::Invalid);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        // The worker prefixes its PNG with the page count, big-endian.
+        let output = run(command(Job::Page), bytes, PAGE_TIMEOUT).await?;
+        let (count, png) = output.split_first_chunk::<4>().ok_or(Error::Failed)?;
+        Ok(Page {
+            png: png.to_vec(),
+            pages: Some(u32::from_be_bytes(*count)).filter(|n| *n > 0),
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let mut render = command(Job::Page);
+        render.args([
+            "-f",
+            "1",
+            "-l",
+            "1",
+            "-singlefile",
+            "-scale-to",
+            &PAGE_EDGE.to_string(),
+            "-cropbox",
+            "-png",
+            "-q",
+            "-",
+        ]);
+        let mut info = command(Job::Info);
+        info.arg("-");
+        let (png, info) = tokio::join!(
+            run(render, bytes.clone(), PAGE_TIMEOUT),
+            run(info, bytes, PAGE_TIMEOUT)
+        );
+        Ok(Page {
+            png: png?,
+            pages: info.ok().as_deref().and_then(page_count),
+        })
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn page_count(info: &[u8]) -> Option<u32> {
+    // Metadata lines may carry any encoding; only the count line matters.
+    String::from_utf8_lossy(info)
+        .lines()
+        .find_map(|line| line.strip_prefix("Pages:"))?
+        .trim()
+        .parse()
+        .ok()
+        .filter(|n| *n > 0)
 }
 
 async fn run(mut command: Command, bytes: Vec<u8>, timeout: Duration) -> Result<Vec<u8>, Error> {

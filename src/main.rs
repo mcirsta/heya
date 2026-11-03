@@ -19,6 +19,7 @@ mod connection;
 mod contact_info;
 mod diagnostics;
 mod document_previews;
+mod document_thumbnails;
 mod domain;
 mod downloads;
 mod downloads_file;
@@ -241,7 +242,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     #[cfg(target_os = "macos")]
     if std::env::args().nth(1).as_deref() == Some("--heya-pdf-worker") {
-        macos::pdf_worker();
+        macos::pdf_worker(std::env::args().nth(2).as_deref() == Some("page"));
     }
     if std::env::args().nth(1).as_deref() == Some("--heya-call-audio-worker") {
         call_audio::child_main();

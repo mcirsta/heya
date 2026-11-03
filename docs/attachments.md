@@ -15,8 +15,23 @@ to 2 GiB in total, with a ten-minute timeout for each upload. Captions are limit
 to 1,024 Unicode characters; over-limit text is retained and rejected rather
 than silently shortened. These are Heya policies, not reverse-engineered WhatsApp
 limits. Recorded [voice messages](voice-messages.md) now reuse this transfer/outbox path.
-PDF document thumbnails, image editing, video-message sending and persistent
-attachment-review drafts remain separate work.
+Image editing, video-message sending and persistent attachment-review drafts
+remain separate work.
+
+PDF documents up to 16 MiB carry a page-one preview, in the sizes WhatsApp Web
+sends (see the [document-preview audit](desktop-media-audit.md)). While the file
+is prepared, the sandboxed PDF helper renders the whole first page with its
+longest edge at 480 pixels, with a three-second limit. Heya encodes it as JPEG at
+quality 92, and keeps a copy halved until it fits 1,300 bytes as the embedded
+`jpegThumbnail`. The page count comes from the same helper (`pdfinfo` on Linux).
+After the document uploads, the 480-pixel JPEG is uploaded as
+`thumbnail-document` with the document's own media key, within 20 seconds. Its
+path, hashes and dimensions go into the message. A failed render or thumbnail
+upload sends the document without that image and is not retried. Other document
+types carry no generated image. Synthetic tests cover rendering, size limits,
+encryption under the document key, message fields and failure cases. Live
+upload acceptance and display by recipients' clients are not yet verified, and
+the macOS Quartz path has not been built or run.
 
 The composer also accepts Ctrl+V (Command+V on macOS) or Shift+Insert for
 clipboard photos/files, and native file drops. File lists take precedence over

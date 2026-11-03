@@ -86,6 +86,8 @@ pub struct Staged {
     pub thumbnail: Vec<u8>,
     pub preview: Option<Arc<Pixels>>,
     pub voice: Option<crate::voice_recorder::Clip>,
+    /// Page one of an outgoing PDF; `None` sends the document without images.
+    pub document: Option<crate::document_thumbnails::Thumbnails>,
 }
 pub struct Destination {
     pub chat: i32,

@@ -135,16 +135,20 @@ void heya_panel_cancel(uint64_t identifier) {
     [panels[@(identifier)] cancel:nil];
 }
 
-// Return a bounded, white-backed top strip of page one as PNG. CoreGraphics
-// handles crop boxes and rotations; ImageIO encodes the result entirely in RAM.
+// Return a bounded, white-backed PNG of page one: a width x height strip from
+// the top or, with height 0, the whole page with its longest edge at most width
+// (never scaled up). CoreGraphics handles crop boxes and rotations; ImageIO
+// encodes the result entirely in RAM. *pages receives the page count.
 int heya_pdf_render(const uint8_t *bytes, size_t length, uint32_t width,
-                    uint32_t height, size_t limit, uint8_t **output, size_t *size) {
+                    uint32_t height, size_t limit, uint8_t **output, size_t *size,
+                    size_t *pages) {
     @autoreleasepool {
         CGDataProviderRef provider = CGDataProviderCreateWithData(NULL, bytes, length, NULL);
         if (!provider) return 0;
         CGPDFDocumentRef document = CGPDFDocumentCreateWithProvider(provider);
         CGDataProviderRelease(provider);
         if (!document) return 0;
+        *pages = CGPDFDocumentGetNumberOfPages(document);
         CGPDFPageRef page = CGPDFDocumentGetPage(document, 1);
         if (!page) { CGPDFDocumentRelease(document); return 0; }
         CGRect crop = CGPDFPageGetBoxRect(page, kCGPDFCropBox);
@@ -154,7 +158,17 @@ int heya_pdf_render(const uint8_t *bytes, size_t length, uint32_t width,
         if (!isfinite(pageWidth) || !isfinite(pageHeight) || pageWidth <= 0 || pageHeight <= 0) {
             CGPDFDocumentRelease(document); return 0;
         }
+        CGFloat scaledWidth = width;
         CGFloat scaledHeight = ceil(pageHeight * width / pageWidth);
+        if (height == 0) {
+            // The drawing transform only scales down, so the target never
+            // exceeds the page box.
+            CGFloat scale = fmin(1, width / fmax(pageWidth, pageHeight));
+            scaledWidth = fmax(1, round(pageWidth * scale));
+            scaledHeight = fmax(1, round(pageHeight * scale));
+            width = (uint32_t)scaledWidth;
+            height = (uint32_t)scaledHeight;
+        }
         if (!isfinite(scaledHeight) || scaledHeight > 1000000) {
             CGPDFDocumentRelease(document); return 0;
         }
@@ -167,7 +181,7 @@ int heya_pdf_render(const uint8_t *bytes, size_t length, uint32_t width,
         CGContextFillRect(context, CGRectMake(0, 0, width, height));
         CGContextTranslateCTM(context, 0, height - scaledHeight);
         CGContextConcatCTM(context, CGPDFPageGetDrawingTransform(page, kCGPDFCropBox,
-            CGRectMake(0, 0, width, scaledHeight), 0, true));
+            CGRectMake(0, 0, scaledWidth, scaledHeight), 0, true));
         CGContextDrawPDFPage(context, page);
         CGPDFDocumentRelease(document);
         CGImageRef image = CGBitmapContextCreateImage(context);

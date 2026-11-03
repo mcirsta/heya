@@ -223,9 +223,13 @@ fn prepare_reader(
     } else {
         input
     };
+    let mut source = Keep {
+        inner: reader,
+        copy: (mime == "application/pdf").then(Vec::new),
+    };
     let info = whatsapp_rust::wacore::upload::encrypt_media_streaming(
         CheckRead {
-            inner: reader,
+            inner: &mut source,
             control: control.clone(),
             left: attachments::MAX_BYTES + 1,
         },
@@ -244,6 +248,10 @@ fn prepare_reader(
         return Err(Error::Limit);
     }
     let encrypted_len = blob.metadata().map_err(|_| Error::File)?.len();
+    let document = source
+        .copy
+        .and_then(|pdf| crate::document_thumbnails::prepare(pdf, control));
+    cancelled(control)?;
     Ok(Staged {
         id: crate::messaging::fresh_id().map_err(|_| Error::File)?,
         blob: Arc::new(blob),
@@ -261,6 +269,7 @@ fn prepare_reader(
         thumbnail,
         preview,
         voice: None,
+        document,
     })
 }
 fn mime(name: &str) -> &'static str {
@@ -287,6 +296,25 @@ fn mime(name: &str) -> &'static str {
         "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         _ => "application/octet-stream",
+    }
+}
+/// Keeps the plaintext of a PDF small enough to render for its thumbnail.
+/// Larger files drop the copy and are sent without one.
+struct Keep<R> {
+    inner: R,
+    copy: Option<Vec<u8>>,
+}
+impl<R: Read> Read for Keep<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        if let Some(copy) = &mut self.copy {
+            if copy.len() + n > crate::pdf_preview::MAX_PDF_BYTES {
+                self.copy = None;
+            } else {
+                copy.extend_from_slice(&buf[..n]);
+            }
+        }
+        Ok(n)
     }
 }
 struct CheckRead<R> {
@@ -389,11 +417,36 @@ impl Uploader for Uploads {
             Kind::Document => MediaType::Document,
             Kind::Voice => MediaType::Audio,
         };
-        let uploaded = crate::attachment_worker::upload(cancel, async move {
-            client
+        let page = file.document.as_ref().map(|d| d.jpeg.clone());
+        let key = file.key;
+        let (uploaded, thumbnail) = crate::attachment_worker::upload(cancel, async move {
+            let uploaded = client
                 .upload_stream(UploadBody(body), info, media)
                 .await
-                .map_err(|_| Error::Upload)
+                .map_err(|_| Error::Upload)?;
+            // Optional, like WhatsApp Web's: a failed thumbnail upload sends
+            // the document without one rather than failing or retrying it.
+            let thumbnail = match page {
+                Some(jpeg) => tokio::time::timeout(
+                    THUMBNAIL_TIMEOUT,
+                    client.upload(
+                        jpeg,
+                        MediaType::DocumentThumbnail,
+                        whatsapp_rust::UploadOptions::new().with_media_key(key),
+                    ),
+                )
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .filter(|t| t.media_key == key)
+                .map(|t| Thumbnail {
+                    direct_path: t.direct_path,
+                    hash: t.file_sha256,
+                    encrypted_hash: t.file_enc_sha256,
+                }),
+                None => None,
+            };
+            Ok((uploaded, thumbnail))
         })
         .await?;
         message(
@@ -404,14 +457,24 @@ impl Uploader for Uploads {
                 url: uploaded.url,
                 direct_path: uploaded.direct_path,
                 timestamp: uploaded.media_key_timestamp,
+                thumbnail,
             },
         )
     }
 }
+/// Bounds the extra wait after the document itself has uploaded.
+const THUMBNAIL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 struct Uploaded {
     url: String,
     direct_path: String,
     timestamp: i64,
+    thumbnail: Option<Thumbnail>,
+}
+/// An uploaded `thumbnail-document`, encrypted with the document's media key.
+struct Thumbnail {
+    direct_path: String,
+    hash: [u8; 32],
+    encrypted_hash: [u8; 32],
 }
 fn message(
     file: &Staged,
@@ -463,6 +526,19 @@ fn message(
         doc.file_name = Some(file.name.clone());
         doc.title = Some(file.name.clone());
         doc.caption = Some(caption);
+        if let Some(page) = &file.document {
+            doc.page_count = page.pages;
+            if !page.embedded.is_empty() {
+                doc.jpeg_thumbnail = Some(page.embedded.clone());
+            }
+            if let Some(thumbnail) = uploaded.thumbnail {
+                doc.thumbnail_direct_path = Some(thumbnail.direct_path);
+                doc.thumbnail_sha256 = Some(thumbnail.hash.to_vec());
+                doc.thumbnail_enc_sha256 = Some(thumbnail.encrypted_hash.to_vec());
+                doc.thumbnail_width = Some(page.width);
+                doc.thumbnail_height = Some(page.height);
+            }
+        }
         message.document_message = MessageField::some(doc);
     }
     if let Some(source) = &destination.reply {
@@ -572,6 +648,7 @@ pub async fn stage_voice(
             thumbnail: Vec::new(),
             preview: None,
             voice: Some(clip),
+            document: None,
         }))
     })
     .await
