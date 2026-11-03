@@ -1,13 +1,13 @@
 //! Encrypted document-preview cache with mutation/expiry and late-write guards.
 use super::*;
 use crate::document_previews::{MAX_BYTES, Request};
-const ELIGIBLE: &str = "m.visible=1 AND m.deleted=0 AND (m.expires IS NULL OR m.expires>unixepoch()) AND json_type(nullif(m.content,''),'$.document')='object'";
+const ELIGIBLE: &str = "m.visible=1 AND m.deleted=0 AND (m.expires IS NULL OR m.expires>unixepoch()) AND (json_type(nullif(m.content,''),'$.document')='object' OR json_type(nullif(m.content,''),'$.video')='object') AND NOT EXISTS(SELECT 1 FROM chats c JOIN chat_settings s ON s.jid=c.jid AND s.kind=2 AND s.value=1 WHERE c.id=m.chat_id)";
 impl Archive {
     pub async fn document_preview_request(&self, ids: Vec<i32>) -> Result<Option<Request>> {
         self.call(move |db| {
-            let mut query = db.prepare_cached(&format!("SELECT m.raw FROM messages m LEFT JOIN document_previews p ON p.message_id=m.id WHERE m.id=?1 AND {ELIGIBLE} AND coalesce(p.sharp,0)=0 AND coalesce(p.retry_at,0)<=unixepoch()"))?;
+            let mut query = db.prepare_cached(&format!("SELECT m.raw,json_type(nullif(m.content,''),'$.video')='object' FROM messages m LEFT JOIN document_previews p ON p.message_id=m.id WHERE m.id=?1 AND {ELIGIBLE} AND coalesce(p.sharp,0)=0 AND coalesce(p.retry_at,0)<=unixepoch()"))?;
             for id in ids.into_iter().take(crate::message_thumbnails::MAX_DEMAND) {
-                if let Some(raw) = query.query_row([id], |r|r.get(0)).optional()? { return Ok(Some(Request {id,raw})); }
+                if let Some((raw,video)) = query.query_row([id], |r|Ok((r.get(0)?,r.get::<_,Option<bool>>(1)?.unwrap_or(false)))).optional()? { return Ok(Some(Request {id,raw,video})); }
             }
             Ok(None)
         }).await
@@ -27,10 +27,10 @@ impl Archive {
         {
             return Err(Error::Limit);
         }
-        let (id, raw) = (request.id, request.raw.clone());
+        let (id, raw, video) = (request.id, request.raw.clone(), request.video);
         let changed = self.call(move |db| {
             if let Some(preview) = preview {
-                let sharp = crate::document_previews::sharp_enough(&preview);
+                let sharp = video || crate::document_previews::sharp_enough(&preview);
                 // Replacing gets a fresh monotonic id: the presenter must swap
                 // its texture even when an older low-resolution cache exists.
                 Ok(db.execute(&format!("INSERT OR REPLACE INTO document_previews(message_id,preview,retry_at,sharp)
@@ -73,7 +73,7 @@ mod tests {
         .unwrap();
         let files = db.0._files.clone();
         db.blocking(|c| {
-            c.execute_batch("DROP TRIGGER discard_changed_document_preview; DROP TABLE document_previews; DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; ALTER TABLE mutations DROP COLUMN raw; DROP TABLE outgoing_receipts; DROP TABLE chat_settings; DROP INDEX messages_album; ALTER TABLE messages DROP COLUMN album_index; ALTER TABLE messages DROP COLUMN album; PRAGMA user_version=9; UPDATE chats SET draft='Keep synthetic draft';")?;Ok(())
+            c.execute_batch("DROP TRIGGER discard_changed_document_preview; DROP TABLE document_previews; DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; ALTER TABLE mutations DROP COLUMN raw; DROP TABLE outgoing_receipts; DROP TABLE chat_settings; DROP INDEX messages_album; ALTER TABLE messages DROP COLUMN album_index; ALTER TABLE messages DROP COLUMN album; DROP INDEX messages_read_wire; ALTER TABLE messages DROP COLUMN read_wire; ALTER TABLE outgoing_reads DROP COLUMN keys; PRAGMA user_version=9; UPDATE chats SET draft='Keep synthetic draft';")?;Ok(())
         }).unwrap();
         drop(db);
         let db = Archive::open(files.clone(), KEY).unwrap();
@@ -81,7 +81,7 @@ mod tests {
             .blocking(|c| {
                 assert_eq!(
                     c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?,
-                    19
+                    20
                 );
                 assert_eq!(
                     c.query_row("SELECT draft FROM chats", [], |r| r.get::<_, String>(0))?,
@@ -118,7 +118,7 @@ mod tests {
         // Version 10 considered any saved image complete, including tiny HD
         // thumbnails. Keep those pixels visible but immediately try an upgrade.
         db.blocking(|c| {
-            c.execute_batch("ALTER TABLE document_previews DROP COLUMN sharp; UPDATE document_previews SET retry_at=unixepoch()+3600; DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; ALTER TABLE mutations DROP COLUMN raw; DROP TABLE outgoing_receipts; DROP TABLE chat_settings; DROP INDEX messages_album; ALTER TABLE messages DROP COLUMN album_index; ALTER TABLE messages DROP COLUMN album; PRAGMA user_version=10;")?;
+            c.execute_batch("ALTER TABLE document_previews DROP COLUMN sharp; UPDATE document_previews SET retry_at=unixepoch()+3600; DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; ALTER TABLE mutations DROP COLUMN raw; DROP TABLE outgoing_receipts; DROP TABLE chat_settings; DROP INDEX messages_album; ALTER TABLE messages DROP COLUMN album_index; ALTER TABLE messages DROP COLUMN album; DROP INDEX messages_read_wire; ALTER TABLE messages DROP COLUMN read_wire; ALTER TABLE outgoing_reads DROP COLUMN keys; PRAGMA user_version=10;")?;
             Ok(())
         }).unwrap();
         drop(db);

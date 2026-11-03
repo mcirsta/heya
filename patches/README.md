@@ -7,8 +7,34 @@ Runtime SDK base: `oxidezap/whatsapp-rust` at
 | --- | --- | --- | --- |
 | [album-child.patch](album-child.patch) | Album children use `associatedChildMessage`, but public message/media helpers leave it wrapped and miss nested view-once. | Add this wrapper to borrowed/consuming base-message helpers and privacy detection, with synthetic regressions. | Local; not submitted. |
 | [document-thumbnail.patch](document-thumbnail.patch) | `DocumentMessage` has a separate thumbnail path and hashes, but `MediaType` cannot represent its HKDF context. | Adds `DocumentThumbnail`, its crypto/MMS/path mappings, and synthetic tests in `wacore/src/download.rs`. | Local; not submitted. Live interoperability still to verify. |
+| [video-preview-core.patch](video-preview-core.patch) | Video posters have their own thumbnail crypto type; prefix decoding isn't a full authenticated download. | Adds `VideoThumbnail`, explicitly preview-only block decoding and crypto regressions to `wacore`. | Local; not submitted. |
+| [video-preview-client.patch](video-preview-client.patch) | No public bounded initial-video download helper. | Adds `Client::download_video_preview_to_writer`, using existing route refresh/host retry, strict range/read caps, cancellation-aware writers and synthetic HTTP tests. | Local; not submitted. |
 
-The additive enum variant is appended to preserve existing numeric casts. Heya
+The video preview client extension vendors the same pinned SDK's root library in
+`vendor/whatsapp-rust`; its only runtime source changes are `src/download.rs` and
+the new `src/download_video_preview.rs`. All other SDK siblings remain at the
+exact Git revision above. No calling, send, authentication or session behavior is
+changed. The vendored source retains upstream MIT notices and optional features.
+The root manifest is mechanically flattened for use outside its original workspace;
+the separate SDK lockfile fixes test-only dependencies too.
+
+The [video preview audit](../docs/video-previews.md) records the independently
+implemented Web selection/range behavior and the distinction between untrusted
+preview prefixes and authenticated originals. Reproduce `wacore` with the existing
+vendoring script, then reproduce the SDK client with:
+
+```sh
+python3 scripts/vendor-video-preview.py --source .references/whatsapp-rust
+CARGO_TARGET_DIR=target cargo test --manifest-path vendor/whatsapp-rust/Cargo.toml --locked --no-default-features --features tokio-runtime,tokio-transport,sqlite-storage,ureq-client,tokio-native,voip --lib download::video_preview::tests
+```
+
+Before upstream submission, apply `video-preview-core.patch` with
+`git apply --directory=wacore` at the upstream workspace root and apply `video-preview-client.patch`
+with `git apply` at that same root. Keep both changes separately reviewable from
+Heya's cache, native decoder and UI integration. The current tests establish
+synthetic protocol behavior, not live CDN compatibility.
+
+The additive enum variants are appended to preserve existing numeric casts. Heya
 adapts `thumbnail_direct_path`, `thumbnail_sha256`, `thumbnail_enc_sha256` and the
 parent `media_key` through public `DownloadParams`; the SDK still performs route
 validation, authenticated streaming, decryption and both hash checks. No PDF
@@ -29,7 +55,7 @@ files, license and Clippy configuration. It is a source snapshot so ordinary
 patching build script. Runtime changes are confined to `src/download.rs` and `src/proto_helpers.rs`.
 Its generated Cargo manifest expands workspace dependencies; SDK sibling crates
 still reference the exact base Git revision. Optional upstream features are kept;
-Heya enables none of the VoIP code.
+Heya uses the SDK's public VoIP feature without patching its calling code.
 
 To regenerate from the clean pinned reference checkout:
 

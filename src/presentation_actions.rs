@@ -72,7 +72,9 @@ pub fn bind(ui: &AppWindow, submit: impl Fn(Command) -> bool + 'static) {
                     "{}: {}",
                     row.sender,
                     crate::domain::single_line_summary(if row.text.is_empty() {
-                        if row.has_photo {
+                        if row.has_sticker {
+                            "Sticker"
+                        } else if row.has_photo {
                             "Photo"
                         } else if row.has_audio {
                             "Audio message"
@@ -383,12 +385,12 @@ fn menu_entries(ui: &AppWindow, row: &crate::MessageRow) -> Vec<crate::ui::Messa
             "Please wait for the current action",
             false,
         );
-        if row.has_photo {
+        if row.has_photo || row.has_sticker {
             add(
                 18,
                 "Copy image",
                 photo_ready && !ui.get_clipboard_busy(),
-                "Wait for the photo to finish loading",
+                "Wait for the image to finish loading",
                 false,
             );
         }
@@ -530,12 +532,12 @@ fn menu_entries(ui: &AppWindow, row: &crate::MessageRow) -> Vec<crate::ui::Messa
             false,
         );
     }
-    if row.has_photo {
+    if row.has_photo || row.has_sticker {
         add(
             18,
             "Copy image",
             photo_ready && !ui.get_clipboard_busy(),
-            "Wait for the photo to finish loading",
+            "Wait for the image to finish loading",
             false,
         );
     }
@@ -771,7 +773,9 @@ pub fn publish(ui: &AppWindow, result: Option<&OperationReply>, destinations: &A
             if ui.get_demo_mode() {
                 "Updated locally in the demo"
             } else if result.kind == 1 {
-                "Reaction queued"
+                // The message already shows its durable sending/failure state.
+                // Saving to the outbox isn't a connection or delivery notice.
+                ""
             } else if result.kind == 2 {
                 "Forward queued"
             } else if result.kind == 4 {

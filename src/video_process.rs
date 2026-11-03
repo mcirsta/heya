@@ -37,6 +37,8 @@ impl Default for Control {
 pub struct Header {
     pub demo: bool,
     pub silent: bool,
+    #[serde(default)]
+    pub poster: bool,
     pub settings: crate::audio_devices::Settings,
 }
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -72,6 +74,7 @@ impl Worker {
                 Header {
                     demo,
                     silent,
+                    poster: false,
                     settings,
                 },
                 commands,
@@ -95,6 +98,32 @@ impl Worker {
             let _ = (&mut self.task).await;
         }
     }
+}
+
+/// One finite, silent decoder. Dropping this future kills the pipe-owned child;
+/// successful completion waits for process exit before publishing its pixels.
+pub async fn poster(bytes: Vec<u8>) -> Option<Pixels> {
+    if bytes.is_empty() || bytes.len() > video::MAX_BYTES || !video::SUPPORTED {
+        return None;
+    }
+    let (_control, controls) = watch::channel(Control::default());
+    let (updates, images) = watch::channel(Status::default());
+    let header = Header {
+        demo: false,
+        silent: true,
+        poster: true,
+        settings: Default::default(),
+    };
+    tokio::time::timeout(
+        Duration::from_secs(8),
+        pump(0, bytes, header, controls, updates),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    let pixels = images.borrow().frame.clone()?;
+    drop(images);
+    Arc::try_unwrap(pixels).ok()
 }
 impl Drop for Worker {
     fn drop(&mut self) {
@@ -254,6 +283,23 @@ async fn read_output(
 /// The child writes on one thread. There are no log messages on this pipe.
 pub struct Emitter<W: Write>(pub W);
 impl<W: Write> Emitter<W> {
+    pub fn poster_frame(&mut self, width: u32, height: u32, rgba: &[u8]) -> Result<bool, Error> {
+        if rgba.len() != (width * height * 4) as usize {
+            return Err(Error::Codec);
+        }
+        // WhatsApp retains its embedded fallback for an all-black decoded frame.
+        let count = rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|p| p[0] > 10 || p[1] > 10 || p[2] > 10)
+            .count();
+        if count * 100 < width as usize * height as usize {
+            return Ok(false);
+        }
+        self.frame(width, height, rgba)?;
+        Ok(true)
+    }
     pub fn progress(&mut self, p: &Progress) -> Result<(), Error> {
         let json = serde_json::to_vec(p).map_err(|_| Error::Playback)?;
         self.0
@@ -338,7 +384,7 @@ pub fn child() -> Result<(), Error> {
     let mut output = Emitter(std::io::stdout().lock());
     output.0.write_all(MAGIC).map_err(|_| Error::Playback)?;
     let result = if header.demo {
-        synthetic(&mut control, &mut output)
+        synthetic(&mut control, &mut output, header.poster)
     } else {
         platform(bytes, header, &mut control, &mut output)
     };
@@ -384,6 +430,7 @@ fn platform(
 fn synthetic(
     control: &mut watch::Receiver<Control>,
     output: &mut Emitter<impl Write>,
+    poster: bool,
 ) -> Result<(), Error> {
     let mut position = 0.0;
     let mut last = Instant::now();
@@ -413,6 +460,10 @@ fn synthetic(
         })?;
         if (position - rendered).abs() > 0.02 {
             let frame = crate::fixtures::video_pixels(position);
+            if poster {
+                output.poster_frame(frame.width, frame.height, &frame.rgba)?;
+                return Ok(());
+            }
             output.frame(frame.width, frame.height, &frame.rgba)?;
             rendered = position;
         }

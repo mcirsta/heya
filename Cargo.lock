@@ -3072,6 +3072,7 @@ checksum = "85ab80394333c02fe689eaf900ab500fbd0c2213da414687ebf995a65d5a6104"
 dependencies = [
  "bytemuck",
  "byteorder-lite",
+ "image-webp",
  "moxcms",
  "num-traits",
  "png",
@@ -7128,7 +7129,6 @@ dependencies = [
 [[package]]
 name = "whatsapp-rust"
 version = "0.7.0"
-source = "git+https://github.com/oxidezap/whatsapp-rust?rev=0dc38af07632f48f0cf6c66df285f1643fc22b95#0dc38af07632f48f0cf6c66df285f1643fc22b95"
 dependencies = [
  "anyhow",
  "async-channel",

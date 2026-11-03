@@ -202,12 +202,12 @@ impl State {
                 .map(|(_, image)| image.clone())
                 .unwrap_or_default();
         }
-        if row.has_photo
+        if (row.has_photo || row.has_sticker)
             && let Some(photo) = self.photos.get(&message.id)
         {
             row.photo_image = photo.image.clone();
             row.photo_state = photo.state as i32;
-            row.photo_status = photo.state.label().into();
+            row.photo_status = photo.state.image_label(row.has_sticker).into();
         }
         if let Some(grid) = self.albums.grids.get(&index) {
             let tiles = grid
@@ -444,6 +444,7 @@ impl Timeline {
         let weak = ui.as_weak();
         ui.on_layout_timeline(move || {
             if let Some(ui) = weak.upgrade() {
+                let _step = crate::diagnostics::ui_step("timeline layout");
                 layout(&ui);
             }
         });
@@ -782,6 +783,7 @@ fn same_row(a: &TimelineRow, b: &TimelineRow) -> bool {
         && am.audio_waveform == bm.audio_waveform
         && am.audio_duration == bm.audio_duration
         && am.has_photo == bm.has_photo
+        && am.has_sticker == bm.has_sticker
         && am.album_more == bm.album_more
         && same_album(&am.album_photos, &bm.album_photos)
         && am.has_video == bm.has_video
@@ -975,7 +977,7 @@ pub(crate) fn photos(ui: &AppWindow, snapshot: &crate::photos::Snapshot) {
         viewer(ui, &mut state);
         for i in 0..model.visible.row_count() {
             let mut row = model.visible.row_data(i).unwrap();
-            if !row.message.has_photo {
+            if !row.message.has_photo && !row.message.has_sticker {
                 continue;
             }
             if row.message.album_photos.row_count() > 0 {
@@ -1007,7 +1009,7 @@ pub(crate) fn photos(ui: &AppWindow, snapshot: &crate::photos::Snapshot) {
             {
                 row.message.photo_image = image;
                 row.message.photo_state = status as i32;
-                row.message.photo_status = status.label().into();
+                row.message.photo_status = status.image_label(row.message.has_sticker).into();
                 model.visible.set_row_data(i, row);
             }
         }

@@ -149,7 +149,7 @@ async fn archive_actions_reference_a_confirmed_tail_instead_of_a_queued_local_se
         .unwrap()
         .range
         .unwrap();
-    assert_eq!(range.message.unwrap().wire, "incoming");
+    assert_eq!(range.messages.last().unwrap().wire, "incoming");
     let mut confirmed = record("queued-local");
     confirmed.outgoing = true;
     confirmed.timestamp = 1_700_000_100;
@@ -167,7 +167,7 @@ async fn archive_actions_reference_a_confirmed_tail_instead_of_a_queued_local_se
         .range
         .unwrap();
     assert_eq!(range.through, 1_700_000_100);
-    assert_eq!(range.message.unwrap().wire, "queued-local");
+    assert_eq!(range.messages.last().unwrap().wire, "queued-local");
 }
 
 #[tokio::test]
@@ -237,7 +237,7 @@ async fn schema_fifteen_upgrade_keeps_data_and_requests_a_snapshot_after_an_uncl
     db.draft(chat, "Preserved draft".into()).await.unwrap();
     let files = db.0._files.clone();
     db.blocking(|c| {
-        c.execute_batch("DROP TABLE chat_settings; DROP INDEX messages_album; ALTER TABLE messages DROP COLUMN album_index; ALTER TABLE messages DROP COLUMN album; PRAGMA user_version=15;")?;
+        c.execute_batch("DROP TABLE chat_settings; DROP INDEX messages_album; ALTER TABLE messages DROP COLUMN album_index; ALTER TABLE messages DROP COLUMN album; DROP INDEX messages_read_wire; ALTER TABLE messages DROP COLUMN read_wire; ALTER TABLE outgoing_reads DROP COLUMN keys; PRAGMA user_version=15;")?;
         Ok(())
     })
     .unwrap();

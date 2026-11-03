@@ -24,7 +24,7 @@ pub fn bind(ui: &AppWindow) -> watch::Receiver<photos::Demand> {
         let timeline_visible = ui
             .get_timeline_rows()
             .iter()
-            .filter(|r| r.message.has_photo)
+            .filter(|r| r.message.has_photo || r.message.has_sticker)
             .flat_map(|r| {
                 if r.message.album_photos.row_count() > 0 {
                     r.message
@@ -66,6 +66,19 @@ pub fn bind(ui: &AppWindow) -> watch::Receiver<photos::Demand> {
         let Some(ui) = weak.upgrade() else {
             return;
         };
+        // A sticker remains in the conversation. Clicking an uncached/failed
+        // one uses the existing explicit retry, without opening a photo gallery.
+        if let Some(row) = ui
+            .get_timeline_rows()
+            .iter()
+            .find(|r| r.message.id == id && r.message.has_sticker)
+        {
+            if !matches!(row.message.photo_state, 1 | 2) {
+                retry_serial.set(retry_serial.get().wrapping_add(1));
+                tx.send_modify(|v| v.retry = Some((id, retry_serial.get())));
+            }
+            return;
+        }
         if timeline::has_photo(&ui, id)
             || crate::presentation_contact_info::has(&ui, id, crate::contact_info::Kind::Photo)
             || (ui.get_photo_viewer_id() == id && id > 0)
@@ -138,6 +151,7 @@ fn open(
 }
 
 pub fn publish(ui: &AppWindow, snapshot: &Arc<photos::Snapshot>) {
+    let _step = crate::diagnostics::ui_step("photo previews");
     timeline::photos(ui, snapshot);
     crate::presentation_contact_info::publish_photos(ui, snapshot);
     let id = ui.get_photo_viewer_id();

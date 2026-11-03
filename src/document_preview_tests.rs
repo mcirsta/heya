@@ -40,6 +40,151 @@ fn tiny() -> Vec<u8> {
 }
 
 #[tokio::test]
+async fn video_posters_keep_aspect_upgrade_once_and_never_populate_the_original_cache() {
+    let (_temp, db) = fixture();
+    let mut r = record("synthetic-video-poster");
+    r.thumbnail = tiny();
+    r.content.video = Some(crate::message_content::Video {
+        width: 720,
+        height: 1280,
+        seconds: Some(10),
+        size: Some(123456),
+        gif: false,
+    });
+    db.ingest(Batch {
+        messages: vec![r],
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    let id = db
+        .blocking(|db| Ok(db.query_row("SELECT id FROM messages", [], |r| r.get(0))?))
+        .unwrap();
+    let (archives, archive_rx) = watch::channel(Some(db.clone()));
+    let (demand, demand_rx) = watch::channel(vec![id]);
+    let (updates, mut images) = watch::channel(message_thumbnails::Snapshot::default());
+    let worker = tokio::spawn(message_thumbnails::present(archive_rx, demand_rx, updates));
+    changed(&mut images).await;
+    let low = images.borrow_and_update().clone();
+    assert_eq!(low[&id].width, 32);
+    let request = db
+        .document_preview_request(vec![id])
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(request.video);
+    let pixels = video_decode(&png(image::RgbaImage::from_pixel(
+        720,
+        1280,
+        image::Rgba([90, 150, 200, 255]),
+    )))
+    .unwrap();
+    assert_eq!(
+        (pixels.width, pixels.height),
+        (270, 480),
+        "video posters aren't cropped into PDF strips"
+    );
+    db.save_document_preview(&request, Some(encode(pixels).unwrap()))
+        .await
+        .unwrap();
+    changed(&mut images).await;
+    let high = images.borrow_and_update().clone();
+    assert_eq!((high[&id].width, high[&id].height), (270, 480));
+    assert!(!Arc::ptr_eq(&low[&id], &high[&id]));
+    assert!(
+        db.document_preview_request(vec![id])
+            .await
+            .unwrap()
+            .is_none()
+    );
+    db.changed();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(120), images.changed())
+            .await
+            .is_err()
+    );
+    db.blocking(|db| {
+        assert_eq!(
+            db.query_row("SELECT count(*) FROM message_videos", [], |r| r
+                .get::<_, i32>(0))?,
+            0
+        );
+        Ok(())
+    })
+    .unwrap();
+    db.call(move |db| {
+        db.execute(
+            "UPDATE messages SET deleted=1,content='',raw=X'',thumbnail=X'' WHERE id=?1",
+            [id],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    db.changed();
+    assert!(
+        !db.save_document_preview(&request, Some(tiny()))
+            .await
+            .unwrap()
+    );
+    changed(&mut images).await;
+    assert!(images.borrow_and_update().is_empty());
+    drop(demand);
+    worker.await.unwrap();
+    drop(archives);
+}
+
+#[tokio::test]
+async fn a_new_verified_original_retries_a_failed_poster_once_without_a_retry_loop() {
+    let (_temp, db) = fixture();
+    let mut r = record("synthetic-video-retry");
+    r.content.video = Some(crate::message_content::Video {
+        width: 1280,
+        height: 720,
+        seconds: Some(4),
+        size: Some(123456),
+        gif: false,
+    });
+    db.ingest(Batch {
+        messages: vec![r],
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    let id = db
+        .blocking(|db| Ok(db.query_row("SELECT id FROM messages", [], |r| r.get(0))?))
+        .unwrap();
+    let request = db
+        .document_preview_request(vec![id])
+        .await
+        .unwrap()
+        .unwrap();
+    db.save_document_preview(&request, None).await.unwrap();
+    assert!(
+        db.document_preview_request(vec![id])
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let original = db.video_request(id).await.unwrap().unwrap();
+    assert!(db.save_video(&original, vec![42; 128]).await.unwrap());
+    assert!(
+        db.document_preview_request(vec![id])
+            .await
+            .unwrap()
+            .is_some()
+    );
+    db.save_document_preview(&request, None).await.unwrap();
+    assert!(
+        db.document_preview_request(vec![id])
+            .await
+            .unwrap()
+            .is_none(),
+        "cached originals must not bypass failure cooldown on every archive update"
+    );
+}
+
+#[tokio::test]
 async fn low_resolution_cache_is_upgraded_and_failed_attempts_keep_old_pixels() {
     let (_temp, db) = fixture();
     let id = seed(&db).await[0];
@@ -301,7 +446,7 @@ struct Fake {
 }
 #[async_trait::async_trait]
 impl Source for Fake {
-    async fn fetch(&self, raw: &[u8]) -> Option<Vec<u8>> {
+    async fn fetch(&self, request: &Request) -> Option<Vec<u8>> {
         struct Active(Arc<AtomicUsize>);
         impl Drop for Active {
             fn drop(&mut self) {
@@ -314,7 +459,7 @@ impl Source for Fake {
             "one fetch at a time"
         );
         let _active = Active(self.active.clone());
-        self.calls.send(raw[0]).unwrap();
+        self.calls.send(request.raw[0]).unwrap();
         let mut gate = self.gate.clone();
         while !*gate.borrow_and_update() {
             gate.changed().await.ok()?;

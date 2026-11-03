@@ -104,6 +104,325 @@ async fn recipient_relative_delete_updates_the_existing_bubble_and_sidebar() {
 }
 
 #[tokio::test]
+async fn viewing_a_later_group_revoke_renews_an_already_confirmed_private_read() {
+    let (_temp, db) = fixture();
+    db.ingest(live_batch(&[incoming(
+        GROUP,
+        PN,
+        "original",
+        100,
+        wa::Message::text("Synthetic already-read group message"),
+    )]))
+    .await
+    .unwrap();
+    let before = load(&db, GROUP).await;
+    let observed = before.messages[0].id;
+    db.mark_visible_read(before.chat.id, observed)
+        .await
+        .unwrap();
+    let original_read = db.next_read_sync().await.unwrap().unwrap();
+    db.finish_read_sync(original_read.clone()).await.unwrap();
+    assert!(db.next_read_sync().await.unwrap().is_none());
+
+    db.ingest(live_batch(&[incoming(
+        GROUP,
+        PN,
+        "later-delete-envelope",
+        200,
+        revoke(GROUP, Some(PN), false),
+    )]))
+    .await
+    .unwrap();
+    let after = load(&db, GROUP).await;
+    assert_eq!(after.messages.len(), 1);
+    assert_eq!(after.messages[0].id, observed);
+    assert_eq!(after.messages[0].text, "This message was deleted");
+    assert_eq!(after.chat.unread, 0);
+    assert!(
+        db.next_read_sync().await.unwrap().is_none(),
+        "receiving a deletion alone does not establish that it was viewed"
+    );
+
+    db.mark_visible_read_with_receipts(after.chat.id, observed, true)
+        .await
+        .unwrap();
+    let viewed_delete = db.next_read_sync().await.unwrap().expect(
+        "viewing a newer deletion must publish a new private read even when its original was read",
+    );
+    assert!(viewed_delete.version > original_read.version);
+    assert_eq!(viewed_delete.through, original_read.through);
+    assert_eq!(viewed_delete.messages.len(), 1);
+    assert_eq!(viewed_delete.messages[0].wire, "later-delete-envelope");
+    assert_eq!(viewed_delete.messages[0].sender, PN);
+    assert!(!viewed_delete.messages[0].outgoing);
+    let range = crate::protocol_reads::read_range(&viewed_delete).unwrap();
+    assert_eq!(range.last_message_timestamp, Some(1_700_000_100));
+    assert_eq!(range.messages[0].timestamp, Some(1_700_000_100));
+    assert_eq!(
+        range.messages[0].key.as_option().unwrap().id.as_deref(),
+        Some("later-delete-envelope")
+    );
+    assert!(
+        db.next_receipt().await.unwrap().is_none(),
+        "private deletion observation must not send a sender-facing read receipt"
+    );
+    db.finish_read_sync(viewed_delete).await.unwrap();
+    db.mark_visible_read(after.chat.id, observed).await.unwrap();
+    assert!(
+        db.next_read_sync().await.unwrap().is_none(),
+        "the same observed deletion remains deduplicated"
+    );
+}
+
+#[tokio::test]
+async fn same_second_deleted_group_messages_publish_all_revoke_keys_without_reading_newer_rows() {
+    let (_temp, db) = fixture();
+    let originals = [
+        incoming(
+            GROUP,
+            PN,
+            "original",
+            100,
+            wa::Message::text("Synthetic first"),
+        ),
+        incoming(
+            GROUP,
+            PN,
+            "second",
+            100,
+            wa::Message::text("Synthetic second"),
+        ),
+    ];
+    db.ingest(live_batch(&originals)).await.unwrap();
+    let before = load(&db, GROUP).await;
+    let observed = before.messages[1].id;
+    let first_delete = revoke(GROUP, Some(PN), false);
+    let mut second_delete = first_delete.clone();
+    second_delete
+        .protocol_message
+        .as_option_mut()
+        .unwrap()
+        .key
+        .as_option_mut()
+        .unwrap()
+        .id = Some("second".into());
+    db.ingest(live_batch(&[
+        incoming(GROUP, PN, "delete-first", 200, first_delete.clone()),
+        incoming(GROUP, PN, "delete-second", 200, second_delete),
+    ]))
+    .await
+    .unwrap();
+    // Replaying the originals and an older revoke cannot replace a newer
+    // accepted deletion key or revive either original's content.
+    db.ingest(live_batch(&originals)).await.unwrap();
+    db.ingest(live_batch(&[incoming(
+        GROUP,
+        PN,
+        "old-delete-first",
+        199,
+        first_delete,
+    )]))
+    .await
+    .unwrap();
+    let deleted = load(&db, GROUP).await;
+    assert_eq!(deleted.messages.len(), 2);
+    assert!(
+        deleted
+            .messages
+            .iter()
+            .all(|m| m.text == "This message was deleted")
+    );
+    assert_eq!(deleted.messages[1].id, observed);
+    db.ingest(live_batch(&[incoming(
+        GROUP,
+        PN,
+        "not-observed",
+        100,
+        wa::Message::text("Synthetic later arrival"),
+    )]))
+    .await
+    .unwrap();
+    db.mark_visible_read_with_receipts(before.chat.id, observed, true)
+        .await
+        .unwrap();
+    let sync = db.next_read_sync().await.unwrap().unwrap();
+    assert_eq!(sync.through, 1_700_000_100);
+    assert_eq!(
+        sync.messages
+            .iter()
+            .map(|m| m.wire.as_str())
+            .collect::<Vec<_>>(),
+        ["delete-first", "delete-second"]
+    );
+    let range = crate::protocol_reads::read_range(&sync).unwrap();
+    assert_eq!(range.last_message_timestamp, Some(1_700_000_100));
+    assert_eq!(range.messages.len(), 2);
+    for (entry, wire) in range.messages.iter().zip(["delete-first", "delete-second"]) {
+        assert_eq!(entry.timestamp, Some(1_700_000_100));
+        let key = entry.key.as_option().unwrap();
+        assert_eq!(key.id.as_deref(), Some(wire));
+        assert_eq!(key.participant.as_deref(), Some(PN));
+        assert_eq!(key.from_me, Some(false));
+        assert_eq!(key.remote_jid.as_deref(), Some(GROUP));
+    }
+    assert_eq!(load(&db, GROUP).await.chat.unread, 1);
+    db.read_updates(vec![crate::archive::ReadUpdate {
+        jid: GROUP.into(),
+        through: Some(sync.through),
+        message: sync.messages.last().cloned(),
+        marked: false,
+        version: Some(chrono::Utc::now().timestamp_millis()),
+    }])
+    .await
+    .unwrap();
+    assert_eq!(
+        load(&db, GROUP).await.chat.unread,
+        1,
+        "the private read echo keeps the original exact cutoff"
+    );
+    assert!(
+        db.next_receipt().await.unwrap().is_none(),
+        "deleted originals and the unobserved newer row emit no sender-facing receipts"
+    );
+    db.finish_read_sync(sync).await.unwrap();
+    db.mark_visible_read(before.chat.id, observed)
+        .await
+        .unwrap();
+    assert!(db.next_read_sync().await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn private_delete_receipt_before_revoke_settles_the_original_without_reading_a_newer_row() {
+    let (_temp, db) = fixture();
+    db.ingest(live_batch(&[
+        incoming(
+            GROUP,
+            PN,
+            "original",
+            100,
+            wa::Message::text("Synthetic deleted later"),
+        ),
+        incoming(
+            GROUP,
+            PN,
+            "newer-same-second",
+            100,
+            wa::Message::text("Synthetic unobserved"),
+        ),
+    ]))
+    .await
+    .unwrap();
+    assert_eq!(load(&db, GROUP).await.chat.unread, 2);
+    db.read_receipts(GROUP.into(), vec!["early-delete-read".into()])
+        .await
+        .unwrap();
+    assert_eq!(
+        load(&db, GROUP).await.chat.unread,
+        2,
+        "an unknown receipt waits for its target"
+    );
+    db.ingest(live_batch(&[incoming(
+        GROUP,
+        PN,
+        "early-delete-read",
+        200,
+        revoke(GROUP, Some(PN), false),
+    )]))
+    .await
+    .unwrap();
+    let view = load(&db, GROUP).await;
+    assert_eq!(view.messages.len(), 2);
+    assert_eq!(view.messages[0].text, "This message was deleted");
+    assert_eq!(
+        view.chat.unread, 1,
+        "the revoke receipt clears the original row, not a later same-second arrival"
+    );
+    assert!(
+        db.next_read_sync().await.unwrap().is_none(),
+        "an incoming read receipt does not queue an outgoing private update"
+    );
+    assert!(db.next_receipt().await.unwrap().is_none());
+    db.call(|c| {
+        assert_eq!(
+            c.query_row("SELECT count(*) FROM pending_reads", [], |r| r
+                .get::<_, i64>(0))?,
+            0
+        );
+        Ok(())
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn an_older_revoke_after_a_newer_edit_keeps_the_actual_delete_read_key() {
+    let (_temp, db) = fixture();
+    db.ingest(live_batch(&[incoming(
+        GROUP,
+        PN,
+        "original",
+        100,
+        wa::Message::text("Synthetic original"),
+    )]))
+    .await
+    .unwrap();
+    let mut edit = revoke(GROUP, Some(PN), false);
+    let protocol = edit.protocol_message.as_option_mut().unwrap();
+    protocol.r#type = Some(wa::message::protocol_message::Type::MESSAGE_EDIT);
+    protocol.edited_message = MessageField::some(wa::Message::text("Synthetic edited text"));
+    db.ingest(live_batch(&[incoming(
+        GROUP,
+        PN,
+        "newer-edit",
+        300,
+        edit.clone(),
+    )]))
+    .await
+    .unwrap();
+    assert_eq!(
+        load(&db, GROUP).await.messages[0].text,
+        "Synthetic edited text"
+    );
+    db.ingest(live_batch(&[incoming(
+        GROUP,
+        PN,
+        "older-delete",
+        200,
+        revoke(GROUP, Some(PN), false),
+    )]))
+    .await
+    .unwrap();
+    db.ingest(live_batch(&[incoming(GROUP, PN, "late-edit", 400, edit)]))
+        .await
+        .unwrap();
+    let view = load(&db, GROUP).await;
+    assert_eq!(view.messages.len(), 1);
+    assert_eq!(view.messages[0].text, "This message was deleted");
+    db.mark_visible_read_with_receipts(view.chat.id, view.messages[0].id, true)
+        .await
+        .unwrap();
+    let sync = db.next_read_sync().await.unwrap().unwrap();
+    assert_eq!(sync.through, 1_700_000_100);
+    assert_eq!(sync.messages.len(), 1);
+    assert_eq!(sync.messages[0].wire, "older-delete");
+    assert!(db.next_receipt().await.unwrap().is_none());
+    db.call(|c| {
+        let version = c.query_row(
+            "SELECT version FROM mutations WHERE wire_id='original'",
+            [],
+            |r| r.get::<_, i64>(0),
+        )?;
+        assert_eq!(
+            version, 1_700_000_200_000,
+            "a winning deletion retains its own version after late edits"
+        );
+        Ok(())
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
 async fn early_delete_is_visible_once_and_late_history_only_restores_original_metadata() {
     use crate::storage::{prepare_at, tests::MemoryVault};
     let temp = tempfile::tempdir().unwrap();

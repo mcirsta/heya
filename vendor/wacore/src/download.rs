@@ -103,6 +103,8 @@ pub enum MediaType {
     NewsletterMusicArtwork,
     /// Separately encrypted high-resolution document preview.
     DocumentThumbnail,
+    /// Separately encrypted video poster, distinct from video media.
+    VideoThumbnail,
 }
 
 impl MediaType {
@@ -113,6 +115,7 @@ impl MediaType {
             MediaType::Audio => "WhatsApp Audio Keys",
             MediaType::Document => "WhatsApp Document Keys",
             MediaType::DocumentThumbnail => "WhatsApp Document Thumbnail Keys",
+            MediaType::VideoThumbnail => "WhatsApp Video Thumbnail Keys",
             MediaType::History => "WhatsApp History Keys",
             MediaType::GroupHistory => "Group History",
             MediaType::AppState => "WhatsApp App State Keys",
@@ -137,6 +140,7 @@ impl MediaType {
             MediaType::Audio => "audio",
             MediaType::Document => "document",
             MediaType::DocumentThumbnail => "thumbnail-document",
+            MediaType::VideoThumbnail => "thumbnail-video",
             MediaType::History => "md-msg-hist",
             MediaType::GroupHistory => "group-history",
             MediaType::AppState => "md-app-state",
@@ -157,6 +161,7 @@ impl MediaType {
             MediaType::Audio => "/mms/audio",
             MediaType::Document => "/mms/document",
             MediaType::DocumentThumbnail => "/mms/thumbnail-document",
+            MediaType::VideoThumbnail => "/mms/thumbnail-video",
             MediaType::History => "/mms/md-msg-hist",
             MediaType::GroupHistory => "/mms/group-history",
             MediaType::AppState => "/mms/md-app-state",
@@ -578,6 +583,21 @@ fn same_media_host(left: &str, right: &str) -> bool {
 }
 
 impl DownloadUtils {
+    /// Decrypt an initial whole-block video prefix for disposable thumbnail
+    /// decoding, matching WhatsApp Web's partial-media path. A prefix cannot be
+    /// checked against the complete-file MAC/hash. NEVER treat this output as
+    /// authenticated media, persist it as an original, or use it for playback.
+    /// Complete payloads must use the authenticated download/decrypt APIs.
+    pub fn decrypt_video_preview_prefix(bytes: &mut [u8], media_key: &[u8]) -> Result<()> {
+        use aes::cipher::KeyIvInit;
+        if media_key.len() != 32 || bytes.is_empty() || !bytes.len().is_multiple_of(AES_BLOCK_SIZE) {
+            return Err(anyhow!("invalid video preview prefix"));
+        }
+        let (iv, key, _) = Self::get_media_keys(media_key, MediaType::Video)?;
+        let mut cbc = cbc::Decryptor::<aes::Aes256>::new(&key.into(), &iv.into());
+        cbc_decrypt_blocks(&mut cbc, bytes);
+        Ok(())
+    }
     /// Checks transport metadata before acquiring a CDN route or sending HTTP.
     /// Optional hashes remain optional; present hashes must be SHA-256 digests.
     /// Raw transport keys retain their HKDF input contract. The SDK's owned
@@ -1085,6 +1105,39 @@ impl DownloadUtils {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn video_preview_prefix_is_separate_from_authenticated_originals() {
+        let key = [7; 32];
+        let plain = vec![42; 4096];
+        let encrypted =
+            crate::upload::encrypt_media_with_key(&plain, MediaType::Video, Some(&key)).unwrap();
+        let mut prefix = encrypted.data_to_upload[..128].to_vec();
+        assert!(DownloadUtils::verify_and_decrypt(&prefix, &key, MediaType::Video).is_err());
+        DownloadUtils::decrypt_video_preview_prefix(&mut prefix, &key).unwrap();
+        assert_eq!(prefix, &plain[..128]);
+        assert!(DownloadUtils::decrypt_video_preview_prefix(&mut [0; 15], &key).is_err());
+        assert!(DownloadUtils::decrypt_video_preview_prefix(&mut [0; 16], &[0; 31]).is_err());
+        let thumbnail = crate::upload::encrypt_media_with_key(
+            b"synthetic poster",
+            MediaType::VideoThumbnail,
+            Some(&key),
+        )
+        .unwrap();
+        assert_eq!(
+            DownloadUtils::verify_and_decrypt(
+                &thumbnail.data_to_upload,
+                &key,
+                MediaType::VideoThumbnail
+            )
+            .unwrap(),
+            b"synthetic poster"
+        );
+        assert!(
+            DownloadUtils::verify_and_decrypt(&thumbnail.data_to_upload, &key, MediaType::Video)
+                .is_err()
+        );
+    }
 
     #[test]
     fn existing_media_type_numeric_casts_remain_stable() {
@@ -1606,7 +1659,7 @@ mod tests {
     /// Every variant. The exhaustive match in
     /// `every_media_type_builds_download_urls` is what forces a new
     /// one to be named here instead of silently skipping the URL assertions.
-    const ALL_MEDIA_TYPES: [MediaType; 15] = [
+    const ALL_MEDIA_TYPES: [MediaType; 16] = [
         MediaType::Image,
         MediaType::Video,
         MediaType::Audio,
@@ -1622,6 +1675,7 @@ mod tests {
         MediaType::MusicArtwork,
         MediaType::NewsletterMusicArtwork,
         MediaType::DocumentThumbnail,
+        MediaType::VideoThumbnail,
     ];
 
     fn encrypted_media_fixture(
@@ -2192,7 +2246,8 @@ mod tests {
                 | MediaType::ProductCatalogImage
                 | MediaType::MusicArtwork
                 | MediaType::NewsletterMusicArtwork
-                | MediaType::DocumentThumbnail => {}
+                | MediaType::DocumentThumbnail
+                | MediaType::VideoThumbnail => {}
             }
 
             let d = MockDownloadable {

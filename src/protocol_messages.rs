@@ -23,6 +23,9 @@ mod notice_tests;
 #[cfg(test)]
 #[path = "phone_history_tests.rs"]
 mod phone_tests;
+#[cfg(test)]
+#[path = "protocol_sticker_tests.rs"]
+mod sticker_tests;
 use crate::archive::{self, Archive, Batch, Change, ChatMeta, Record};
 use std::sync::{
     Arc,
@@ -63,6 +66,7 @@ pub async fn verify_identity(client: &Client, archive: &Archive) -> archive::Res
 pub struct Ingest {
     pub archive: Archive,
     pub failure: watch::Sender<Option<archive::Error>>,
+    pub startup: Arc<crate::protocol_timing::Startup>,
 }
 impl Ingest {
     fn report(&self, result: archive::Result<()>) -> anyhow::Result<()> {
@@ -80,7 +84,10 @@ impl InboundDurabilityHook for Ingest {
         client: Arc<Client>,
         messages: &[InboundMessage],
     ) -> anyhow::Result<()> {
-        self.report(ingest_messages(&client, &self.archive, messages).await)
+        let started = tokio::time::Instant::now();
+        let result = ingest_messages(&client, &self.archive, messages).await;
+        self.startup.saved(started.elapsed());
+        self.report(result)
     }
 }
 #[async_trait::async_trait]
@@ -92,18 +99,19 @@ impl HistorySyncCaptureHook for Ingest {
         _: Option<wa::message::HistorySyncType>,
         compressed: &[u8],
     ) -> anyhow::Result<()> {
-        self.report(
-            async {
-                verify_identity(&client, &self.archive).await?;
-                self.archive
-                    .capture_history(
-                        crate::protocol_history::chunk_id(compressed),
-                        compressed.to_vec(),
-                    )
-                    .await
-            }
-            .await,
-        )
+        let started = tokio::time::Instant::now();
+        let result = async {
+            verify_identity(&client, &self.archive).await?;
+            self.archive
+                .capture_history(
+                    crate::protocol_history::chunk_id(compressed),
+                    compressed.to_vec(),
+                )
+                .await
+        }
+        .await;
+        self.startup.saved(started.elapsed());
+        self.report(result)
     }
 }
 
@@ -346,39 +354,50 @@ pub fn repair_text(archive: &Archive) -> archive::Result<()> {
         )?;
         change.text.is_none().then_some(change)
     })?;
-    archive.repair_unsupported_messages(4, |raw| {
+    archive.repair_unsupported_messages(5, |raw| {
         let message = codec::message_decode(raw).ok()?;
-        if !message.is_view_once() && message.get_base_message().album_message.is_set() {
-            Some((String::new(), false))
-        } else if !message.is_view_once() && message.get_base_message().image_message.is_set() {
-            Some((
-                format!(
-                    "[Photo] {}",
-                    message
-                        .get_base_message()
-                        .image_message
-                        .caption
-                        .as_deref()
-                        .unwrap_or("")
-                ),
-                true,
-            ))
-        } else if !message.is_view_once() && message.get_base_message().video_message.is_set() {
-            Some((
-                format!(
-                    "[Video] {}",
-                    message
-                        .get_base_message()
-                        .video_message
-                        .caption
-                        .as_deref()
-                        .unwrap_or("")
-                ),
-                true,
-            ))
-        } else {
-            crate::protocol_business::text(&message).map(|text| (text, true))
-        }
+        let (decoded, content, thumbnail) = crate::protocol_content::extract(&message);
+        let (text, visible) =
+            if !message.is_view_once() && message.get_base_message().sticker_message.is_set() {
+                decoded.map(|text| (text, true))
+            } else if !message.is_view_once() && message.get_base_message().album_message.is_set() {
+                Some((String::new(), false))
+            } else if !message.is_view_once() && message.get_base_message().image_message.is_set() {
+                Some((
+                    format!(
+                        "[Photo] {}",
+                        message
+                            .get_base_message()
+                            .image_message
+                            .caption
+                            .as_deref()
+                            .unwrap_or("")
+                    ),
+                    true,
+                ))
+            } else if !message.is_view_once() && message.get_base_message().video_message.is_set() {
+                Some((
+                    format!(
+                        "[Video] {}",
+                        message
+                            .get_base_message()
+                            .video_message
+                            .caption
+                            .as_deref()
+                            .unwrap_or("")
+                    ),
+                    true,
+                ))
+            } else {
+                crate::protocol_business::text(&message).map(|text| (text, true))
+            }?;
+        Some(crate::message_actions::Prepared {
+            text,
+            visible,
+            content,
+            thumbnail,
+            raw: Vec::new(),
+        })
     })?;
     archive.repair_message_content(|raw| {
         let message = codec::message_decode(raw).ok()?;

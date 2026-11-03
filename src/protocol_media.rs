@@ -67,15 +67,7 @@ pub async fn download(
     media: &dyn Downloadable,
     limit: usize,
 ) -> Result<Vec<u8>, Error> {
-    let permit = DOWNLOAD.acquire().await.map_err(|_| Error::Failed)?;
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let _cancel = Cancel(cancelled.clone());
-    let writer = Bounded {
-        bytes: Cursor::new(Vec::new()),
-        cancelled,
-        _permit: permit,
-        limit,
-    };
+    let (_cancel, writer) = writer(limit).await?;
     let result = tokio::time::timeout(
         Duration::from_secs(45),
         client.download_to_writer(media, writer),
@@ -89,6 +81,39 @@ pub async fn download(
         Ok(Err(ClientDownloadError::WriterIo(_))) => Err(Error::TooLarge),
         _ => Err(Error::Failed),
     }
+}
+
+/// Preview-only prefix, deliberately separate from authenticated full media.
+/// It can feed only the finite poster decoder, never a playback/download cache.
+pub async fn video_prefix(
+    client: &Client,
+    video: &whatsapp_rust::waproto::whatsapp::message::VideoMessage,
+    seconds: f64,
+) -> Result<Vec<u8>, Error> {
+    const LIMIT: usize = 4 * 1024 * 1024;
+    let (_cancel, writer) = writer(LIMIT).await?;
+    match tokio::time::timeout(
+        Duration::from_secs(12),
+        client.download_video_preview_to_writer(video, seconds, LIMIT, writer),
+    )
+    .await
+    {
+        Ok(Ok(writer)) => Ok(writer.bytes.into_inner()),
+        _ => Err(Error::Failed),
+    }
+}
+
+async fn writer(limit: usize) -> Result<(Cancel, Bounded), Error> {
+    let permit = DOWNLOAD.acquire().await.map_err(|_| Error::Failed)?;
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let cancel = Cancel(cancelled.clone());
+    let writer = Bounded {
+        bytes: Cursor::new(Vec::new()),
+        cancelled,
+        _permit: permit,
+        limit,
+    };
+    Ok((cancel, writer))
 }
 #[cfg(test)]
 mod tests {

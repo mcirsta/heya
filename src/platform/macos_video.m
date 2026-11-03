@@ -34,6 +34,31 @@
 }
 @end
 
+// Static poster extraction never constructs AVPlayer or reserves audio output.
+// This function runs only inside the parent's deadline-owned finite helper.
+int heya_video_poster(const uint8_t *bytes,size_t length,uint8_t *rgba,size_t capacity,uint32_t *width,uint32_t *height) { @autoreleasepool {
+    if(!bytes || !length || length>100*1024*1024 || !rgba) return 0;
+    HeyaVideoBytes *memory=[HeyaVideoBytes new];
+    memory.bytes=[NSData dataWithBytesNoCopy:(void *)bytes length:length freeWhenDone:NO];
+    dispatch_queue_t queue=dispatch_queue_create("org.heya.video-poster",DISPATCH_QUEUE_SERIAL);
+    AVURLAsset *asset=[AVURLAsset URLAssetWithURL:[NSURL URLWithString:@"heya-memory://video/clip.mp4"] options:nil];
+    [asset.resourceLoader setDelegate:memory queue:queue];
+    AVAssetImageGenerator *generator=[[AVAssetImageGenerator alloc] initWithAsset:asset];
+    generator.appliesPreferredTrackTransform=YES;generator.maximumSize=CGSizeMake(480,480);
+    CGImageRef image=[generator copyCGImageAtTime:kCMTimeZero actualTime:NULL error:NULL];
+    [asset.resourceLoader setDelegate:nil queue:NULL];
+    if(!image) return 0;
+    size_t w=CGImageGetWidth(image),h=CGImageGetHeight(image);
+    if(!w || !h || w>480 || h>480 || w*h*4>capacity) {CGImageRelease(image);return 0;}
+    CGColorSpaceRef color=CGColorSpaceCreateDeviceRGB();
+    CGContextRef context=CGBitmapContextCreate(rgba,w,h,8,w*4,color,kCGImageAlphaPremultipliedLast|kCGBitmapByteOrder32Big);
+    CGColorSpaceRelease(color);
+    if(!context) {CGImageRelease(image);return 0;}
+    CGContextTranslateCTM(context,0,h);CGContextScaleCTM(context,1,-1);
+    CGContextDrawImage(context,CGRectMake(0,0,w,h),image);
+    CGContextRelease(context);CGImageRelease(image);*width=(uint32_t)w;*height=(uint32_t)h;return 1;
+} }
+
 @interface HeyaNativeVideo : NSObject
 @property HeyaVideoBytes *memory;
 @property AVURLAsset *asset;

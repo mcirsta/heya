@@ -68,7 +68,7 @@ impl Archive {
                     // boundary. Do not round it up over a newer same-second row.
                     let row = if let Some(key) = &update.message {
                         let sender=canonical(&tx,&key.sender)?;
-                        tx.query_row("SELECT id FROM messages WHERE chat_id=?1 AND wire_id=?2 AND outgoing=?3 AND stamp=?4 AND (outgoing=1 OR sender=?5 OR source_sender=?6 OR NOT (SELECT is_group FROM chats WHERE id=?1)) ORDER BY id DESC LIMIT 1",params![chat,key.wire,key.outgoing,through,sender,key.sender],|r|r.get::<_,i64>(0)).optional()?.unwrap_or(i64::MAX)
+                        tx.query_row("SELECT id FROM messages WHERE chat_id=?1 AND (wire_id=?2 OR (read_wire<>'' AND read_wire=?2)) AND outgoing=?3 AND stamp=?4 AND (outgoing=1 OR sender=?5 OR source_sender=?6 OR NOT (SELECT is_group FROM chats WHERE id=?1)) ORDER BY id DESC LIMIT 1",params![chat,key.wire,key.outgoing,through,sender,key.sender],|r|r.get::<_,i64>(0)).optional()?.unwrap_or(0)
                     } else {i64::MAX};
                     advance(&tx, chat, through, row)?;
                 }
@@ -196,12 +196,12 @@ pub(super) fn settle(db: &Connection, chat: i32) -> Result<()> {
     }
     // Receipts can precede offline message delivery. Keep unresolved identities
     // encrypted across restarts; never interpret their receipt time as a range.
-    let position: Option<(i64,i64)> = db.query_row("SELECT m.stamp,m.id FROM messages m JOIN pending_reads p ON p.chat_id=m.chat_id AND p.wire_id=m.wire_id WHERE m.chat_id=?1 AND m.outgoing=0 AND m.visible=1 AND (SELECT count(*) FROM messages x WHERE x.chat_id=m.chat_id AND x.wire_id=m.wire_id AND x.outgoing=0)=1 ORDER BY m.stamp DESC,m.id DESC LIMIT 1", [chat], |r| Ok((r.get(0)?,r.get(1)?))).optional()?;
+    let position: Option<(i64,i64)> = db.query_row("SELECT m.stamp,m.id FROM messages m JOIN pending_reads p ON p.chat_id=m.chat_id AND (p.wire_id=m.wire_id OR (m.read_wire<>'' AND p.wire_id=m.read_wire)) WHERE m.chat_id=?1 AND m.outgoing=0 AND m.visible=1 AND (SELECT count(*) FROM messages x WHERE x.chat_id=m.chat_id AND (x.wire_id=p.wire_id OR (x.read_wire<>'' AND x.read_wire=p.wire_id)) AND x.outgoing=0 AND x.visible=1)=1 ORDER BY m.stamp DESC,m.id DESC LIMIT 1", [chat], |r| Ok((r.get(0)?,r.get(1)?))).optional()?;
     if let Some((stamp, row)) = position {
         advance(db, chat, stamp, row)?;
         recount(db, chat)?;
     }
-    db.execute("DELETE FROM pending_reads WHERE chat_id=?1 AND EXISTS(SELECT 1 FROM messages m WHERE m.chat_id=?1 AND m.wire_id=pending_reads.wire_id)", [chat])?;
+    db.execute("DELETE FROM pending_reads WHERE chat_id=?1 AND EXISTS(SELECT 1 FROM messages m WHERE m.chat_id=?1 AND m.visible=1 AND (m.wire_id=pending_reads.wire_id OR (m.read_wire<>'' AND m.read_wire=pending_reads.wire_id)))", [chat])?;
     Ok(())
 }
 pub(super) fn recount(db: &Connection, chat: i32) -> Result<()> {

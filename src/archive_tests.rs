@@ -765,3 +765,39 @@ async fn group_runs_use_canonical_participant_identity_not_display_names() {
     assert_eq!(view.messages[2].sender_id, view.messages[3].sender_id);
     assert!(!view.messages[3].starts_run(Some(&view.messages[2])));
 }
+
+#[tokio::test]
+async fn slow_archive_jobs_report_the_holding_and_waiting_call_sites() {
+    let (_temp, db) = fixture();
+    let holder = db.clone();
+    let (locked, acquired) = tokio::sync::oneshot::channel();
+    let held = tokio::task::spawn_blocking(move || {
+        holder.blocking(|_| {
+            locked.send(()).unwrap();
+            std::thread::sleep(crate::diagnostics::SLOW + Duration::from_millis(400));
+            Ok(())
+        })
+    });
+    acquired.await.unwrap();
+    db.call(|_| Ok(())).await.unwrap();
+    held.await.unwrap().unwrap();
+    // Both reports name this test file: `call` keeps its caller's location.
+    let timings: Vec<(u128, u128)> = crate::diagnostics::reports()
+        .iter()
+        .filter_map(|line| line.split_once(&format!("archive job at {}:", file!())))
+        .filter_map(|(_, rest)| {
+            let (_, rest) = rest.split_once(" waited ")?;
+            let (waited, rest) = rest.split_once(" ms, held ")?;
+            Some((
+                waited.parse().ok()?,
+                rest.strip_suffix(" ms")?.parse().ok()?,
+            ))
+        })
+        .collect();
+    let slow = crate::diagnostics::SLOW.as_millis();
+    assert!(timings.iter().any(|&(_, held)| held >= slow), "{timings:?}");
+    assert!(
+        timings.iter().any(|&(waited, _)| waited >= slow),
+        "{timings:?}"
+    );
+}

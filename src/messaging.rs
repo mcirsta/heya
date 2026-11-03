@@ -79,6 +79,27 @@ pub enum Command {
     },
 }
 
+impl Command {
+    // Fixed names for slow-work reports; never the payload.
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Navigation(_) => "navigation",
+            Self::ManageChat { .. } => "chat management",
+            Self::Folder { .. } => "folder",
+            Self::FetchPhone { .. } => "phone history",
+            Self::ReadVisible { .. } => "read",
+            Self::Action(_) => "message action",
+            Self::Select { .. } => "select",
+            Self::Draft(..) => "draft",
+            Self::Search(_) => "chat search",
+            Self::Unread(_) => "unread filter",
+            Self::Older { .. } => "older history",
+            Self::Send { .. } => "send",
+            Self::NewChat { .. } => "new chat",
+        }
+    }
+}
+
 // Drafts are replaceable state, but sends and navigation are ordering barriers.
 // Drain only consecutive edits for the same chat; retain the first other
 // command so it is neither lost nor moved ahead of the latest draft.
@@ -107,6 +128,8 @@ async fn next_command(
 pub struct SendReply {
     pub request: i32,
     pub chat: i32,
+    // The archive chat that stored the message; a PN/LID merge can redirect `chat`.
+    pub target: i32,
     pub text: String,
     pub saved: bool,
 }
@@ -204,7 +227,7 @@ pub async fn run_with_chat_sources(
     let mut operation = None;
     let mut info_target = None;
     let mut destinations: Arc<[crate::message_actions::Destination]> = Arc::from([]);
-    let mut sent_draft: Option<(i32, String, i32)> = None;
+    let mut sent_draft: Option<([i32; 2], String, i32)> = None;
     let mut history = None;
     let mut search = crate::message_navigation::Search::default();
     let mut jump = crate::message_navigation::Jump::default();
@@ -222,6 +245,7 @@ pub async fn run_with_chat_sources(
     loop {
         let mut notice = String::new();
         let mut page = None;
+        let mut work: Option<(&'static str, std::time::Instant)> = None;
         tokio::select! {
             result=async {match &mut chat_pending {Some(pending)=>pending.await,None=>std::future::pending().await}}=>{
                 chat_pending=None;
@@ -246,7 +270,9 @@ pub async fn run_with_chat_sources(
                 if !enabled && let Some(db)=&archive
                     && let Err(error)=db.discard_receipts().await {notice=error.to_string();}
             }
-            _ = async { match &mut changed {Some(changed)=>{let _=changed.changed().await;},None=>std::future::pending().await} } => {},
+            _ = async { match &mut changed {Some(changed)=>{let _=changed.changed().await;},None=>std::future::pending().await} } => {
+                work=Some(("archive change",std::time::Instant::now()));
+            },
             event=phone_sources.changed(), if phone_sources_open => {
                 if event.is_err() {phone_sources_open=false;}
                 phone_sources.borrow_and_update();
@@ -274,11 +300,12 @@ pub async fn run_with_chat_sources(
             }
             command = next_command(&mut commands, &mut pending_command) => {
                 let Some(command) = command else { return; };
+                work=Some((command.label(),std::time::Instant::now()));
                 let Some(db) = &archive else {
                     if let Command::Send {chat,text,request,..}=command {
                         // A disconnect can release storage after UI submission.
                         // Retain the rejection just like a durable-save reply.
-                        reply=Some(SendReply{chat,text,request,saved:false});
+                        reply=Some(SendReply{chat,target:chat,text,request,saved:false});
                         updates.send_modify(|snapshot|snapshot.reply=reply.clone());
                     } else if let Command::Action(action)=command {
                         let rejected=match action {
@@ -436,14 +463,15 @@ pub async fn run_with_chat_sources(
                     Command::Send {chat,text,request,draft_version} => {
                         trace_send("archive_begin",request);
                         let result = match fresh_id() { Ok(id)=>db.queue(chat,id,text.clone()).await,Err(error)=>Err(error) };
-                        if result.is_ok() { sent_draft=Some((chat,text.clone(),draft_version)); }
+                        let target = *result.as_ref().unwrap_or(&chat);
+                        if result.is_ok() { sent_draft=Some(([chat,target],text.clone(),draft_version)); }
                         trace_send(if result.is_ok() {"archive_saved"} else {"archive_failed"},request);
-                        reply=Some(SendReply {request,chat,text,saved:result.is_ok()});
+                        reply=Some(SendReply {request,chat,target,text,saved:result.is_ok()});
                         // Confirm the durable save before building the next view.
                         // Keep the reply in later snapshots too, so UI coalescing
                         // cannot lose it. No view means the current UI stays put.
                         updates.send_replace(Snapshot {chat_busy:chat_pending.is_some(),revision,reply:reply.clone(),..Snapshot::empty()});
-                        result
+                        result.map(|_| ())
                     }
                     Command::NewChat { phone: value, previous, draft, draft_version, revision: next } => {
                         revision=next;phone_pending=None;
@@ -587,6 +615,16 @@ pub async fn run_with_chat_sources(
                 }
             }
         }
+        // Commands behind this one wait for it; report the backlog it caused.
+        if let Some((label, started)) = work
+            && started.elapsed() >= crate::diagnostics::SLOW
+        {
+            crate::diagnostics::report(format_args!(
+                "messaging {label} took {} ms, {} commands queued",
+                started.elapsed().as_millis(),
+                commands.len()
+            ));
+        }
     }
 }
 
@@ -629,13 +667,14 @@ async fn save_draft(
     chat: i32,
     text: String,
     version: i32,
-    sent: &Option<(i32, String, i32)>,
+    sent: &Option<([i32; 2], String, i32)>,
 ) -> Result<(), Error> {
     // Switching chats can queue the old composer before its durable send reply
-    // reaches Slint. Do not restore that submitted text as an unsent draft.
+    // reaches Slint. Do not restore that submitted text as an unsent draft,
+    // whether the UI still names the sent chat or already shows its merge target.
     if sent
         .as_ref()
-        .is_some_and(|(c, t, v)| *c == chat && *v == version && t == &text)
+        .is_some_and(|(c, t, v)| c.contains(&chat) && *v == version && t == &text)
     {
         return Ok(());
     }

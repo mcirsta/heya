@@ -245,11 +245,16 @@ pub struct DemoState {
 impl Chat {
     fn summary(&self, selected: ChatId) -> ChatSummary {
         let last = self.messages.last();
-        let notice = last.and_then(|m| {
-            m.content
-                .notice
-                .map(|n| n.label(&single_line_summary(&m.sender)))
-        });
+        let notice = last
+            .and_then(|m| {
+                m.content
+                    .notice
+                    .map(|n| n.label(&single_line_summary(&m.sender)))
+            })
+            .or_else(|| {
+                last.filter(|m| m.content.sticker.is_some())
+                    .map(|_| "Sticker".into())
+            });
         ChatSummary {
             id: self.id,
             title: self.title.clone(),

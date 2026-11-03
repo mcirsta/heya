@@ -7,7 +7,7 @@ SELECT c.id, c.jid,
     c.is_group, coalesce(m.outgoing,0),
     substr(coalesce(nullif(trim(s.saved_name),''),nullif(trim(s.profile_name),''),m.sender_name,''),1,?1),
     nullif(trim(s.saved_name),'') IS NOT NULL,
-    coalesce(m.sender,''), substr(coalesce(m.body,''),1,?1),
+    coalesce(m.sender,''), CASE WHEN m.deleted=0 AND json_valid(m.content) AND json_type(m.content,'$.sticker')='object' THEN 'Sticker' ELSE substr(coalesce(m.body,''),1,?1) END,
     CASE WHEN m.deleted=0 AND json_valid(m.content) THEN
         CASE WHEN json_type(m.content,'$.photo')='object'
              THEN substr(coalesce(json_extract(m.content,'$.body'),''),1,?1) END

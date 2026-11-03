@@ -58,9 +58,12 @@ impl Archive {
             let chat=local_chat(db,chat)?;
             unlocked(db,chat)?;
             let jid: String=db.query_row("SELECT jid FROM chats WHERE id=?1 AND listed=1",[chat],|r|r.get(0))?;
-            let range=db.query_row("SELECT stamp,wire_id,sender,outgoing FROM messages WHERE chat_id=?1 AND visible=1 AND (outgoing=0 OR delivery IN ('accepted','delivered','read')) ORDER BY stamp DESC,id DESC LIMIT 1",[chat],|r|Ok(ReadSync {
-                chat,jid:jid.clone(),through:r.get(0)?,version:0,message:Some(ReadMessage {wire:r.get(1)?,sender:r.get(2)?,outgoing:r.get(3)?})
-            })).optional()?;
+            let position=db.query_row("SELECT id,stamp FROM messages WHERE chat_id=?1 AND visible=1 AND CASE WHEN json_valid(content) THEN json_type(content,'$.notice.call') IS NULL ELSE 1 END AND (outgoing=0 OR delivery IN ('accepted','delivered','read')) ORDER BY stamp DESC,id DESC LIMIT 1",[chat],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?))).optional()?;
+            let range=position.map(|(row,through)| {
+                let messages=read_sync::boundary_keys(db,chat,row,through)?;
+                if messages.len()>1000 {return Err(Error::Invalid);}
+                Ok(ReadSync {chat,jid:jid.clone(),through,version:0,messages})
+            }).transpose()?;
             Ok(Target{jid,range})
         }).await
     }

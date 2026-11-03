@@ -15,6 +15,58 @@ synthetic chats. See the
 [README](../README.md) for controls and the [roadmap](roadmap.md) for the remaining
 M0 integration checks.
 
+## Freeze diagnostics and merged-chat sends — 3 November 2026
+
+A live instance stopped responding to chat-list clicks for a while after the
+owner opened a photo-heavy group. Its log held only connection phases, Yama
+`ptrace_scope=1` prevents attaching to the running process, and the main thread
+was idle by inspection time, so the cause could not be recovered. Chat clicks
+take effect only when the serial messaging worker publishes a view with the
+matching revision, and every archive job shares one SQLCipher connection, so a
+long job or a blocked event loop both look like ignored clicks.
+
+The synthetic archive could not reproduce a slow open. A temporary test
+built a 15,000-message group with 30 senders, explicit albums, inferred
+pseudo-album bursts and reactions. In an optimized test build, a cold 100-message open took 22 ms (93
+grouped), 1,000 messages took 24 ms and a gallery lookup 7 ms. This does not
+cover the owner's archive, its photo downloads or native rendering.
+
+Always-on `Heya slow:` lines now cover this case; see the architecture notes. After a recurrence, read them with:
+
+```sh
+journalctl --user -t heya --since today | grep -E 'Heya (slow|send)'
+```
+
+Slow initial connections have a separate cause. Over six launches since 2
+November, the journal showed 0.8–4.1 s in "Connecting", except one 28.7 s launch
+on 3 November with no network events around it. The pinned SDK
+(`src/client/node_io.rs`, `src/client/sessions.rs`) sends the active IQ, waits for
+the offline backlog to drain with a 60-second timeout, then dispatches
+`Connected`; Heya saves every delivered batch before it is acknowledged. Heya now
+logs a per-connection summary of the backlog counts, delivery time and saving
+time (see the architecture notes), so a recurrence separates server delivery from
+Heya's own storage.
+
+The 17:46 launch connected after 27.0 s. The server announced a backlog of one
+receipt after 26.9 s, delivered it 2 ms later, and Heya spent no time saving.
+So the wait came before the backlog announcement, not from storage. A launch at
+19:06 connected in 0.5 s. The summary now also records each dial, the socket-open
+time, whether the app version was cached, fetched or failed, and `<success>`. A
+recurrence then shows whether the time went to dialling and retries, the version
+check, the handshake and login, or the server's backlog. A unit test drives the
+dial wrapper through an abandoned and a successful synthetic dial and ignores a
+dial outside any attempt. The login waiter, the default transport and the
+version stamp have not yet been observed on a slow live connect.
+
+A separate defect left sent text in the composer. The UI cleared it only when
+the reply's chat matched the selection, but a PN/LID merge can publish the
+redirected conversation first. Replies now carry the storing chat, and the
+worker treats both IDs as the submitted draft. A worker test sends through a
+redirected chat; a UI check publishes the merged view before the reply and
+confirms that another chat's composer is never cleared. Watchdog and archive
+tests check reports and call sites with synthetic stalls; they do not
+establish native compositor behaviour.
+
 ## Connected chat-management actions — 24 October 2026
 
 Reproduced an enabled Mute always action returning "Connect to manage chats"

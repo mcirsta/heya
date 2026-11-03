@@ -19,8 +19,10 @@ ffmpeg -nostdin -hide_banner -loglevel error -display_rotation:v:0 90 -i "$heya_
 for heya_clip in clip silent portrait rotated; do
     echo "Checking synthetic H.264 video: $heya_clip"
     heya_aspect=1.77777778
+    heya_partial=0
+    if [[ "$heya_clip" == clip ]]; then heya_partial=1; fi
     if [[ "$heya_clip" == portrait || "$heya_clip" == rotated ]]; then heya_aspect=0.5625; fi
-    HEYA_TEST_VIDEO_ASPECT="$heya_aspect" HEYA_TEST_VIDEO_FILE="$heya_video_dir/$heya_clip.mp4" \
+    HEYA_TEST_VIDEO_PARTIAL="$heya_partial" HEYA_TEST_VIDEO_ASPECT="$heya_aspect" HEYA_TEST_VIDEO_FILE="$heya_video_dir/$heya_clip.mp4" \
         "$heya_test_binary" --ignored --exact video_process::tests::real_playback --nocapture
 done
 python3 "$(dirname -- "${BASH_SOURCE[0]}")/video-worker-check.py" "$heya_app_binary" "$heya_video_dir/clip.mp4"

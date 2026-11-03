@@ -88,11 +88,50 @@ async fn frame_protocol_rejects_oversized_frames_and_nonfinite_progress() {
 }
 
 #[tokio::test]
+async fn poster_helper_emits_once_and_exits_without_a_playback_worker() {
+    let (_commands, controls) = watch::channel(Control::default());
+    let (updates, images) = watch::channel(Status::default());
+    let header = Header {
+        demo: true,
+        silent: true,
+        poster: true,
+        settings: Default::default(),
+    };
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        pump(0, Vec::new(), header, controls, updates),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(images.borrow().frame_number, 1);
+    assert!(images.borrow().frame.is_some());
+    let mut emitter = Emitter(Vec::new());
+    assert!(!emitter.poster_frame(2, 2, &[0; 16]).unwrap());
+    assert!(
+        emitter.0.is_empty(),
+        "all-black extraction leaves the embedded fallback untouched"
+    );
+}
+
+#[tokio::test]
 #[ignore = "run scripts/ui-offscreen.sh --video-check with synthetic H.264/AAC bytes"]
 async fn real_playback() {
     let bytes =
         std::fs::read(std::env::var_os("HEYA_TEST_VIDEO_FILE").expect("synthetic test file"))
             .unwrap();
+    let poster = super::poster(bytes.clone())
+        .await
+        .expect("finite poster decoder");
+    assert!(poster.width <= 480 && poster.height <= 480);
+    if std::env::var("HEYA_TEST_VIDEO_PARTIAL").as_deref() == Ok("1") {
+        let count = (bytes.len() / 4).max(128 * 1024).div_ceil(16) * 16;
+        let prefix = bytes[..count.min(bytes.len())].to_vec();
+        let poster = super::poster(prefix)
+            .await
+            .expect("one-second fast-start prefix yields a poster");
+        assert!(poster.width <= 480 && poster.height <= 480);
+    }
     let (updates, mut snapshots) = watch::channel(Status::default());
     let mut worker = Worker::start(1, bytes, false, true, Default::default(), updates).unwrap();
     let playing = state(&mut snapshots, |s| {

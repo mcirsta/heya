@@ -28,6 +28,10 @@ pub struct Content {
     pub preview: Option<Preview>,
     #[serde(default)]
     pub photo: Option<Photo>,
+    /// Static sticker dimensions. Separate from photos so albums and the
+    /// shared-photo gallery never absorb stickers; pixels share the image cache.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sticker: Option<Photo>,
     #[serde(default)]
     pub audio: Option<Audio>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

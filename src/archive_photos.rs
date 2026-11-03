@@ -11,6 +11,9 @@ pub(crate) struct Row {
     pub original: Option<Vec<u8>>,
 }
 pub(super) const ELIGIBLE: &str = "m.visible=1 AND m.deleted=0 AND (m.expires IS NULL OR m.expires>unixepoch()) AND json_type(nullif(m.content,''),'$.photo')='object' AND NOT EXISTS(SELECT 1 FROM chats c JOIN chat_settings s ON s.jid=c.jid AND s.kind=2 AND s.value=1 WHERE c.id=m.chat_id)";
+// Same storage/worker lifecycle for static stickers. Photo galleries retain
+// ELIGIBLE above so sticker messages remain independent timeline items.
+const CACHED_IMAGE: &str = "m.visible=1 AND m.deleted=0 AND (m.expires IS NULL OR m.expires>unixepoch()) AND (json_type(nullif(m.content,''),'$.photo')='object' OR json_type(nullif(m.content,''),'$.sticker')='object') AND NOT EXISTS(SELECT 1 FROM chats c JOIN chat_settings s ON s.jid=c.jid AND s.kind=2 AND s.value=1 WHERE c.id=m.chat_id)";
 
 impl Archive {
     /// Copy the original, never the downsampled display preview. Recheck access
@@ -19,13 +22,13 @@ impl Archive {
         self.call(move |db| {
             let chat = local_chat(db, chat)?;
             chat_settings::unlocked(db, chat)?;
-            Ok(db.query_row(&format!("SELECT p.original FROM message_photos p JOIN messages m ON m.id=p.message_id WHERE m.id=?1 AND m.chat_id=?2 AND length(p.original)>0 AND length(p.original)<=?3 AND {ELIGIBLE}"), params![id,chat,crate::photos::MAX_BYTES as i64], |r|r.get(0)).optional()?)
+            Ok(db.query_row(&format!("SELECT p.original FROM message_photos p JOIN messages m ON m.id=p.message_id WHERE m.id=?1 AND m.chat_id=?2 AND length(p.original)>0 AND length(p.original)<=?3 AND {CACHED_IMAGE}"), params![id,chat,crate::photos::MAX_BYTES as i64], |r|r.get(0)).optional()?)
         }).await
     }
 
     pub async fn photo_candidates(&self, ids: Vec<i32>) -> Result<Vec<(i32, State)>> {
         self.call(move |db| {
-            let mut query = db.prepare_cached(&format!("SELECT coalesce(p.state,0) FROM messages m LEFT JOIN message_photos p ON p.message_id=m.id WHERE m.id=?1 AND {ELIGIBLE}"))?;
+            let mut query = db.prepare_cached(&format!("SELECT coalesce(p.state,0) FROM messages m LEFT JOIN message_photos p ON p.message_id=m.id WHERE m.id=?1 AND {CACHED_IMAGE}"))?;
             let mut rows = Vec::new();
             for id in ids.into_iter().take(crate::photos::MAX_DEMAND+1) {
                 if let Some(state) = query.query_row([id],|r|r.get::<_,i32>(0)).optional()? {
@@ -45,7 +48,7 @@ impl Archive {
             let mut query = db.prepare_cached(&format!("SELECT coalesce(p.state,0),coalesce(p.revision,0),
                 CASE WHEN coalesce(p.revision,0)=?2 THEN NULL ELSE CASE WHEN length(p.preview)>0 THEN p.preview ELSE m.thumbnail END END,
                 CASE WHEN ?3 AND p.state=2 AND coalesce(p.revision,0)<>?4 THEN p.original ELSE NULL END
-                FROM messages m LEFT JOIN message_photos p ON p.message_id=m.id WHERE m.id=?1 AND {ELIGIBLE}"))?;
+                FROM messages m LEFT JOIN message_photos p ON p.message_id=m.id WHERE m.id=?1 AND {CACHED_IMAGE}"))?;
             let mut rows = Vec::new();
             for id in ids.into_iter().take(crate::photos::MAX_DEMAND + 1) {
                 let viewing = viewer.is_some_and(|v| v.0==id);
@@ -60,7 +63,7 @@ impl Archive {
         self.call(move |db| {
             Ok(db
                 .query_row(
-                    &format!("SELECT m.raw FROM messages m WHERE m.id=?1 AND {ELIGIBLE}"),
+                    &format!("SELECT m.raw FROM messages m WHERE m.id=?1 AND {CACHED_IMAGE}"),
                     [id],
                     |r| Ok(Request { id, raw: r.get(0)? }),
                 )
@@ -79,7 +82,7 @@ impl Archive {
     }
     pub async fn photo_state(&self, request: &Request, state: State) -> Result<bool> {
         let (id, raw) = (request.id, request.raw.clone());
-        let changed = self.call(move |db| Ok(db.execute(&format!("INSERT INTO message_photos(message_id,state) SELECT m.id,?3 FROM messages m WHERE m.id=?1 AND m.raw=?2 AND {ELIGIBLE}
+        let changed = self.call(move |db| Ok(db.execute(&format!("INSERT INTO message_photos(message_id,state) SELECT m.id,?3 FROM messages m WHERE m.id=?1 AND m.raw=?2 AND {CACHED_IMAGE}
             ON CONFLICT(message_id) DO UPDATE SET state=excluded.state WHERE message_photos.state<>2 OR excluded.state=1"),params![id,raw,state as i32])?>0)).await?;
         if changed {
             self.changed();
@@ -94,7 +97,7 @@ impl Archive {
         }
         let (id, raw) = (request.id, request.raw.clone());
         let changed = self.call(move |db| Ok(db.execute(&format!("INSERT INTO message_photos(message_id,original,preview,state,revision)
-            SELECT m.id,?3,?4,2,1 FROM messages m WHERE m.id=?1 AND m.raw=?2 AND {ELIGIBLE}
+            SELECT m.id,?3,?4,2,1 FROM messages m WHERE m.id=?1 AND m.raw=?2 AND {CACHED_IMAGE}
             ON CONFLICT(message_id) DO UPDATE SET original=excluded.original,preview=excluded.preview,state=2,revision=message_photos.revision+1"),params![id,raw,photo.original,photo.preview])?>0)).await?;
         if changed {
             self.changed();

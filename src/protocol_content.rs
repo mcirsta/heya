@@ -86,6 +86,34 @@ fn extract_body(message: &wa::Message) -> (Option<String>, Content, Vec<u8>) {
         return (Some(text), content, Vec::new());
     }
     let base = message.get_base_message();
+    if let Some(sticker) = base.sticker_message.as_option() {
+        if sticker.is_animated == Some(true) || sticker.is_lottie == Some(true) {
+            return (
+                Some("[Animated sticker]".into()),
+                Content::default(),
+                Vec::new(),
+            );
+        }
+        let dimension = |value: Option<u32>| value.filter(|n| *n > 0 && *n <= 2048).unwrap_or(512);
+        return (
+            Some("[Sticker]".into()),
+            Content {
+                body: Some(String::new()),
+                sticker: Some(message_content::Photo {
+                    width: dimension(sticker.width),
+                    height: dimension(sticker.height),
+                    size: sticker.file_length,
+                }),
+                ..Default::default()
+            },
+            sticker
+                .png_thumbnail
+                .as_ref()
+                .filter(|v| v.len() <= crate::message_thumbnails::MAX_ENCODED)
+                .cloned()
+                .unwrap_or_default(),
+        );
+    }
     if let Some(log) = base.call_log_messsage.as_option() {
         let call = crate::protocol_calls::message(log);
         return (

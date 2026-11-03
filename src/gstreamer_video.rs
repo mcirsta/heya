@@ -48,18 +48,19 @@ pub fn play(
     let rate = make("videorate")?;
     rate.set_property("drop-only", true);
     rate.set_property("max-rate", 25i32);
+    let edge = if header.poster { 480 } else { video::EDGE };
     let sink = AppSink::builder()
         .caps(
             &gst::Caps::builder("video/x-raw")
                 .field("format", "RGBA")
-                .field("width", gst::IntRange::<i32>::new(1, video::EDGE as i32))
-                .field("height", gst::IntRange::<i32>::new(1, video::EDGE as i32))
+                .field("width", gst::IntRange::<i32>::new(1, edge as i32))
+                .field("height", gst::IntRange::<i32>::new(1, edge as i32))
                 .field("pixel-aspect-ratio", gst::Fraction::new(1, 1))
                 .build(),
         )
         .max_buffers(1)
         .drop(true)
-        .sync(true)
+        .sync(!header.poster)
         .wait_on_eos(false)
         .build();
     pipeline
@@ -189,7 +190,7 @@ pub fn play(
         for message in bus.iter() {
             match message.view() {
                 gst::MessageView::Error(_) => return Err(Error::Codec),
-                gst::MessageView::Eos(_) => {
+                gst::MessageView::Eos(_) if !header.poster => {
                     return if saw_frame { Ok(()) } else { Err(Error::Codec) };
                 }
                 _ => {}
@@ -210,7 +211,13 @@ pub fn play(
                 .ok_or(Error::Playback)?
                 .map_readable()
                 .map_err(|_| Error::Playback)?;
-            output.frame(width, height, buffer.as_slice())?;
+            if header.poster {
+                if output.poster_frame(width, height, buffer.as_slice())? {
+                    return Ok(());
+                }
+            } else {
+                output.frame(width, height, buffer.as_slice())?;
+            }
             saw_frame = true;
         } else if !desired.playing && need_preroll {
             // appsink has a separate preroll sample when a seek completes paused.
@@ -230,6 +237,9 @@ pub fn play(
                 saw_frame = true;
                 need_preroll = false;
             }
+        }
+        if header.poster && (sink.is_eos() || started.elapsed() > Duration::from_secs(5)) {
+            return Err(Error::Codec);
         }
         if !saw_frame && started.elapsed() > Duration::from_secs(15) {
             return Err(Error::Codec);

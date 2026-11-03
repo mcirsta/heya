@@ -28,16 +28,23 @@ pub fn sharp_enough(bytes: &[u8]) -> bool {
 pub struct Request {
     pub id: i32,
     pub raw: Vec<u8>,
+    pub video: bool,
 }
 #[async_trait::async_trait]
 pub trait Source: Send + Sync {
-    async fn fetch(&self, raw: &[u8]) -> Option<Vec<u8>>;
+    async fn fetch(&self, request: &Request) -> Option<Vec<u8>>;
 }
 
 /// Retain enough pixels for a 340 logical-pixel strip on HiDPI displays. Crop
 /// before resizing so a portrait page does not waste memory below the strip.
 /// JPEG/PNG only, with bounded input, decode and output allocations.
 pub fn decode(bytes: &[u8]) -> Option<Pixels> {
+    decode_image(bytes, false)
+}
+pub fn video_decode(bytes: &[u8]) -> Option<Pixels> {
+    decode_image(bytes, true)
+}
+fn decode_image(bytes: &[u8], video: bool) -> Option<Pixels> {
     if bytes.is_empty() || bytes.len() > MAX_BYTES {
         return None;
     }
@@ -62,11 +69,15 @@ pub fn decode(bytes: &[u8]) -> Option<Pixels> {
     if page.width() == 0 || page.height() == 0 {
         return None;
     }
-    let height = page.height().min((page.width() * HEIGHT / WIDTH).max(1));
-    let strip = page.crop_imm(0, 0, page.width(), height);
-    let width = strip.width().min(WIDTH);
-    let height = strip.height().min(HEIGHT);
-    let strip = strip.thumbnail(width, height).into_rgba8();
+    let strip = if video {
+        let edge = page.width().max(page.height()).min(480);
+        page.thumbnail(edge, edge)
+    } else {
+        let height = page.height().min((page.width() * HEIGHT / WIDTH).max(1));
+        let strip = page.crop_imm(0, 0, page.width(), height);
+        strip.thumbnail(strip.width().min(WIDTH), strip.height().min(HEIGHT))
+    }
+    .into_rgba8();
     Some(Pixels {
         width: strip.width(),
         height: strip.height(),
@@ -75,6 +86,9 @@ pub fn decode(bytes: &[u8]) -> Option<Pixels> {
 }
 fn prepare(bytes: Vec<u8>) -> Option<Vec<u8>> {
     let pixels = decode(&bytes)?;
+    encode(pixels)
+}
+pub fn encode(pixels: Pixels) -> Option<Vec<u8>> {
     let mut preview = Vec::new();
     image::codecs::png::PngEncoder::new_with_quality(
         &mut preview,
@@ -124,10 +138,17 @@ pub async fn fetch_worker(
             }
             if let Some(request) = archive.document_preview_request(ids).await? {
                 let work = async {
-                    let bytes = source.fetch(&request.raw).await?;
-                    crate::photos::blocking(move || prepare(bytes))
-                        .await
-                        .flatten()
+                    let bytes = source.fetch(&request).await?;
+                    let video = request.video;
+                    crate::photos::blocking(move || {
+                        if video {
+                            encode(video_decode(&bytes)?)
+                        } else {
+                            prepare(bytes)
+                        }
+                    })
+                    .await
+                    .flatten()
                 };
                 tokio::pin!(work);
                 let result = loop {

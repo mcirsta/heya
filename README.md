@@ -45,6 +45,8 @@ Received-video playback uses GStreamer on Linux and a native AVFoundation path
 on macOS, with explicit play/pause, seek, mute and inline/expanded views. See
 [video playback and validation limits](docs/video-playback.md); native macOS
 video validation remains open.
+Nearby video cards use supplied sharp posters or generate a frame before playback;
+the existing preview cache preserves the result without leaving a decoder running.
 
 macOS startup diagnostics are saved automatically under `~/Library/Logs/Heya`.
 If the process appears in the Dock without a window, retain the newest logs and
@@ -374,6 +376,11 @@ next-clip playback and video playback remain pending. Codec and output failures 
 reported with retry; real account/audio-device compatibility needs a deliberate
 check after the synthetic silent-sink tests.
 
+Received static WebP stickers display with transparency on the chat background.
+They reuse the bounded photo worker, automatic-download preference and image cache;
+previously unsupported saved stickers upgrade on startup. Animated/Lottie stickers
+currently show a descriptive label. See [sticker support](docs/stickers.md).
+
 The attachment menu’s **Download** opens the Linux desktop’s native **Save As**
 dialog and saves the original photo, audio, document, video or sticker. Settings →
 Files selects its initial folder, defaulting to the system Downloads directory
@@ -383,7 +390,7 @@ The Saved confirmation disappears after three seconds; failures stay visible for
 Transfers stream to a private partial file outside the UI thread; the final file
 appears only after authentication and integrity checks succeed. Existing files
 remain intact on failure or cancellation. Changing chats does not redirect the
-save. Cached original photos and audio can be saved offline; other attachments
+save. Cached original photos, static stickers and audio can be saved offline; other attachments
 require a connection. Saved files are ordinary, unencrypted files at the location
 you choose and are not opened automatically. Linux requires a working
 `xdg-desktop-portal` file chooser backend. See [downloads](docs/downloads.md) for
@@ -537,6 +544,8 @@ Set `HEYA_BENCHMARK_MESSAGE_CARDS=1` to replace the timeline with alternating
 link previews and business actions, including synthetic thumbnail textures.
 Use `HEYA_BENCHMARK_PHOTOS=1` for received-photo rows and worker-published pixels;
 `--demo --demo-chat 9` provides the small photo layout fixture.
+`HEYA_BENCHMARK_STICKERS=1` uses static stickers instead;
+set `HEYA_DEMO_STICKERS=1` with `--demo --demo-chat 9` for the small sticker fixture.
 `--demo --demo-chat 10` shows received audio; demo playback uses a silent output.
 `--demo --demo-chat 16` shows an empty conversation without accessing an account.
 `HEYA_BENCHMARK_AUDIO=1` measures 10,000 audio rows with silent GStreamer playback.

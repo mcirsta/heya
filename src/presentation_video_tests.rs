@@ -19,6 +19,21 @@ pub(crate) fn check_ui() {
         presentation::conversation(&ui, &view, true);
         ui.show().unwrap();
         ui.invoke_layout_timeline();
+        let geometry = (ui.get_timeline_y(), ui.get_timeline_height());
+        presentation::timeline::take_samples();
+        let low = Arc::new(crate::photos::Pixels {
+            width: 72,
+            height: 40,
+            rgba: vec![128; 72 * 40 * 4],
+        });
+        crate::presentation_content::publish_images(&ui, &Arc::new([(id, low)].into()));
+        crate::presentation_content::publish_images(&ui, &Arc::new([(id, pixels.clone())].into()));
+        assert_eq!(
+            geometry,
+            (ui.get_timeline_y(), ui.get_timeline_height()),
+            "a sharper poster must not shift the chat"
+        );
+        assert_eq!(presentation::timeline::take_samples().measured_rows, 0);
         while requests.try_recv().is_ok() {}
         ui.invoke_video_control(id, 0, 0.);
         assert!(matches!(requests.try_recv().unwrap(),Command::Toggle(i) if i==id));

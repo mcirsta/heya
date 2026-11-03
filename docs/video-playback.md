@@ -7,6 +7,12 @@ recording a voice message stops video. Playback is explicit, including videos
 marked as GIFs; GIF looping, animated stickers, video notes and sending videos
 remain separate work. View-once videos are excluded.
 
+Before playback, nearby cards now prefer a cached or supplied high-resolution
+poster. When unavailable, ordinary videos generate one from their cached original
+or a bounded initial network portion, following WhatsApp Web's conversation
+preview policy. GIF-style videos keep supplied previews; view-once stays excluded.
+See [video poster selection](video-previews.md) for protocol and lifecycle bounds.
+
 Linux uses the existing GStreamer dependencies. A seekable in-memory `appsrc`
 feeds `decodebin`, a bounded video queue, RGBA conversion/scaling and `appsink`.
 An audio branch is created only when an audio track is discovered and uses the

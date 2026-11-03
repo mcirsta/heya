@@ -23,6 +23,111 @@ fn png(w: u32, h: u32) -> Vec<u8> {
         .unwrap();
     output.into_inner()
 }
+fn webp() -> Vec<u8> {
+    let pixels = crate::fixtures::sticker_pixels();
+    let mut output = Vec::new();
+    image::codecs::webp::WebPEncoder::new_lossless(&mut output)
+        .encode(
+            &pixels.rgba,
+            pixels.width,
+            pixels.height,
+            image::ExtendedColorType::Rgba8,
+        )
+        .unwrap();
+    output
+}
+fn sticker_record(id: &str) -> Record {
+    let mut row = record(id);
+    row.text = "[Sticker]".into();
+    row.content.body = Some(String::new());
+    row.content.sticker = Some(crate::message_content::Photo {
+        width: 512,
+        height: 512,
+        size: Some(13862),
+    });
+    row.content.has_attachment = true;
+    row
+}
+
+#[test]
+fn transparent_webp_originals_and_previews_keep_their_alpha() {
+    let original = webp();
+    let cached = prepare(original.clone()).unwrap();
+    assert_eq!(cached.original, original);
+    let pixels = decode(&cached.preview, INLINE_EDGE).unwrap();
+    assert_eq!((pixels.width, pixels.height), (256, 256));
+    assert_eq!(pixels.rgba[3], 0);
+    assert_eq!(pixels.rgba[(128 * 256 + 128) * 4 + 3], 255);
+    assert_eq!(decode(&original, INLINE_EDGE).unwrap().rgba, pixels.rgba);
+    assert!(prepare(original[..original.len() / 2].to_vec()).is_none());
+    assert!(prepare(vec![0; 128]).is_none());
+}
+
+#[tokio::test]
+async fn stickers_share_the_guarded_image_cache_but_never_the_photo_gallery() {
+    let (_temp, db) = fixture();
+    let id = insert(&db, vec![sticker_record("static-sticker")]).await[0];
+    let chat = db.create_chat(PN.into()).await.unwrap();
+    let request = db.photo_request(id).await.unwrap().unwrap();
+    let original = webp();
+    assert!(
+        db.save_photo(&request, prepare(original.clone()).unwrap())
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        db.photo_candidates(vec![id]).await.unwrap(),
+        vec![(id, State::Ready)]
+    );
+    assert!(db.photo_gallery(chat, id).await.unwrap().is_none());
+    assert_eq!(
+        db.clipboard_photo(chat, id).await.unwrap(),
+        Some(original.clone())
+    );
+    let download = db.download_request(chat, id).await.unwrap().unwrap();
+    assert_eq!(
+        db.download_cached(&download, crate::downloads::Kind::Sticker)
+            .await
+            .unwrap(),
+        Some(original.clone())
+    );
+    let view = db
+        .view(chat, 100, String::new(), false, false)
+        .await
+        .unwrap();
+    assert_eq!(
+        view.chats.iter().find(|c| c.id == chat).unwrap().preview,
+        "Sticker"
+    );
+    let mut revoke = record("revoke-sticker");
+    revoke.visible = false;
+    revoke.change = Some(Change {
+        id: "static-sticker".into(),
+        sender: PN.into(),
+        text: None,
+        version: 2,
+        raw: Vec::new(),
+    });
+    db.ingest(Batch {
+        messages: vec![revoke],
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    assert!(
+        !db.save_photo(&request, prepare(original).unwrap())
+            .await
+            .unwrap()
+    );
+    assert!(db.photo_candidates(vec![id]).await.unwrap().is_empty());
+    assert!(db.clipboard_photo(chat, id).await.unwrap().is_none());
+    assert!(
+        db.download_cached(&download, crate::downloads::Kind::Sticker)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
 fn envelope() -> wa::Message {
     let mut image = wa::message::ImageMessage::default();
     image.width = Some(1600);
@@ -166,7 +271,7 @@ async fn photos_upgrade_reopen_encrypted_and_keep_exact_duplicate_cache() {
     old.content = Default::default();
     old.thumbnail.clear();
     insert(&db, vec![old]).await;
-    db.blocking(|c|{c.execute_batch("DROP TRIGGER discard_changed_document_preview; DROP TABLE document_previews; DROP TABLE outgoing_reads; DROP INDEX messages_action_wire; DROP TABLE reply_drafts; DROP TABLE reactions; DROP TRIGGER discard_changed_audio; DROP TABLE message_audio; DROP TRIGGER discard_changed_photo; DROP TABLE message_photos; DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; ALTER TABLE mutations DROP COLUMN raw; DROP TABLE outgoing_receipts; DROP TABLE chat_settings; DROP INDEX messages_album; ALTER TABLE messages DROP COLUMN album_index; ALTER TABLE messages DROP COLUMN album; PRAGMA user_version=5; INSERT OR REPLACE INTO metadata(key,value) VALUES('content_decoder_revision','1');")?;Ok(())}).unwrap();
+    db.blocking(|c|{c.execute_batch("DROP TRIGGER discard_changed_document_preview; DROP TABLE document_previews; DROP TABLE outgoing_reads; DROP INDEX messages_action_wire; DROP TABLE reply_drafts; DROP TABLE reactions; DROP TRIGGER discard_changed_audio; DROP TABLE message_audio; DROP TRIGGER discard_changed_photo; DROP TABLE message_photos; DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; ALTER TABLE mutations DROP COLUMN raw; DROP TABLE outgoing_receipts; DROP TABLE chat_settings; DROP INDEX messages_album; ALTER TABLE messages DROP COLUMN album_index; ALTER TABLE messages DROP COLUMN album; DROP INDEX messages_read_wire; ALTER TABLE messages DROP COLUMN read_wire; PRAGMA user_version=5; INSERT OR REPLACE INTO metadata(key,value) VALUES('content_decoder_revision','1');")?;Ok(())}).unwrap();
     drop(db);
     let db = Archive::open(files.clone(), KEY).unwrap();
     crate::protocol_messages::repair_text(&db).unwrap();
@@ -326,9 +431,9 @@ async fn started(rx: &mut mpsc::UnboundedReceiver<()>) {
 }
 
 #[tokio::test]
-async fn photo_downloads_obey_visibility_preference_offline_retry_and_cancellation() {
+async fn photo_and_sticker_downloads_obey_visibility_preference_offline_retry_and_cancellation() {
     let (_temp, db) = fixture();
-    let ids = insert(&db, vec![photo_record("a"), photo_record("b")]).await;
+    let ids = insert(&db, vec![sticker_record("a"), photo_record("b")]).await;
     let (tx, mut calls) = mpsc::unbounded_channel();
     let (cancelled, mut cancellations) = watch::channel(0);
     let source = Arc::new(Fake {
@@ -379,7 +484,7 @@ async fn photo_downloads_obey_visibility_preference_offline_retry_and_cancellati
             .await
             .is_err()
     );
-    *source.result.lock().unwrap() = Ok(png(1600, 1200));
+    *source.result.lock().unwrap() = Ok(webp());
     online.send_replace(false);
     demand.send_modify(|d| d.retry = Some((ids[0], 2)));
     assert!(

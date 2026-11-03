@@ -30,8 +30,44 @@
           "vendored_path": "vendor/wacore",
           "status": "local, not submitted",
           "reason": "Associated-child album wrappers are not unwrapped by the public message/media helpers, including view-once detection"
+        },
+        {
+          "path": "patches/video-preview-core.patch",
+          "sha256": "a195cf77e9de878e1f4f5234bd9a7654508f271e219338a03686be674bf29269",
+          "crate": "wacore",
+          "vendored_path": "vendor/wacore",
+          "status": "local, not submitted",
+          "reason": "Video thumbnail HKDF/MMS type and explicitly preview-only initial-block CBC decoding"
+        },
+        {
+          "path": "patches/video-preview-client.patch",
+          "sha256": "b217c099333bfd042092be0287304a6d1eb9e0ddacf51b0d465f0dbbd2181b4d",
+          "crate": "whatsapp-rust",
+          "vendored_path": "vendor/whatsapp-rust",
+          "status": "local, not submitted",
+          "reason": "Bounded ranged video-poster transport behind the public SDK client; original download APIs unchanged"
         }
-      ]
+      ],
+      "video_preview_reference": {
+        "reviewed_on": "2026-11-03",
+        "modules": [
+          "WAWebMediaDownloadMmsThumbnail",
+          "WAWebDownloadVideoThumbnail",
+          "WAWebGetMediaDownloadByterange",
+          "WAWebCryptoDecryptPartialMedia",
+          "WAWebCryptoMediaTypeInfo"
+        ],
+        "bundles": [
+          {
+            "url": "https://static.whatsapp.net/rsrc.php/v4izAp4/yG/l/en_US-j/VqAKj5YSriBEJC63gonxl161bdVNXjDXQWccp9_FixzWa3VChRD1-8-BIJJc6KuTipteFGUkYqT7O0zFg8gynLKTIDKAQTM8HsFcgjUKBsGUBJosOX1VeQVx7eJPkgcKFtUlBLyPrSzMppaWLKKR4rG5wkNmhlqGuCvKVqJrL5f2e0Kw5W07gZ4Hvm9PycYmAtRzmhFfV5XC22PJnG7iiY1OU4Ur8Mq49gve1Yd0WtK7V2SdJo.js",
+            "sha256": "f2d55f03f265b6e98a27557551cbe42e52af852fdc9cc808ec48ad2bfbe73b41"
+          },
+          {
+            "url": "https://static.whatsapp.net/rsrc.php/v4i9SA4/yv/l/en_US-j/q27BKpArz0D.js",
+            "sha256": "c0e0f68688dc9b4cf787e9ec6ec14155ac831c244e1ab0961f8ba95f88e6f645"
+          }
+        ]
+      }
     },
     "zapfast": {
       "repository": "https://github.com/crmne/zapfast",

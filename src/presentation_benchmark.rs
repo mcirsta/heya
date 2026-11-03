@@ -212,7 +212,8 @@ pub fn start(
         if audio { "on" } else { "off" }
     );
     let album_grid = std::env::var_os("HEYA_BENCHMARK_ALBUM_GRID").is_some();
-    let photos = album_grid || std::env::var_os("HEYA_BENCHMARK_PHOTOS").is_some();
+    let stickers = std::env::var_os("HEYA_BENCHMARK_STICKERS").is_some();
+    let photos = stickers || album_grid || std::env::var_os("HEYA_BENCHMARK_PHOTOS").is_some();
     let wheel = std::env::var_os("HEYA_BENCHMARK_WHEEL").is_some();
     println!(
         "UI benchmark scroll input: {}",
@@ -228,6 +229,10 @@ pub fn start(
     );
     if photos {
         fixtures::fill_photos(&mut state.chats[5].messages);
+    }
+    if stickers {
+        fixtures::fill_stickers(&mut state.chats[5].messages);
+        println!("Static stickers: transparent synthetic pixels, existing bounded image worker");
     }
     if album_grid {
         for (index, chunk) in state.chats[5].messages.chunks_mut(38).enumerate() {
@@ -258,13 +263,19 @@ pub fn start(
             state.chats[5].messages.clone(),
             photo_archive::Media::Documents,
         )
-    } else if photos && (album_grid || std::env::var_os("HEYA_BENCHMARK_PHOTO_ARCHIVE").is_some()) {
+    } else if photos
+        && (stickers || album_grid || std::env::var_os("HEYA_BENCHMARK_PHOTO_ARCHIVE").is_some())
+    {
         println!("Photo source: temporary encrypted archive, per-message worker decoding");
         photo_archive::start(
             ui,
             runtime,
             state.chats[5].messages.clone(),
-            photo_archive::Media::Photos,
+            if stickers {
+                photo_archive::Media::Stickers
+            } else {
+                photo_archive::Media::Photos
+            },
         )
     } else {
         Vec::new()

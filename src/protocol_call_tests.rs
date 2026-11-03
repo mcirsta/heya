@@ -223,7 +223,8 @@ async fn synced_calls_update_one_row_preserve_messages_and_never_send_message_re
             .await
             .unwrap()
             .unwrap()
-            .message
+            .messages
+            .last()
             .unwrap()
             .wire,
         "after-call"

@@ -163,7 +163,7 @@ pub async fn present(
                     "SELECT revision, CASE WHEN revision=?2 THEN NULL ELSE bytes END, document FROM (
                         SELECT CASE WHEN length(p.preview)>0 THEN p.id ELSE 0 END revision,
                         CASE WHEN length(p.preview)>0 THEN p.preview ELSE m.thumbnail END bytes,
-                        json_type(nullif(m.content,''),'$.document')='object' document
+                        CASE WHEN json_type(nullif(m.content,''),'$.document')='object' THEN 1 WHEN json_type(nullif(m.content,''),'$.video')='object' THEN 2 ELSE 0 END document
                         FROM messages m LEFT JOIN document_previews p ON p.message_id=m.id
                         WHERE m.id=?1 AND m.visible=1 AND m.deleted=0
                         AND (m.expires IS NULL OR m.expires>unixepoch())
@@ -173,7 +173,7 @@ pub async fn present(
                 for id in ids {
                     let entry = query.query_row(
                         rusqlite::params![id, cached.get(&id).copied().unwrap_or(-1), crate::document_previews::MAX_BYTES as i64],
-                        |r| Ok((r.get::<_,i64>(0)?,r.get::<_,Option<Vec<u8>>>(1)?,r.get::<_,Option<bool>>(2)?.unwrap_or(false))),
+                        |r| Ok((r.get::<_,i64>(0)?,r.get::<_,Option<Vec<u8>>>(1)?,r.get::<_,i32>(2)?)),
                     ).optional()?;
                     if let Some((revision,bytes,document)) = entry {
                         entries.push((id,revision,bytes,document));
@@ -201,8 +201,10 @@ pub async fn present(
                             id,
                             revision,
                             bytes.map(|b| {
-                                if document {
+                                if document == 1 {
                                     crate::document_previews::decode(&b)
+                                } else if document == 2 {
+                                    crate::document_previews::video_decode(&b)
                                 } else {
                                     decode(&b)
                                 }

@@ -91,7 +91,7 @@ fn bind(ui: &AppWindow, tx: mpsc::Sender<Command>) {
             && !ui.get_timeline_rows().iter().any(|r| {
                 r.message.id == id
                     && r.message.actionable
-                    && r.message.has_photo
+                    && (r.message.has_photo || r.message.has_sticker)
                     && r.message.photo_state == 2
             })
         {

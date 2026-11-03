@@ -2,14 +2,48 @@
 use crate::{
     AppWindow,
     connection::{Failure, Phase, Request, Snapshot},
+    diagnostics,
     messaging::{self, Command},
     presentation, protocol,
 };
 use slint::{ComponentHandle, Model};
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    cell::Cell,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Instant,
 };
+
+thread_local! {
+    // The newest unanswered navigation revision, when its first click arrived
+    // and how many clicks it absorbed. Only the UI thread uses it.
+    static NAVIGATION: Cell<Option<(i32, Instant, u32)>> = const { Cell::new(None) };
+}
+
+fn navigation_requested(revision: i32) {
+    let (started, clicks) = NAVIGATION
+        .get()
+        .map_or((Instant::now(), 0), |(_, started, clicks)| {
+            (started, clicks)
+        });
+    NAVIGATION.set(Some((revision, started, clicks + 1)));
+}
+
+fn navigation_shown(revision: i32) {
+    if let Some((pending, started, clicks)) = NAVIGATION.get()
+        && pending == revision
+    {
+        NAVIGATION.set(None);
+        if started.elapsed() >= diagnostics::SLOW {
+            diagnostics::report(format_args!(
+                "chat navigation took {} ms across {clicks} requests",
+                started.elapsed().as_millis()
+            ));
+        }
+    }
+}
 use tokio::{
     runtime::Runtime,
     sync::{mpsc, watch},
@@ -33,8 +67,10 @@ pub(crate) async fn present_latest<T: Clone + Send + Sync + 'static>(
         let latest = snapshots.clone();
         let pending = pending.clone();
         let apply = apply.clone();
+        let scheduled = Instant::now();
         if weak
             .upgrade_in_event_loop(move |ui| {
+                let started = Instant::now();
                 // Clear before reading: updates arriving during/after this read
                 // must be able to schedule the next callback.
                 pending.store(false, Ordering::Release);
@@ -42,7 +78,19 @@ pub(crate) async fn present_latest<T: Clone + Send + Sync + 'static>(
                 // watch lock before updating Slint so producers never wait for
                 // UI layout while publishing the next snapshot.
                 let snapshot = latest.borrow().clone();
+                let step = diagnostics::ui_step(std::any::type_name::<T>());
                 apply(&ui, &snapshot);
+                drop(step);
+                // A long wait means other event-loop work froze the window.
+                let (waited, applied) = (started - scheduled, started.elapsed());
+                if waited >= 2 * diagnostics::SLOW_UI || applied >= diagnostics::SLOW_UI {
+                    diagnostics::report(format_args!(
+                        "UI update {} waited {} ms, applied in {} ms",
+                        std::any::type_name::<T>(),
+                        waited.as_millis(),
+                        applied.as_millis()
+                    ));
+                }
             })
             .is_err()
         {
@@ -423,6 +471,7 @@ pub(crate) fn bind_messages(ui: &AppWindow, commands: mpsc::Sender<Command>) {
                 },
             ) {
                 ui.set_live_revision(revision);
+                navigation_requested(revision);
                 ui.set_query("".into());
                 ui.set_unread_only(false);
             }
@@ -489,6 +538,7 @@ pub(crate) fn bind_messages(ui: &AppWindow, commands: mpsc::Sender<Command>) {
                     },
                 ) {
                     ui.set_live_revision(revision);
+                    navigation_requested(revision);
                 }
             }
         }
@@ -584,6 +634,7 @@ pub(crate) fn bind_messages(ui: &AppWindow, commands: mpsc::Sender<Command>) {
                     },
                 ) {
                     ui.set_live_revision(revision);
+                    navigation_requested(revision);
                     ui.set_show_conversation(true);
                     ui.set_new_chat_open(false);
                     ui.set_settings_open(false);
@@ -639,12 +690,19 @@ pub(crate) fn publish_messages(ui: &AppWindow, snapshot: &messaging::Snapshot) {
     {
         messaging::trace_send("ui_reply", reply.request);
         ui.set_send_pending(false);
-        if reply.saved
-            && reply.chat == ui.get_selected_id()
-            && ui.get_draft() == reply.text
-            && ui.get_draft_revision() == ui.get_send_draft_version()
-        {
-            ui.set_draft("".into());
+        if reply.saved {
+            // A PN/LID merge published before this reply already shows the target.
+            let moved = ![reply.chat, reply.target].contains(&ui.get_selected_id());
+            let changed = ui.get_draft() != reply.text;
+            let edited = ui.get_draft_revision() != ui.get_send_draft_version();
+            if !moved && !changed && !edited {
+                ui.set_draft("".into());
+            } else {
+                // Only fixed flags: never chat IDs or text.
+                eprintln!(
+                    "Heya send: kept composer text after a saved send (other_chat={moved} text_changed={changed} edited={edited})"
+                );
+            }
         }
         if !reply.saved {
             ui.set_notice("The message could not be saved. Your draft has been kept.".into());
@@ -668,6 +726,7 @@ pub(crate) fn publish_messages(ui: &AppWindow, snapshot: &messaging::Snapshot) {
         // Release the navigation gate so editing/retry remains possible. Keep
         // the last chat's capability; the archive rechecks it on every send.
         ui.set_live_shown_revision(snapshot.revision);
+        navigation_shown(snapshot.revision);
         ui.set_navigation_shown(ui.get_navigation_request());
         ui.set_message_search_busy(false);
         if let Some(reply) = snapshot.history {
@@ -720,6 +779,7 @@ pub(crate) fn publish_messages(ui: &AppWindow, snapshot: &messaging::Snapshot) {
         ui.set_older_count(0);
     }
     ui.set_live_shown_revision(snapshot.revision);
+    navigation_shown(snapshot.revision);
     crate::presentation_navigation::publish(ui, snapshot);
     if let Some(reply) = snapshot.history {
         presentation::timeline::history_finished(ui, reply);

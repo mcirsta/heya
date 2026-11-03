@@ -27,6 +27,7 @@ fn contains(parent: &ElementHandle, item: &ElementHandle) {
 // Runs within the suite's one toolkit thread; synthetic pixels, private test backend.
 pub(crate) fn check_ui() {
     check_grid();
+    check_stickers();
     let ui = AppWindow::new().unwrap();
     ui.set_demo_mode(true);
     ui.set_show_conversation(true);
@@ -274,6 +275,87 @@ pub(crate) fn check_ui() {
         }
     }
     check_wheel_motion(&ui, &view, &sample);
+}
+
+fn check_stickers() {
+    let ui = AppWindow::new().unwrap();
+    ui.set_demo_mode(true);
+    ui.set_show_conversation(true);
+    let demand = bind(&ui);
+    let mut demo = fixtures::demo();
+    demo.select(9);
+    let mut view = demo.conversation();
+    let mut messages = view.messages.to_vec();
+    fixtures::fill_stickers(&mut messages);
+    let pixels = Arc::new(fixtures::sticker_pixels());
+    for group in [false, true] {
+        view.is_group = group;
+        for dark in [false, true] {
+            ui.global::<Theme>().set_dark(dark);
+            for width in [520., 1200.] {
+                ui.window().set_size(slint::LogicalSize::new(width, 900.));
+                for message in &messages {
+                    view.messages = Arc::from([message.clone()]);
+                    presentation::conversation(&ui, &view, true);
+                    ui.invoke_layout_timeline();
+                    assert_eq!(demand.borrow().visible, vec![message.id]);
+                    let before = (ui.get_timeline_height(), ui.get_timeline_y());
+                    for state in [
+                        photos::State::Idle,
+                        photos::State::Loading,
+                        photos::State::Ready,
+                        photos::State::Failed,
+                    ] {
+                        publish(
+                            &ui,
+                            &Arc::new(photos::Snapshot {
+                                rows: [(
+                                    message.id,
+                                    photos::Photo {
+                                        state,
+                                        image: (state == photos::State::Ready)
+                                            .then(|| pixels.clone()),
+                                    },
+                                )]
+                                .into(),
+                                ..Default::default()
+                            }),
+                        );
+                        assert_eq!(
+                            before,
+                            (ui.get_timeline_height(), ui.get_timeline_y()),
+                            "sticker loading must not move the transcript"
+                        );
+                        let item = ElementHandle::find_by_element_type_name(&ui, "TimelineItem")
+                            .find(|e| e.id().as_deref() != Some("AppWindow::measure-row"))
+                            .unwrap();
+                        let bubble = child(&item, "MessageBubble::bubble");
+                        let sticker = child(&item, "MessageBubble::sticker");
+                        contains(&item, &bubble);
+                        contains(&bubble, &sticker);
+                        contains(&bubble, &child(&item, "MessageBubble::stamp"));
+                        assert!(sticker.size().width <= 176.5 && sticker.size().height <= 176.5);
+                        assert!(
+                            item.query_descendants()
+                                .match_id("MessageBubble::tail")
+                                .find_all()
+                                .is_empty()
+                        );
+                        ui.invoke_activate_photo(message.id);
+                        assert_eq!(ui.get_photo_viewer_id(), 0, "a sticker stays in the chat");
+                        assert!(demand.borrow().viewer.is_none());
+                        if state == photos::State::Failed || state == photos::State::Idle {
+                            assert_eq!(demand.borrow().retry.unwrap().0, message.id);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    view.messages = Arc::from([]);
+    presentation::conversation(&ui, &view, true);
+    ui.invoke_request_photos();
+    assert!(demand.borrow().ids().is_empty());
 }
 
 fn check_grid() {

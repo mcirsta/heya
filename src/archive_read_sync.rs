@@ -8,14 +8,34 @@ pub struct ReadSync {
     pub jid: String,
     pub through: i64,
     pub version: i64,
-    pub message: Option<ReadMessage>,
+    pub messages: Vec<ReadMessage>,
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ReadMessage {
     pub wire: String,
     pub sender: String,
     pub outgoing: bool,
+}
+
+// Timestamps have one-second precision. Include every observed key in the
+// boundary second so a changed tombstone before the tail is not missed.
+// The extra row detects overflow; callers must not publish a partial range.
+pub(super) fn boundary_keys(
+    db: &Connection,
+    chat: i32,
+    row: i64,
+    stamp: i64,
+) -> Result<Vec<ReadMessage>> {
+    Ok(db.prepare_cached(
+        "SELECT coalesce(nullif(read_wire,''),wire_id),source_sender,outgoing
+         FROM messages WHERE chat_id=?1 AND stamp=?2 AND id<=?3 AND visible=1
+           AND CASE WHEN json_valid(content) THEN json_type(content,'$.notice.call') IS NULL ELSE 1 END
+           AND (outgoing=0 OR delivery IN ('accepted','delivered','read'))
+         ORDER BY id LIMIT 1001",
+    )?.query_map(params![chat,stamp,row], |r| Ok(ReadMessage {
+        wire:r.get(0)?,sender:r.get(1)?,outgoing:r.get(2)?,
+    }))?.collect::<std::result::Result<Vec<_>, _>>()?)
 }
 
 // Deduplicate the observed position, rather than the local badge. An outgoing
@@ -28,8 +48,22 @@ fn queue(
     wire: &str,
     marked: bool,
 ) -> Result<bool> {
-    let queued = db.execute("INSERT INTO outgoing_reads(chat_id,stamp,wire_id,version,pending) VALUES(?1,?2,?3,1,1) ON CONFLICT(chat_id) DO UPDATE SET stamp=excluded.stamp,wire_id=excluded.wire_id,version=outgoing_reads.version+1,pending=1 WHERE (excluded.stamp>outgoing_reads.stamp OR (excluded.stamp=outgoing_reads.stamp AND ?5>=coalesce((SELECT max(id) FROM messages WHERE chat_id=?1 AND wire_id=outgoing_reads.wire_id),0))) AND (excluded.wire_id<>outgoing_reads.wire_id OR excluded.stamp<>outgoing_reads.stamp OR ?4)", params![chat,stamp,wire,marked,row])?;
-    if queued == 0 {
+    // Freeze these keys now: retrying an older read must not acknowledge a
+    // deletion that arrived after the user looked at the conversation.
+    let keys = boundary_keys(db, chat, row, stamp)?;
+    // An incomplete second would overstate the remote read boundary. Still
+    // advance the exact local observation; a later second can sync it safely.
+    if keys.len() <= 1000 {
+        let keys = serde_json::to_string(&keys).map_err(|_| Error::Invalid)?;
+        let queued = db.execute("INSERT INTO outgoing_reads(chat_id,stamp,wire_id,version,pending,keys) VALUES(?1,?2,?3,1,1,?6) ON CONFLICT(chat_id) DO UPDATE SET stamp=excluded.stamp,wire_id=excluded.wire_id,version=outgoing_reads.version+1,pending=1,keys=excluded.keys WHERE (excluded.stamp>outgoing_reads.stamp OR (excluded.stamp=outgoing_reads.stamp AND ?5>=coalesce((SELECT max(id) FROM messages WHERE chat_id=?1 AND wire_id=outgoing_reads.wire_id),0))) AND (excluded.wire_id<>outgoing_reads.wire_id OR excluded.stamp<>outgoing_reads.stamp OR excluded.keys<>outgoing_reads.keys OR ?4)", params![chat,stamp,wire,marked,row,keys])?;
+        if queued == 0 {
+            return Ok(false);
+        }
+    } else if !db.query_row(
+        "SELECT (read_stamp,read_row)<(?2,?3) OR marked_unread FROM chats WHERE id=?1",
+        params![chat, stamp, row],
+        |r| r.get::<_, bool>(0),
+    )? {
         return Ok(false);
     }
     reads::advance(db, chat, stamp, row)?;
@@ -98,16 +132,25 @@ impl Archive {
     }
 
     pub async fn next_read_sync(&self) -> Result<Option<ReadSync>> {
-        self.call(|db| Ok(db.query_row(
-            "SELECT r.chat_id,c.jid,r.stamp,r.version,m.wire_id,m.source_sender,m.outgoing FROM outgoing_reads r JOIN chats c ON c.id=r.chat_id LEFT JOIN messages m ON m.chat_id=r.chat_id AND m.wire_id=r.wire_id AND m.stamp=r.stamp AND (SELECT count(*) FROM messages x WHERE x.chat_id=r.chat_id AND x.wire_id=r.wire_id AND x.stamp=r.stamp)=1 WHERE r.pending=1 ORDER BY r.chat_id LIMIT 1",
-            [], |r| {
-                let message = match r.get::<_,Option<String>>(4)? {
-                    Some(wire)=>Some(ReadMessage{wire,sender:r.get(5)?,outgoing:r.get(6)?}),
-                    None=>None,
+        self.call(|db| {
+            let stored = db.query_row(
+                "SELECT r.chat_id,c.jid,r.stamp,r.version,r.keys,m.wire_id,m.source_sender,m.outgoing FROM outgoing_reads r JOIN chats c ON c.id=r.chat_id LEFT JOIN messages m ON m.chat_id=r.chat_id AND m.wire_id=r.wire_id AND m.stamp=r.stamp AND (SELECT count(*) FROM messages x WHERE x.chat_id=r.chat_id AND x.wire_id=r.wire_id AND x.stamp=r.stamp)=1 WHERE r.pending=1 ORDER BY r.chat_id LIMIT 1",
+                [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get::<_,String>(4)?,r.get::<_,Option<String>>(5)?,r.get::<_,Option<String>>(6)?,r.get::<_,Option<bool>>(7)?)),
+            ).optional()?;
+            stored.map(|(chat,jid,through,version,keys,wire,sender,outgoing)| {
+                let messages = if keys.is_empty() {
+                    // Legacy pending reads predate key snapshots. Retain only
+                    // their original identity, never the current revoke key.
+                    match (wire,sender,outgoing) {
+                        (Some(wire),Some(sender),Some(outgoing))=>vec![ReadMessage{wire,sender,outgoing}],
+                        _=>Vec::new(),
+                    }
+                } else {
+                    serde_json::from_str(&keys).map_err(|_| Error::Invalid)?
                 };
-                Ok(ReadSync {chat:r.get(0)?,jid:r.get(1)?,through:r.get(2)?,version:r.get(3)?,message})
-            },
-        ).optional()?)).await
+                Ok(ReadSync{chat,jid,through,version,messages})
+            }).transpose()
+        }).await
     }
 
     pub async fn finish_read_sync(&self, job: ReadSync) -> Result<()> {
@@ -121,7 +164,62 @@ impl Archive {
 }
 
 pub(super) fn merge(db: &Connection, old: i32, target: i32) -> Result<()> {
-    db.execute("INSERT INTO outgoing_reads(chat_id,stamp,wire_id,version,pending) SELECT ?2,stamp,wire_id,version+1,pending FROM outgoing_reads WHERE chat_id=?1 ON CONFLICT(chat_id) DO UPDATE SET stamp=max(outgoing_reads.stamp,excluded.stamp),wire_id=CASE WHEN excluded.stamp>=outgoing_reads.stamp THEN excluded.wire_id ELSE outgoing_reads.wire_id END,version=max(outgoing_reads.version,excluded.version)+1,pending=max(outgoing_reads.pending,excluded.pending)", params![old,target])?;
+    // Equal-second positions are complementary observed identities, not
+    // competing timestamp ranges. Preserve both frozen snapshots after aliases
+    // coalesce, ending with the snapshot whose original anchor survived latest.
+    let positions = db
+        .prepare_cached(
+            "SELECT r.stamp,r.wire_id,r.version,r.keys,
+          coalesce((SELECT max(id) FROM messages m WHERE m.chat_id=?2
+            AND m.stamp=r.stamp AND m.wire_id=r.wire_id),0) AS boundary
+         FROM outgoing_reads r WHERE r.chat_id IN (?1,?2) ORDER BY boundary",
+        )?
+        .query_map(params![old, target], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, String>(3)?,
+            ))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    if positions.len() == 2 && positions[0].0 == positions[1].0 {
+        let mut keys = Vec::new();
+        let mut complete = true;
+        for (stamp, wire, _, saved) in &positions {
+            let frozen: Vec<ReadMessage> = if saved.is_empty() {
+                // Legacy reads know only their original boundary. Do not
+                // upgrade them to a later, unviewed revoke during the merge.
+                db.query_row("SELECT source_sender,outgoing FROM messages WHERE chat_id=?1 AND wire_id=?2 AND stamp=?3 AND (SELECT count(*) FROM messages WHERE chat_id=?1 AND wire_id=?2 AND stamp=?3)=1",params![target,wire,stamp],|r|Ok(ReadMessage{wire:wire.clone(),sender:r.get(0)?,outgoing:r.get(1)?})).optional()?.into_iter().collect()
+            } else {
+                serde_json::from_str(saved).map_err(|_| Error::Invalid)?
+            };
+            complete &= !frozen.is_empty();
+            keys.extend(frozen);
+        }
+        let mut seen = std::collections::HashSet::new();
+        let mut merged = Vec::new();
+        for key in keys.into_iter().rev() {
+            if seen.insert((key.wire.clone(), canonical(db, &key.sender)?, key.outgoing)) {
+                merged.push(key);
+            }
+        }
+        merged.reverse();
+        // Even acknowledged partial ranges may have failed to enclose the
+        // other alias's same-second keys. Publish the complete union once.
+        let marked = db.query_row(
+            "SELECT marked_unread FROM chats WHERE id=?1",
+            [target],
+            |r| r.get::<_, bool>(0),
+        )?;
+        let pending = complete && merged.len() <= 1000 && !marked;
+        let saved = serde_json::to_string(&merged).map_err(|_| Error::Invalid)?;
+        let last = &positions[1];
+        db.execute("INSERT INTO outgoing_reads(chat_id,stamp,wire_id,version,pending,keys) VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(chat_id) DO UPDATE SET stamp=excluded.stamp,wire_id=excluded.wire_id,version=excluded.version,pending=excluded.pending,keys=excluded.keys",params![target,last.0,last.1,positions[0].2.max(last.2)+1,pending,saved])?;
+        db.execute("DELETE FROM outgoing_reads WHERE chat_id=?1", [old])?;
+        return Ok(());
+    }
+    db.execute("INSERT INTO outgoing_reads(chat_id,stamp,wire_id,version,pending,keys) SELECT ?2,stamp,wire_id,version+1,pending,keys FROM outgoing_reads WHERE chat_id=?1 ON CONFLICT(chat_id) DO UPDATE SET stamp=max(outgoing_reads.stamp,excluded.stamp),wire_id=CASE WHEN excluded.stamp>=outgoing_reads.stamp THEN excluded.wire_id ELSE outgoing_reads.wire_id END,keys=CASE WHEN excluded.stamp>=outgoing_reads.stamp THEN excluded.keys ELSE outgoing_reads.keys END,version=max(outgoing_reads.version,excluded.version)+1,pending=max(outgoing_reads.pending,excluded.pending)", params![old,target])?;
     db.execute("DELETE FROM outgoing_reads WHERE chat_id=?1", [old])?;
     Ok(())
 }
@@ -202,8 +300,8 @@ mod tests {
         db.mark_visible_read(chat, last).await.unwrap();
         let sent = db.next_read_sync().await.unwrap().unwrap();
         assert_eq!(sent.through, 200);
-        assert!(sent.message.as_ref().unwrap().outgoing);
-        assert_eq!(sent.message.as_ref().unwrap().wire, "mine");
+        assert!(sent.messages.last().unwrap().outgoing);
+        assert_eq!(sent.messages.last().unwrap().wire, "mine");
         db.mark_visible_read(chat, last).await.unwrap();
         assert!(db.next_read_sync().await.unwrap().unwrap() == sent);
         db.finish_read_sync(sent).await.unwrap();
@@ -271,8 +369,8 @@ mod tests {
             job.through, 220,
             "use actual send time, not offline queue time"
         );
-        assert_eq!(job.message.as_ref().unwrap().wire, "own");
-        assert!(job.message.as_ref().unwrap().outgoing);
+        assert_eq!(job.messages.last().unwrap().wire, "own");
+        assert!(job.messages.last().unwrap().outgoing);
         assert_eq!(
             count(&db, chat).await,
             1,
@@ -283,7 +381,7 @@ mod tests {
         db.read_updates(vec![ReadUpdate {
             jid: PN.into(),
             through: Some(job.through),
-            message: job.message.clone(),
+            message: job.messages.last().cloned(),
             marked: false,
             version: Some(chrono::Utc::now().timestamp_millis()),
         }])
@@ -369,7 +467,7 @@ mod tests {
             .unwrap();
         let files = db.0._files.clone();
         db.blocking(|c| {
-            c.execute_batch("DROP TABLE outgoing_reads; DROP TRIGGER discard_changed_document_preview; DROP TABLE document_previews; DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; ALTER TABLE mutations DROP COLUMN raw; DROP TABLE outgoing_receipts; DROP TABLE chat_settings; DROP INDEX messages_album; ALTER TABLE messages DROP COLUMN album_index; ALTER TABLE messages DROP COLUMN album; PRAGMA user_version=8;")?;
+            c.execute_batch("DROP TABLE outgoing_reads; DROP INDEX messages_read_wire; ALTER TABLE messages DROP COLUMN read_wire; DROP TRIGGER discard_changed_document_preview; DROP TABLE document_previews; DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; ALTER TABLE mutations DROP COLUMN raw; DROP TABLE outgoing_receipts; DROP TABLE chat_settings; DROP INDEX messages_album; ALTER TABLE messages DROP COLUMN album_index; ALTER TABLE messages DROP COLUMN album; PRAGMA user_version=8;")?;
             Ok(())
         })
         .unwrap();
@@ -442,6 +540,111 @@ mod tests {
         db.mark_visible_read(chat, b).await.unwrap();
         assert!(db.next_read_sync().await.unwrap().is_none());
     }
+
+    #[tokio::test]
+    async fn pending_read_keys_stay_frozen_until_the_new_deletion_is_viewed() {
+        for legacy in [false, true] {
+            let (_temp, db) = fixture();
+            let (chat, a) = add(&db, "a", 100).await;
+            let (_, b) = add(&db, "b", 100).await;
+            db.mark_visible_read(chat, b).await.unwrap();
+            if legacy {
+                db.call(move |c| {
+                    c.execute("UPDATE outgoing_reads SET keys='' WHERE chat_id=?1", [chat])?;
+                    Ok(())
+                })
+                .await
+                .unwrap();
+            }
+            let original = db.next_read_sync().await.unwrap().unwrap();
+            assert_eq!(original.messages.last().unwrap().wire, "b");
+            assert_eq!(original.messages.len(), if legacy { 1 } else { 2 });
+            db.call(move |c| {
+                c.execute("UPDATE messages SET read_wire='delete-a' WHERE id=?1", [a])?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+            assert!(
+                db.next_read_sync().await.unwrap().unwrap() == original,
+                "retrying a saved read cannot acknowledge a later unseen deletion"
+            );
+            // The tail remains b. Observing the updated earlier tombstone in
+            // this second must still replace the snapshot and queue a read.
+            db.mark_visible_read(chat, b).await.unwrap();
+            let updated = db.next_read_sync().await.unwrap().unwrap();
+            assert!(updated.version > original.version);
+            assert_eq!(
+                updated
+                    .messages
+                    .iter()
+                    .map(|m| m.wire.as_str())
+                    .collect::<Vec<_>>(),
+                ["delete-a", "b"]
+            );
+            assert_eq!(updated.through, original.through);
+            db.finish_read_sync(original).await.unwrap();
+            assert!(db.next_read_sync().await.unwrap().unwrap() == updated);
+            let files = db.0._files.clone();
+            drop(db);
+            let db = Archive::open(files, KEY).unwrap();
+            assert!(db.next_read_sync().await.unwrap().unwrap() == updated);
+            db.finish_read_sync(updated).await.unwrap();
+            db.mark_visible_read(chat, b).await.unwrap();
+            assert!(db.next_read_sync().await.unwrap().is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn oversized_boundary_second_is_not_published_as_a_partial_range() {
+        let (_temp, db) = fixture();
+        let messages = (0..1001)
+            .map(|i| {
+                let mut r = record(&format!("same-second-{i}"));
+                r.timestamp = 100;
+                r
+            })
+            .collect();
+        db.ingest(Batch {
+            messages,
+            live: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let chat = db
+            .view(0, 100, String::new(), false, false)
+            .await
+            .unwrap()
+            .chats[0]
+            .id;
+        let view = db
+            .view(chat, 100, String::new(), false, false)
+            .await
+            .unwrap()
+            .conversation
+            .unwrap();
+        db.mark_visible_read(chat, view.messages.last().unwrap().id)
+            .await
+            .unwrap();
+        assert_eq!(count(&db, chat).await, 0);
+        assert!(db.next_read_sync().await.unwrap().is_none());
+        let mut changes = db.subscribe();
+        changes.borrow_and_update();
+        db.mark_visible_read(chat, view.messages.last().unwrap().id)
+            .await
+            .unwrap();
+        assert!(
+            !changes.has_changed().unwrap(),
+            "revisiting an oversized second must not publish an archive-update loop"
+        );
+        let (_, later) = add(&db, "later", 101).await;
+        db.mark_visible_read(chat, later).await.unwrap();
+        let job = db.next_read_sync().await.unwrap().unwrap();
+        assert_eq!(job.through, 101);
+        assert_eq!(job.messages.len(), 1);
+    }
+
     #[tokio::test]
     async fn queue_is_atomic_with_local_badge_and_rejects_foreign_message() {
         let (_temp, db) = fixture();
@@ -521,5 +724,132 @@ mod tests {
             .await
             .unwrap();
         assert!(db.next_read_sync().await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn equal_second_alias_reads_keep_both_frozen_keys_and_the_later_original_anchor() {
+        for (pn_first, acknowledged, marked) in [
+            (true, false, false),
+            (false, false, false),
+            (true, true, false),
+            (false, true, false),
+            (true, true, true),
+        ] {
+            let (_temp, db) = fixture();
+            let mut pn = record("pn-original");
+            pn.timestamp = 100;
+            let mut lid = record("lid-original");
+            lid.chat = LID.into();
+            lid.sender = LID.into();
+            lid.timestamp = 100;
+            db.ingest(Batch {
+                messages: if pn_first {
+                    vec![pn, lid]
+                } else {
+                    vec![lid, pn]
+                },
+                live: true,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+            let pn_chat = db.create_chat(PN.into()).await.unwrap();
+            let lid_chat = db.create_chat(LID.into()).await.unwrap();
+            let pn_view = db
+                .view(pn_chat, 100, String::new(), false, false)
+                .await
+                .unwrap()
+                .conversation
+                .unwrap();
+            let lid_view = db
+                .view(lid_chat, 100, String::new(), false, false)
+                .await
+                .unwrap()
+                .conversation
+                .unwrap();
+            db.mark_visible_read(pn_chat, pn_view.messages[0].id)
+                .await
+                .unwrap();
+            let stale = db.next_read_sync().await.unwrap().unwrap();
+            db.mark_visible_read(lid_chat, lid_view.messages[0].id)
+                .await
+                .unwrap();
+            if acknowledged {
+                while let Some(job) = db.next_read_sync().await.unwrap() {
+                    db.finish_read_sync(job).await.unwrap();
+                }
+            }
+            if marked {
+                db.read_updates(vec![ReadUpdate {
+                    jid: PN.into(),
+                    through: None,
+                    message: None,
+                    marked: true,
+                    version: Some(i64::MAX),
+                }])
+                .await
+                .unwrap();
+            }
+            // The two saved reads must not acquire a later revoke key merely
+            // because the same person's chat identities coalesce.
+            db.call(|c| {
+                c.execute("UPDATE messages SET read_wire='not-observed-delete' WHERE wire_id='pn-original'",[])?;
+                Ok(())
+            }).await.unwrap();
+            let mut newer = record("not-observed-message");
+            newer.timestamp = 100;
+            db.ingest(Batch {
+                messages: vec![newer],
+                live: true,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+            db.save_contacts(vec![], vec![(LID.into(), PN.into())], false)
+                .await
+                .unwrap();
+            if marked {
+                assert!(
+                    db.next_read_sync().await.unwrap().is_none(),
+                    "merging saved keys must not override a later manual unread mark"
+                );
+                continue;
+            }
+            let merged = db.next_read_sync().await.unwrap().unwrap();
+            assert_eq!(merged.jid, PN);
+            assert_eq!(merged.through, 100);
+            assert_eq!(
+                merged
+                    .messages
+                    .iter()
+                    .map(|m| m.wire.as_str())
+                    .collect::<Vec<_>>(),
+                if pn_first {
+                    vec!["pn-original", "lid-original"]
+                } else {
+                    vec!["lid-original", "pn-original"]
+                }
+            );
+            db.finish_read_sync(stale).await.unwrap();
+            assert!(db.next_read_sync().await.unwrap().unwrap() == merged);
+            db.read_updates(vec![ReadUpdate {
+                jid: PN.into(),
+                through: Some(100),
+                message: merged.messages.last().cloned(),
+                marked: false,
+                version: Some(chrono::Utc::now().timestamp_millis()),
+            }])
+            .await
+            .unwrap();
+            assert_eq!(
+                count(&db, pn_chat).await,
+                1,
+                "the merged final key resolves the last observed original, not the newer row"
+            );
+            let files = db.0._files.clone();
+            drop(db);
+            let db = Archive::open(files, KEY).unwrap();
+            assert!(db.next_read_sync().await.unwrap().unwrap() == merged);
+        }
     }
 }

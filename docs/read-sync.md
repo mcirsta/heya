@@ -81,10 +81,10 @@ per chat, plus an index for pending jobs. Previously cleared badges aren't
 broadcast during migration: revisiting a conversation creates the first update.
 
 Visible deletion and expiry placeholders are valid observed read positions.
-Viewing one at the latest end of the chat clears unread messages through that
-exact original row, including the placeholder. Later arrivals, even within the
-same second, stay unread. Private synchronization keeps the original message
-key and timestamp; the invisible deletion event does not advance the boundary.
+Viewing one at the latest end clears unread messages through that exact original
+row. Later arrivals, even within the same second, stay unread. Revoked bubbles
+use the deletion envelope's ID for private synchronization while retaining the
+original timestamp and author. Expired bubbles retain their original key.
 Sender-facing receipts still exclude deleted, expired and hidden content.
 
 One supervised background worker waits for a verified connected session, then
@@ -96,11 +96,14 @@ Successful positions remain for deduplication; repeated views don't rewrite or
 resend them. A confirmed outgoing message advances the same queue even when the
 local badge is already zero. Queued/failed messages do not advance the remote
 range. This uses the existing ACK/receipt path, with no extra visibility state,
-service, timer or schema. The server ACK supplies the actual send time for offline
-queued messages. The range includes the message key, author and from-me flag when
-that original identity remains unambiguous, including retained deletion/expiry
-placeholders. If the stored identity is unavailable, the range keeps its original
-bounded timestamp fallback. Repeated ACKs/revisits deduplicate by position,
+service or timer. The server ACK supplies the actual send time for offline
+queued messages. The range includes all observed eligible keys at its boundary
+second, with each author and from-me flag. Schema 20 retains a revoked bubble's
+separate read key and freezes the bounded key list in the existing outgoing read
+queue. Retrying an older read cannot acknowledge a deletion received afterward.
+A changed key list queues a new update even when the local badge is already
+clear. If an older queued identity is unavailable, its original bounded timestamp
+fallback remains. Repeated ACKs/revisits deduplicate by position and key list,
 and late acknowledgments cannot clear newer incoming messages or a newer manual
 unread mark. Old outgoing history is not broadcast during import.
 SDK app-state ranges use message timestamps in seconds, matching the
@@ -128,6 +131,50 @@ Heya has focus. Check the badge in the other client. Repeat after reading offlin
 and reconnecting. Leave Heya unfocused for another incoming message to check that
 it remains unread until the conversation is actively viewed.
 
+## Revoked identities and same-second ranges — 2026-10-30
+
+The earlier deletion fix cleared Heya's local badge but retained the original
+remote key. A synthetic original-read → confirmed-sync → later-revoke → viewed
+tombstone sequence reproduced a missing outgoing update. A single-key range
+also omitted other observed messages sharing its final timestamp.
+
+Inspection of unauthenticated public WhatsApp Web bundles established the read
+identity distinction: `WAWebRevoke` and `WAWebDBProcessRevokeMsgs` replace a
+revoked bubble's ID while retaining its original position and author.
+`WAWebDBMessageRange` gathers boundary-second keys, and
+`WAWebMessageRangeUtils` compares their coverage. Heya implements those rules
+independently through the SDK's existing public app-state API; no SDK patch,
+extra worker or polling timer was added.
+
+Source artifacts inspected, without account access:
+
+- [Revoke modules](https://static.whatsapp.net/rsrc.php/v4/y3/r/Tp-PhBry3trEdvTxznVWky.js), SHA-256 `dd3efbdc1ae0b462594b5cac10ea7caff83fe017a78586dfafda8772d2153b2f`.
+- [Read/range modules](https://static.whatsapp.net/rsrc.php/v4izcG4/yt/l/en_US-j/Q0Jy7eM4erM.js), SHA-256 `9471b7e41356da79d3e5b593ba661ac6811a25dbbaccca1bd81d3eea3e246afd`.
+
+The archive upgrade recovers older deletion IDs only for unambiguous
+one-event/one-target pairs. Previous versions discarded accepted protocol
+bodies, so ambiguous older pairs cannot be reconstructed safely. The migration
+does not publish reads automatically; viewing the conversation creates the new
+range. New ingestion retains exact identities directly. Work is restricted to
+one indexed boundary second, with the protocol's 1,000-key limit; an oversized
+second clears the exact local observation but does not publish a partial remote
+range. A later timestamp permits synchronization again.
+
+Synthetic tests cover multiple same-second deletions, already-read originals,
+out-of-order edits/deletes, early read-self receipts, newer unobserved arrivals,
+immutable offline retries, stale completions, archive upgrades and reopen.
+These establish local serialization and state ordering, not delivery or conflict
+resolution in another live client.
+
+Linux offscreen validation passed 355 default-feature tests, 336 media-disabled
+tests and the encrypted protocol-storage integration test in each configuration.
+Strict all-target Clippy passed in both configurations. A paired optimized
+10,000-message archive/UI check retained comparable application timings:
+incoming UI-application p95 was 7.18 → 6.94 ms, and navigation SQLCipher
+projection p95 was 11.50 → 11.94 ms. Both runs used the private X server and
+Skia CPU renderer; these are application timings, not GPU/compositor or live
+account measurements. No account messages were sent by automated checks.
+
 ## Deleted read-boundary regression — 2026-10-20
 
 Before changing application code, three SQLCipher regressions failed against the
@@ -139,8 +186,9 @@ reported the visible placeholder, but the archive rejected it as a read boundary
 The correction removes payload deletion/expiry exclusions from the two visible
 read-position queries. Hidden rows, chat identity, exact `(stamp,id)` boundaries,
 and the confirmed-send requirement for outgoing positions stay enforced.
-Sender-facing receipt eligibility is unchanged. Tests also cover direct/group
-chats, the original message key/timestamp rather than the later revoke event,
+Sender-facing receipt eligibility is unchanged. Those original tests covered
+direct/group chats and the original timestamp; they did not cover the separate
+revoke read key or all boundary-second IDs, corrected above. They also exercised
 and the headless active-window read gate for an unavailable deleted bubble.
 The optimized default suite passed 228 tests; the audio-disabled suite passed
 210. Both configurations retained three intentional skips and passed strict

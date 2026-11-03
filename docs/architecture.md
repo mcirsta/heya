@@ -29,8 +29,8 @@ handles phonebook/read-state events and recovery of their application mirrors. `
 private files and keyring access. `archive.rs` and
 `archive_schema.sql` own the encrypted application database, while `messaging.rs`
 serializes UI commands and produces archive-backed snapshots. Slint types stay
-in the presentation modules and `ui/`. No SDK fork or ZapFast application code
-is used.
+in the presentation modules and `ui/`. Targeted SDK changes are pinned and
+tracked in `patches/README.md`; no ZapFast application code is used.
 
 The protocol actor resumes an existing account on normal startup unless automatic
 connection is disabled in preferences. With that setting off, it waits for Connect
@@ -197,6 +197,41 @@ run this with an optimized build:
 ```sh
 HEYA_BENCHMARK_ARCHIVE=1 HEYA_BENCHMARK_LONG_DRAFT=1 HEYA_BENCHMARK_TYPING=1 scripts/ui-offscreen.sh --ui-benchmark
 ```
+
+A send reply also names the archive chat that stored the message. A PN/LID merge
+can publish the target conversation before that reply; the composer clears for
+either ID, and the worker does not save the submitted text back as the target's
+draft. A saved reply that keeps composer text logs only which check kept it.
+
+`diagnostics.rs` reports unusually slow work on stderr, always on and silent
+otherwise. Lines start with `Heya slow:` and carry fixed labels, source
+locations, durations and counts; never IDs, names or text. A watchdog pings the
+event loop each second and reports a ping unanswered after one second, naming
+the marked UI step in progress (snapshot type, conversation timeline, chat list,
+timeline layout or photo previews), then reports when it resumes. Other probes cover
+snapshot callbacks that waited behind the loop or took 250 ms to apply, chat
+navigation slower than one second from the first unanswered click, messaging
+worker iterations over one second with the queue depth, and archive jobs that
+waited for or held the shared SQLCipher connection for a second, named by caller
+location. The watchdog stops when the event loop exits, so shutdown is not reported.
+
+A connection attempt opens the socket while the SDK checks the app version (a
+24-hour cache, otherwise a fetch with a 20-second timeout), performs the Noise
+handshake and receives `<success>`. The SDK announces `Connected` only after the
+server drains the offline backlog (up to its 60-second timeout), and each
+delivered batch passes Heya's durability hook before acknowledgement, so
+"Connecting" covers all of these. `protocol_timing.rs` logs one line per
+connection or reconnect when it is announced: total time, connections dropped
+before `Connected`, dials and failures (including one abandoned at the connect
+timeout), when the socket opened and how long its dial took, whether the app
+version was cached, fetched or failed to fetch, when `<success>` arrived, the
+server's backlog counts by kind, when delivery completed, and the time spent in
+the durability and history-capture hooks. Dials are timed by wrapping the SDK's
+default WebSocket transport factory, and logins by a public SDK node waiter
+registered before the bot runs. A login well after the socket opened, with a
+cached version, points at the handshake or the server. The version result comes
+from the device's version stamp. The event callback and wrappers only record
+into that struct; the supervisor prints. Lines carry counts and milliseconds only.
 
 This measures local archive/presentation latency, not live network delivery.
 For durability measurements, set `TMPDIR` to a disposable directory on the data

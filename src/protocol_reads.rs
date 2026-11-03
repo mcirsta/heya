@@ -42,17 +42,24 @@ impl Transport for WhatsApp {
 
 pub(crate) fn read_range(read: &ReadSync) -> Option<whatsapp_rust::SyncActionMessageRange> {
     let jid = read.jid.parse::<whatsapp_rust::wacore_binary::Jid>().ok()?;
-    let reference = if let Some(message) = &read.message {
-        let sender = if !message.outgoing && jid.is_group() {
-            Some(
+    // MessageRef borrows participant JIDs until the range is serialized.
+    let senders = read
+        .messages
+        .iter()
+        .map(|message| {
+            if !message.outgoing && jid.is_group() {
                 message
                     .sender
                     .parse::<whatsapp_rust::wacore_binary::Jid>()
-                    .ok()?,
-            )
-        } else {
-            None
-        };
+                    .ok()
+                    .map(Some)
+            } else {
+                Some(None)
+            }
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let mut references = Vec::with_capacity(read.messages.len());
+    for (message, sender) in read.messages.iter().zip(&senders) {
         let reference = whatsapp_rust::MessageRef::new(
             &jid,
             whatsapp_rust::MessageId::new(&message.wire).ok()?,
@@ -60,17 +67,11 @@ pub(crate) fn read_range(read: &ReadSync) -> Option<whatsapp_rust::SyncActionMes
             message.outgoing,
         )
         .ok()?;
-        return Some(whatsapp_rust::message_range(
-            read.through,
-            None,
-            [(reference, read.through)],
-        ));
-    } else {
-        Vec::new()
-    };
+        references.push((reference, read.through));
+    }
     // Old read positions can outlive deleted/expired bodies. Preserve their
     // bounded timestamp; never invent a message key or read the current tail.
-    Some(whatsapp_rust::message_range(read.through, None, reference))
+    Some(whatsapp_rust::message_range(read.through, None, references))
 }
 
 pub async fn run(
@@ -309,7 +310,7 @@ mod range_tests {
         for outgoing in [false, true] {
             for chat in [PN, "15550000001@lid", "123456789@g.us"] {
                 job.jid = chat.into();
-                let message = job.message.as_mut().unwrap();
+                let message = job.messages.last_mut().unwrap();
                 message.outgoing = outgoing;
                 message.sender = PN.into();
                 let range = read_range(&job).unwrap();
@@ -330,7 +331,23 @@ mod range_tests {
                 );
             }
         }
-        job.message = None;
+        let mut second = job.messages[0].clone();
+        second.wire = "synthetic-revoke".into();
+        second.outgoing = false;
+        job.messages.push(second);
+        let range = read_range(&job).unwrap();
+        assert_eq!(range.messages.len(), 2);
+        assert_eq!(
+            range.messages[1].key.as_option().unwrap().id.as_deref(),
+            Some("synthetic-revoke")
+        );
+        assert!(
+            range
+                .messages
+                .iter()
+                .all(|m| m.timestamp == Some(job.through))
+        );
+        job.messages.clear();
         assert!(
             read_range(&job).unwrap().messages.is_empty(),
             "an expired body's range retains its original timestamp"

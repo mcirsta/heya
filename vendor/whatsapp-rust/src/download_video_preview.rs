@@ -1,0 +1,254 @@
+//! Bounded, explicitly preview-only initial video downloads.
+use super::*;
+use std::io::{Read, SeekFrom};
+use waproto::whatsapp::message::VideoMessage;
+
+const MAX_PREFIX: usize = 8 * 1024 * 1024;
+
+fn prefix_length(video: &VideoMessage, seconds: f64, limit: usize) -> Result<usize> {
+    if !seconds.is_finite()
+        || !(0.1..=5.).contains(&seconds)
+        || !(128 * 1024..=MAX_PREFIX).contains(&limit)
+    {
+        return Err(anyhow!("invalid video preview bounds"));
+    }
+    let size = video
+        .file_length
+        .ok_or_else(|| anyhow!("missing video size"))?;
+    let duration = video.seconds.unwrap_or(1).max(1);
+    let wanted = (size as f64 * seconds / f64::from(duration)).max(128. * 1024.);
+    Ok(((wanted.min(limit as f64) as usize).div_ceil(16) * 16).min(limit / 16 * 16))
+}
+
+impl Client {
+    /// Fetch only enough initial video data for a poster. The result is for
+    /// finite, untrusted-input thumbnail decoding ONLY. Partial ciphertext lacks
+    /// the final MAC, so these bytes must never enter verified-original caches
+    /// or be used by playback/download APIs. Whole payloads are authenticated.
+    ///
+    /// Uses the normal media connection refresh and host-failover boundary.
+    /// Reader allocations and range length are capped; buffered-only transports
+    /// are refused rather than silently downloading an unbounded original.
+    pub async fn download_video_preview_to_writer<W: DownloadWriter + MaybeSend + 'static>(
+        &self,
+        video: &VideoMessage,
+        seconds: f64,
+        limit: usize,
+        writer: W,
+    ) -> std::result::Result<W, ClientDownloadError> {
+        let length =
+            prefix_length(video, seconds, limit).map_err(ClientDownloadError::Preparation)?;
+        download_to_writer_with_retry(
+            client_refresh_budget(video),
+            &self.runtime,
+            writer,
+            |force| self.prepare_requests(video, force),
+            || async { self.invalidate_media_conn().await },
+            |request, writer| async move {
+                fetch(
+                    &self.http_client,
+                    &self.runtime,
+                    &request,
+                    ExpectedMediaHashes::from_downloadable(video),
+                    length,
+                    writer,
+                )
+                .await
+            },
+        )
+        .await
+        .map_err(ClientDownloadError::from)
+    }
+}
+
+async fn fetch<W: DownloadWriter + MaybeSend + 'static>(
+    http: &Arc<dyn HttpClient>,
+    runtime: &Arc<dyn Runtime>,
+    request: &wacore::download::DownloadRequest,
+    hashes: ExpectedMediaHashes,
+    length: usize,
+    writer: W,
+) -> Result<(W, std::result::Result<(), DownloadRequestError>)> {
+    let http = http.clone();
+    let url = request.url.clone();
+    let decryption = request.decryption.clone();
+    Ok(wacore::runtime::blocking(&**runtime, move || {
+        let mut writer = writer;
+        let result = (|| -> std::result::Result<(), DownloadRequestError> {
+            clear_writer(&mut writer).map_err(DownloadRequestError::writer_io)?;
+            if !http.supports_streaming() {
+                return Err(DownloadRequestError::other(anyhow!(
+                    "streaming required for video previews"
+                )));
+            }
+            let request = crate::http::HttpRequest::get(url)
+                .with_header("Range", format!("bytes=0-{}", length - 1));
+            let mut response = http
+                .execute_streaming(request)
+                .map_err(DownloadRequestError::other)?;
+            if !matches!(response.status_code, 200 | 206) {
+                return Err(DownloadRequestError::refused_status(response.status_code));
+            }
+            let mut bytes = Vec::with_capacity(length.min(128 * 1024));
+            let mut buffer = [0u8; 8192];
+            while bytes.len() < length {
+                // Zero-length writes still check a caller's cancellation guard.
+                writer.write(&[]).map_err(DownloadRequestError::writer_io)?;
+                let remaining = (length - bytes.len()).min(buffer.len());
+                let n = response
+                    .body
+                    .read(&mut buffer[..remaining])
+                    .map_err(DownloadRequestError::other)?;
+                if n == 0 {
+                    break;
+                }
+                bytes.extend_from_slice(&buffer[..n]);
+            }
+            match &decryption {
+                MediaDecryption::Encrypted { media_key, .. } if bytes.len().is_multiple_of(16) => {
+                    DownloadUtils::decrypt_video_preview_prefix(&mut bytes, media_key)
+                        .map_err(DownloadRequestError::other)?;
+                }
+                _ => decrypt_or_validate_buffered_body(&mut bytes, &decryption, &hashes)?,
+            }
+            writer
+                .write_all(&bytes)
+                .map_err(DownloadRequestError::writer_io)?;
+            writer
+                .seek(SeekFrom::Start(0))
+                .map_err(DownloadRequestError::writer_io)?;
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = clear_writer(&mut writer);
+        }
+        (writer, result)
+    })
+    .await)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        io::Cursor,
+        sync::{
+            Mutex,
+            atomic::{AtomicUsize, Ordering},
+        },
+    };
+    use wacore::net::{HttpResponse, StreamingHttpResponse};
+    struct Fake {
+        body: Vec<u8>,
+        status: u16,
+        read: Arc<AtomicUsize>,
+        range: Mutex<String>,
+    }
+    struct Counted {
+        body: Cursor<Vec<u8>>,
+        read: Arc<AtomicUsize>,
+    }
+    impl Read for Counted {
+        fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+            let n = self.body.read(out)?;
+            self.read.fetch_add(n, Ordering::Relaxed);
+            Ok(n)
+        }
+    }
+    #[async_trait::async_trait]
+    impl HttpClient for Fake {
+        async fn execute(&self, _: crate::http::HttpRequest) -> Result<HttpResponse> {
+            Err(anyhow!("buffered fetch forbidden"))
+        }
+        fn supports_streaming(&self) -> bool {
+            true
+        }
+        fn execute_streaming(&self, r: crate::http::HttpRequest) -> Result<StreamingHttpResponse> {
+            *self.range.lock().unwrap() = r.headers.get("Range").unwrap().clone();
+            Ok(StreamingHttpResponse::new(
+                self.status,
+                Box::new(Counted {
+                    body: Cursor::new(self.body.clone()),
+                    read: self.read.clone(),
+                }),
+            ))
+        }
+    }
+    #[tokio::test]
+    async fn bounded_ranges_handle_ignored_range_full_payload_and_tamper_without_publishing_originals()
+     {
+        use sha2::Digest;
+        for (length, status, corrupt) in [
+            (1024 * 1024, 206, false),
+            (1024 * 1024, 200, false),
+            (4096, 206, false),
+            (4096, 200, true),
+        ] {
+            let plain = vec![42; length];
+            let key = [7; 32];
+            let mut encrypted =
+                wacore::upload::encrypt_media_with_key(&plain, MediaType::Video, Some(&key))
+                    .unwrap();
+            if corrupt {
+                encrypted.data_to_upload[0] ^= 1;
+            }
+            let fake = Arc::new(Fake {
+                body: encrypted.data_to_upload,
+                status,
+                read: Arc::new(AtomicUsize::new(0)),
+                range: Mutex::new(String::new()),
+            });
+            let http: Arc<dyn HttpClient> = fake.clone();
+            let runtime: Arc<dyn Runtime> = Arc::new(crate::TokioRuntime);
+            let request = wacore::download::DownloadRequest {
+                url: "https://mmg.whatsapp.net/synthetic-preview".into(),
+                decryption: MediaDecryption::Encrypted {
+                    media_key: key.to_vec(),
+                    media_type: MediaType::Video,
+                },
+            };
+            let hashes = ExpectedMediaHashes {
+                encrypted: Some(encrypted.file_enc_sha256.to_vec()),
+                plaintext: Some(sha2::Sha256::digest(&plain).to_vec()),
+            };
+            let (writer, result) = fetch(
+                &http,
+                &runtime,
+                &request,
+                hashes,
+                128 * 1024,
+                Cursor::new(Vec::new()),
+            )
+            .await
+            .unwrap();
+            assert_eq!(*fake.range.lock().unwrap(), "bytes=0-131071");
+            assert!(
+                fake.read.load(Ordering::Relaxed) <= 128 * 1024,
+                "a range-ignoring server cannot force an original download"
+            );
+            if corrupt {
+                assert!(result.is_err());
+                assert!(writer.into_inner().is_empty());
+            } else {
+                result.unwrap();
+                assert_eq!(writer.into_inner(), plain[..length.min(128 * 1024)]);
+            }
+        }
+    }
+    #[test]
+    fn ranges_match_web_minimum_alignment_retry_and_cap() {
+        let mut v = VideoMessage::default();
+        v.file_length = Some(20 * 1024 * 1024);
+        v.seconds = Some(100);
+        assert_eq!(prefix_length(&v, 1., 4 * 1024 * 1024).unwrap(), 209728);
+        assert_eq!(prefix_length(&v, 1.5, 4 * 1024 * 1024).unwrap(), 314576);
+        v.file_length = Some(1);
+        assert_eq!(prefix_length(&v, 1., 4 * 1024 * 1024).unwrap(), 128 * 1024);
+        v.file_length = Some(u64::MAX);
+        assert_eq!(
+            prefix_length(&v, 1., 4 * 1024 * 1024).unwrap(),
+            4 * 1024 * 1024
+        );
+        assert!(prefix_length(&v, f64::NAN, 4 * 1024 * 1024).is_err());
+    }
+}

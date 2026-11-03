@@ -85,13 +85,18 @@ enum Observation {
     },
 }
 
-struct ConnectionEvents(watch::Sender<Observation>);
+struct ConnectionEvents(
+    watch::Sender<Observation>,
+    Arc<crate::protocol_timing::Startup>,
+);
 
 impl EventHandler for ConnectionEvents {
     fn interest(&self) -> EventInterest {
         EventInterest::of(&[
             EventKind::Connected,
             EventKind::Disconnected,
+            EventKind::OfflineSyncPreview,
+            EventKind::OfflineSyncCompleted,
             EventKind::PairSuccess,
             EventKind::PairError,
             EventKind::LoggedOut,
@@ -107,7 +112,12 @@ impl EventHandler for ConnectionEvents {
         // Inline callback: no I/O, logging, QR encoding or async callback queue.
         let next = match event.as_ref() {
             Event::Connected(_) => Observation::Phase(Phase::Connected),
-            Event::Disconnected(_) => Observation::Phase(Phase::Reconnecting),
+            Event::OfflineSyncPreview(preview) => return self.1.backlog(preview),
+            Event::OfflineSyncCompleted(done) => return self.1.delivered(done.count),
+            Event::Disconnected(_) => {
+                self.1.begin("reconnected");
+                Observation::Phase(Phase::Reconnecting)
+            }
             Event::PairSuccess(_) => Observation::Phase(Phase::Pairing),
             Event::PairingQrCode(qr) => Observation::Qr {
                 payload: Zeroizing::new(qr.code.clone()),
@@ -224,9 +234,11 @@ async fn connect(
     let (messages_tx, mut messages) = tokio::sync::mpsc::channel(512);
     let (overflow_tx, mut overflow) = watch::channel(false);
     let (ingest_failure, mut ingestion_failed) = watch::channel(None);
+    let timing = Arc::new(crate::protocol_timing::Startup::default());
     let ingest = Ingest {
         archive: archive.clone(),
         failure: ingest_failure,
+        startup: timing.clone(),
     };
     let contact_events = crate::protocol_sync::AppState::default();
     let presence_events = crate::protocol_presence::Events::default();
@@ -239,7 +251,11 @@ async fn connect(
     let bot = Bot::builder()
         .with_backend(store)
         .with_device_props(whatsapp_rust::wacore::store::DevicePropsOverride::new().with_os("Heya"))
-        .with_event_handler(ConnectionEvents(events_tx))
+        .with_transport_factory(crate::protocol_timing::TimedDials(
+            whatsapp_rust::transport::TokioWebSocketTransportFactory::new(),
+            timing.clone(),
+        ))
+        .with_event_handler(ConnectionEvents(events_tx, timing.clone()))
         .with_event_handler(contact_events.clone())
         .with_event_handler(presence_events.clone())
         .with_event_handler(MessageEvents {
@@ -285,6 +301,11 @@ async fn connect(
         .map_err(|_| Failure::Shutdown)??;
         return Ok(());
     }
+    timing.begin("connected");
+    let logins = tokio::spawn(crate::protocol_timing::logins(
+        &bot.client(),
+        timing.clone(),
+    ));
     let mut bot = bot.spawn();
     let release = bot.client().store_release();
     let calling = Arc::new(crate::protocol_calling::Calling::new(
@@ -340,7 +361,7 @@ async fn connect(
     ));
     let mut document_previews = tokio::spawn(crate::document_previews::fetch_worker(
         archive.clone(),
-        crate::protocol_document_previews::Previews(bot.client()),
+        crate::protocol_document_previews::Previews(bot.client(), archive.clone()),
         services.thumbnail_demand.clone(),
         online,
         stop.clone(),
@@ -362,6 +383,7 @@ async fn connect(
             avatars.abort_handle(),
             photos.abort_handle(),
             document_previews.abort_handle(),
+            logins.abort_handle(),
         ],
         cancelled: cancelled.clone(),
     };
@@ -392,6 +414,8 @@ async fn connect(
                     Observation::Phase(phase) => {
                         if phase!=Phase::Connected {calling.disconnected();}
                         if phase == Phase::Connected && let Err(error) = protocol_messages::verify_identity(&bot.client(),&archive).await { terminal=Some(archive_failure(error));break; }
+                        // Counts and milliseconds only.
+                        if phase == Phase::Connected && let Some(line) = timing.summary(bot.client().persistence_manager().get_device_snapshot().app_version_last_fetched_ms) { eprintln!("{line}"); }
                         online_tx.send_replace(phase == Phase::Connected);
                         audio_sources.send_replace((phase==Phase::Connected).then(||Arc::new(crate::protocol_audio::Audio(bot.client())) as Arc<dyn crate::audio::Source>));
                         services.video_sources.send_replace((phase==Phase::Connected).then(||Arc::new(crate::protocol_video::Video(bot.client())) as Arc<dyn crate::video::Source>));
@@ -565,7 +589,7 @@ async fn connect(
 }
 
 struct Workers {
-    abort: [tokio::task::AbortHandle; 8],
+    abort: [tokio::task::AbortHandle; 9],
     cancelled: Arc<std::sync::atomic::AtomicBool>,
 }
 impl Drop for Workers {
@@ -888,6 +912,7 @@ mod tests {
         let hook = Ingest {
             archive: archive.clone(),
             failure,
+            startup: Default::default(),
         };
         let source = MessageSource {
             chat: LID.parse().unwrap(),
@@ -1258,7 +1283,7 @@ mod tests {
     fn terminal_cause_survives_trailing_events() {
         use whatsapp_rust::types::events::{Connected, PairingQrCode, PairingQrCodesExhausted};
         let (sender, receiver) = watch::channel(Observation::Phase(Phase::Connecting));
-        let handler = ConnectionEvents(sender);
+        let handler = ConnectionEvents(sender, Default::default());
         handler.handle_event(Arc::new(Event::PairingQrCode(
             PairingQrCode::builder()
                 .code("synthetic-only".into())

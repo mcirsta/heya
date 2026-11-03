@@ -1,5 +1,6 @@
 # Generated build and reference material
 /target/
+/vendor/whatsapp-rust/target/
 /.prep/
 /.references/
 /whatsapp_desktop/

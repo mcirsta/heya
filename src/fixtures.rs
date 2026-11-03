@@ -64,6 +64,52 @@ pub fn video_pixels(seconds: f64) -> crate::photos::Pixels {
     }
 }
 
+/// A transparent procedural sticker for offline checks; no account media.
+pub fn sticker_pixels() -> crate::photos::Pixels {
+    let image = image::RgbaImage::from_fn(256, 256, |x, y| {
+        let (x, y) = (x as f32, y as f32);
+        let radius = ((x - 128.).powi(2) + (y - 128.).powi(2)).sqrt();
+        if radius > 104. {
+            return image::Rgba([0, 0, 0, 0]);
+        }
+        let alpha = ((105. - radius).clamp(0., 1.) * 255.) as u8;
+        let eye = (((x - 91.) / 8.).powi(2) + ((y - 109.) / 13.).powi(2) < 1.)
+            || (((x - 165.) / 8.).powi(2) + ((y - 109.) / 13.).powi(2) < 1.);
+        let smile = ((x - 128.).powi(2) + (y - 127.).powi(2)).sqrt();
+        if eye || (y > 145. && (57. ..64.).contains(&smile)) {
+            image::Rgba([61, 48, 29, alpha])
+        } else {
+            image::Rgba([255, 211, 68, alpha])
+        }
+    });
+    crate::photos::Pixels {
+        width: 256,
+        height: 256,
+        rgba: image.into_raw(),
+    }
+}
+
+pub fn fill_stickers(messages: &mut [Message]) {
+    for (i, m) in messages.iter_mut().enumerate() {
+        m.id = 22_500 + i as i32;
+        m.text = "[Sticker]".into();
+        m.outgoing = i % 2 == 1;
+        m.sender = if m.outgoing { "You" } else { "Sample contact" }.into();
+        m.sender_id = if m.outgoing { "#self" } else { "demo:sticker" }.into();
+        m.content = crate::message_content::Content {
+            body: Some(String::new()),
+            has_attachment: true,
+            sticker: Some(crate::message_content::Photo {
+                width: 512,
+                height: 512,
+                size: Some(13862),
+            }),
+            ..Default::default()
+        }
+        .into();
+    }
+}
+
 pub fn demo() -> DemoState {
     let today = chrono::Local::now().date_naive();
     let mut next_id = 1;
@@ -451,6 +497,11 @@ pub fn demo() -> DemoState {
         } else {
             album_messages(&chat.messages[0], 38)
         };
+    }
+    if std::env::var_os("HEYA_DEMO_STICKERS").is_some() {
+        let chat = chats.iter_mut().find(|c| c.id == 9).unwrap();
+        chat.title = "Received stickers".into();
+        fill_stickers(&mut chat.messages);
     }
     DemoState::new(chats)
 }

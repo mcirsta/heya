@@ -102,6 +102,7 @@ pub fn check_ui() {
         let reply = messaging::SendReply {
             request,
             chat,
+            target: chat,
             text: sent,
             saved: true,
         };
@@ -164,6 +165,7 @@ pub fn check_ui() {
                 reply: Some(messaging::SendReply {
                     request,
                     chat,
+                    target: chat,
                     text,
                     saved: true,
                 }),
@@ -191,6 +193,7 @@ pub fn check_ui() {
             reply: Some(messaging::SendReply {
                 request,
                 chat,
+                target: chat,
                 text,
                 saved: false,
             }),
@@ -238,6 +241,7 @@ pub fn check_ui() {
             revision: ui.get_live_revision(),
             reply: Some(messaging::SendReply {
                 chat,
+                target: chat,
                 text,
                 request,
                 saved: true,
@@ -251,5 +255,96 @@ pub fn check_ui() {
         revision,
         "a save reply must not unlock unfinished navigation"
     );
+    ui.hide().unwrap();
+}
+
+/// A PN/LID merge can publish the target conversation before the send reply.
+pub fn check_merged_chat_ui() {
+    let ui = AppWindow::new().unwrap();
+    ui.window().set_size(slint::LogicalSize::new(900., 700.));
+    let (commands, mut rx) = tokio::sync::mpsc::channel(256);
+    live_presentation::bind_messages(&ui, commands);
+    let mut state = fixtures::demo();
+    let chats: std::sync::Arc<[_]> = state.sidebar().into();
+    let view = |conversation: crate::domain::Conversation, revision| messaging::Snapshot {
+        revision,
+        view: Some(std::sync::Arc::new(crate::archive::View {
+            unread_chats: 0,
+            archived_count: 0,
+            archived_view: false,
+            chats: chats.clone(),
+            conversation: Some(conversation),
+            can_send: true,
+            history_failed: false,
+            phone_more: false,
+        })),
+        ..messaging::Snapshot::empty()
+    };
+    ui.set_demo_mode(false);
+    ui.set_show_conversation(true);
+    live_presentation::publish(
+        &ui,
+        &connection::Snapshot::new(connection::Phase::Connected),
+    );
+    let original = state.conversation();
+    live_presentation::publish_messages(&ui, &view(original.clone(), 0));
+    ui.show().unwrap();
+    ui.invoke_focus_composer();
+    let text = "Synthetic merged send 👩🏽‍💻\năâîșț";
+    ui.set_draft(text.into());
+    ui.invoke_draft_edited(ui.get_draft());
+    rx.try_recv().unwrap();
+    key(&ui, Key::Return);
+    let messaging::Command::Send { chat, request, .. } = rx.try_recv().unwrap() else {
+        panic!("Enter must submit");
+    };
+    let mut merged = original.clone();
+    merged.chat.id = 9_000;
+    merged.draft = text.into();
+    live_presentation::publish_messages(&ui, &view(merged.clone(), ui.get_live_revision()));
+    assert_eq!(ui.get_selected_id(), 9_000);
+    assert!(ui.get_send_pending());
+    assert_eq!(ui.get_draft(), text);
+    let reply = |chat, target| messaging::SendReply {
+        request: ui.get_send_request_id(),
+        chat,
+        target,
+        text: ui.get_draft().into(),
+        saved: true,
+    };
+    let merged_reply = messaging::Snapshot {
+        reply: Some(reply(chat, 9_000)),
+        ..messaging::Snapshot::empty()
+    };
+    assert_eq!(merged_reply.reply.as_ref().unwrap().request, request);
+    live_presentation::publish_messages(&ui, &merged_reply);
+    assert!(!ui.get_send_pending());
+    assert!(
+        ui.get_draft().is_empty(),
+        "the merged conversation's composer held the sent text"
+    );
+    // A reply must still never clear another conversation's composer.
+    ui.set_draft("Second synthetic send".into());
+    ui.invoke_draft_edited(ui.get_draft());
+    rx.try_recv().unwrap();
+    key(&ui, Key::Return);
+    let messaging::Command::Send { .. } = rx.try_recv().unwrap() else {
+        panic!("Enter must submit");
+    };
+    let late = reply(9_000, 9_000);
+    ui.invoke_select_chat(2);
+    state.select(2);
+    let mut other = state.conversation();
+    other.draft = "Other chat draft".into();
+    live_presentation::publish_messages(&ui, &view(other, ui.get_live_revision()));
+    live_presentation::publish_messages(
+        &ui,
+        &messaging::Snapshot {
+            reply: Some(late),
+            ..messaging::Snapshot::empty()
+        },
+    );
+    assert!(!ui.get_send_pending());
+    assert_eq!(ui.get_draft(), "Other chat draft");
     ui.hide().unwrap();
 }

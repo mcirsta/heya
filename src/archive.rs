@@ -183,7 +183,7 @@ impl Archive {
         db.busy_timeout(Duration::from_secs(5))?;
         db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA secure_delete=ON; PRAGMA temp_store=MEMORY;")?;
         let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if version > 19 {
+        if version > 20 {
             return Err(Error::Database);
         }
         if version == 0 {
@@ -304,6 +304,12 @@ impl Archive {
             tx.pragma_update(None, "user_version", 19)?;
             tx.commit()?;
         }
+        if version < 20 {
+            let tx = db.transaction()?;
+            tx.execute_batch(include_str!("archive_read_keys.sql"))?;
+            tx.pragma_update(None, "user_version", 20)?;
+            tx.commit()?;
+        }
         // Never resend something that may have reached the network before a crash.
         db.execute("UPDATE message_photos SET state=0 WHERE state=1", [])?;
         db.execute(
@@ -352,32 +358,58 @@ impl Archive {
             Ok(())
         }).await
     }
+    #[track_caller]
     pub fn blocking<T>(&self, operation: impl FnOnce(&mut Connection) -> Result<T>) -> Result<T> {
-        let mut db = self.0.connection.lock().map_err(|_| Error::Database)?;
-        operation(&mut db)
+        self.locked(std::panic::Location::caller(), operation)
     }
-    pub async fn call<T: Send + 'static>(
+    // Every archive job shares this connection. Name the caller of a job that
+    // waited for it or held it long enough to stall chat views.
+    fn locked<T>(
         &self,
-        operation: impl FnOnce(&mut Connection) -> Result<T> + Send + 'static,
+        site: &'static std::panic::Location<'static>,
+        operation: impl FnOnce(&mut Connection) -> Result<T>,
     ) -> Result<T> {
+        let requested = std::time::Instant::now();
+        let mut db = self.0.connection.lock().map_err(|_| Error::Database)?;
+        let acquired = std::time::Instant::now();
+        let result = operation(&mut db);
+        drop(db);
+        let (waited, held) = (acquired - requested, acquired.elapsed());
+        if waited.max(held) >= crate::diagnostics::SLOW {
+            crate::diagnostics::report(format_args!(
+                "archive job at {site} waited {} ms, held {} ms",
+                waited.as_millis(),
+                held.as_millis()
+            ));
+        }
+        result
+    }
+    #[track_caller]
+    pub fn call<T: Send + 'static, F: FnOnce(&mut Connection) -> Result<T> + Send + 'static>(
+        &self,
+        operation: F,
+    ) -> impl Future<Output = Result<T>> + use<T, F> {
+        let site = std::panic::Location::caller();
         let archive = self.clone();
-        let probe = self.measurements();
-        let queued = probe.as_ref().map(|_| std::time::Instant::now());
-        tokio::task::spawn_blocking(move || {
-            archive.blocking(|db| {
-                let start = queued.map(|_| std::time::Instant::now());
-                if let (Some(probe), Some(queued)) = (&probe, queued) {
-                    probe.record(crate::performance::Metric::Queue, queued.elapsed());
-                }
-                let result = operation(db);
-                if let (Some(probe), Some(start)) = (&probe, start) {
-                    probe.record(crate::performance::Metric::ArchiveWork, start.elapsed());
-                }
-                result
+        async move {
+            let probe = archive.measurements();
+            let queued = probe.as_ref().map(|_| std::time::Instant::now());
+            tokio::task::spawn_blocking(move || {
+                archive.locked(site, |db| {
+                    let start = queued.map(|_| std::time::Instant::now());
+                    if let (Some(probe), Some(queued)) = (&probe, queued) {
+                        probe.record(crate::performance::Metric::Queue, queued.elapsed());
+                    }
+                    let result = operation(db);
+                    if let (Some(probe), Some(start)) = (&probe, start) {
+                        probe.record(crate::performance::Metric::ArchiveWork, start.elapsed());
+                    }
+                    result
+                })
             })
-        })
-        .await
-        .map_err(|_| Error::Database)?
+            .await
+            .map_err(|_| Error::Database)?
+        }
     }
     pub fn changed(&self) {
         self.0.changed.send_modify(|n| *n = n.wrapping_add(1));
@@ -477,25 +509,27 @@ impl Archive {
     /// The command actor serializes composer edits and sends. Its send command
     /// carries the complete latest draft, even if an earlier edit was dropped
     /// under backpressure. Clear that draft atomically with durable insertion.
-    pub async fn queue(&self, chat: i32, id: String, text: String) -> Result<()> {
+    /// Returns the local chat that stores the message; a PN/LID merge may have
+    /// redirected the caller's chat ID.
+    pub async fn queue(&self, chat: i32, id: String, text: String) -> Result<i32> {
         if text.trim().is_empty() || text.len() > 64 * 1024 {
             return Err(Error::Invalid);
         }
-        self.call(move |db| {
+        let chat = self.call(move |db| {
             let tx = db.transaction()?;
             let chat = local_chat(&tx,chat)?;
             chat_settings::unlocked(&tx,chat)?;
-            if Self::queue_reply(&tx,chat,id.clone(),text.clone())? {tx.commit()?;return Ok(());}
+            if Self::queue_reply(&tx,chat,id.clone(),text.clone())? {tx.commit()?;return Ok(chat);}
             let (read_only, ephemeral): (bool, u32) = tx.query_row(
                 "SELECT read_only,ephemeral FROM chats WHERE id=?1", [chat], |r| Ok((r.get(0)?,r.get(1)?)))?;
             if read_only { return Err(Error::Invalid); }
             let now = chrono::Utc::now().timestamp();
             tx.execute("INSERT INTO messages(chat_id,sender,wire_id,stamp,outgoing,sender_name,body,raw,visible,delivery,expires,source_chat,source_sender) VALUES(?1,'#self',?2,?3,1,'You',?4,X'',1,'queued',?5,(SELECT jid FROM chats WHERE id=?1),'#self')", params![chat,id,now,text, (ephemeral > 0).then_some(now + ephemeral as i64)])?;
             tx.execute("UPDATE chats SET draft='' WHERE id=?1", [chat])?;
-            tx.commit()?; Ok(())
+            tx.commit()?; Ok(chat)
         }).await?;
         self.changed();
-        Ok(())
+        Ok(chat)
     }
     pub async fn claim_next(&self) -> Result<Option<Outgoing>> {
         let result = self.call(|db| {
@@ -864,6 +898,9 @@ fn insert_record(tx: &Transaction<'_>, r: Record, live: bool) -> Result<()> {
         }
     }
     apply_mutations(tx, chat)?;
+    if let Some(change) = &r.change {
+        edits::read_key(tx, chat, &sender, change, &r.id)?;
+    }
     controls::hide_if_needed(tx, chat, &sender, &r.id)?;
     Ok(())
 }
@@ -1006,10 +1043,11 @@ fn move_records(
         &format!("UPDATE OR IGNORE messages SET {column}=?2 WHERE {column}=?1"),
         [from, to],
     )?;
-    tx.execute(&format!("INSERT INTO messages(chat_id,sender,wire_id,stamp,outgoing,sender_name,body,raw,visible,deleted,expires,delivery,source_chat,source_sender,unread,seen,content,thumbnail,album,album_index)
-        SELECT {chat},{sender},wire_id,stamp,outgoing,sender_name,body,raw,visible,deleted,expires,delivery,source_chat,source_sender,unread,seen,content,thumbnail,album,album_index FROM messages WHERE {column}=?1
+    tx.execute(&format!("INSERT INTO messages(chat_id,sender,wire_id,stamp,outgoing,sender_name,body,raw,visible,deleted,expires,delivery,source_chat,source_sender,unread,seen,content,thumbnail,album,album_index,read_wire)
+        SELECT {chat},{sender},wire_id,stamp,outgoing,sender_name,body,raw,visible,deleted,expires,delivery,source_chat,source_sender,unread,seen,content,thumbnail,album,album_index,read_wire FROM messages WHERE {column}=?1
         ON CONFLICT(chat_id,sender,wire_id) DO UPDATE SET
         body=CASE WHEN excluded.deleted=1 THEN excluded.body ELSE messages.body END,edit_version=-1,
+        read_wire=CASE WHEN messages.read_wire='' THEN excluded.read_wire ELSE messages.read_wire END,
         album=coalesce(messages.album,excluded.album),album_index=coalesce(messages.album_index,excluded.album_index),
         content=CASE WHEN excluded.deleted=1 OR messages.deleted=1 THEN '' WHEN messages.content='' THEN excluded.content ELSE messages.content END,
         thumbnail=CASE WHEN excluded.deleted=1 OR messages.deleted=1 THEN X'' WHEN messages.content='' THEN excluded.thumbnail ELSE messages.thumbnail END,
@@ -1061,7 +1099,7 @@ fn move_records(
         ON CONFLICT(chat_id,sender,wire_id) DO UPDATE SET
         body=CASE WHEN mutations.deleted=1 OR excluded.deleted=1 THEN NULL WHEN excluded.version>mutations.version THEN excluded.body ELSE mutations.body END,
         raw=CASE WHEN mutations.deleted=1 OR excluded.deleted=1 THEN X'' WHEN excluded.version>mutations.version THEN excluded.raw ELSE mutations.raw END,
-        version=max(mutations.version,excluded.version),deleted=max(mutations.deleted,excluded.deleted)"), [from,to])?;
+        version=CASE WHEN mutations.deleted<>excluded.deleted THEN CASE WHEN mutations.deleted=1 THEN mutations.version ELSE excluded.version END ELSE max(mutations.version,excluded.version) END,deleted=max(mutations.deleted,excluded.deleted)"), [from,to])?;
     tx.execute(&format!("DELETE FROM mutations WHERE {column}=?1"), [from])?;
     for chat in affected {
         controls::settle_hides(tx, chat)?;

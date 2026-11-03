@@ -13,8 +13,9 @@ export component PhotoTile inherits Rectangle {
     in property <string> label;
     in property <bool> show-status: true;
     in property <bool> auto-download-photos: true;
+    in property <bool> sticker;
     callback activated();
-    border-radius: 6px; clip: true; background: Theme.surface;
+    border-radius: 6px; clip: true; background: root.sticker ? transparent : Theme.surface;
     Image { width: parent.width; height: parent.height; source: root.picture; image-fit: root.crop ? cover : contain; }
     if root.show-status && (root.state>=3 || (root.state==0 && !root.auto-download-photos)): status-disc := Rectangle {
         x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;

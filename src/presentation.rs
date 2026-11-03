@@ -116,6 +116,7 @@ pub(crate) fn message_row(
         has_attachment: message.content.has_attachment
             || message.content.video.is_some()
             || message.content.photo.is_some()
+            || message.content.sticker.is_some()
             || message.content.document.is_some()
             || message.content.audio.is_some(),
         actionable: !message.content.unavailable && message.content.notice.is_none(),
@@ -184,6 +185,7 @@ pub(crate) fn message_row(
             .unwrap_or_else(|| "Audio".into())
             .into(),
         has_photo: message.content.photo.is_some(),
+        has_sticker: message.content.sticker.is_some(),
         album_photos: Default::default(),
         album_more: 0,
         has_video: message.content.video.is_some(),
@@ -194,29 +196,41 @@ pub(crate) fn message_row(
             .map(|v| crate::presentation_audio::duration(f64::from(v.seconds.unwrap_or(0))))
             .unwrap_or_default()
             .into(),
-        photo_width: message.content.photo.as_ref().map_or_else(
-            || {
-                message
-                    .content
-                    .video
-                    .as_ref()
-                    .map_or(640., |v| v.width as f32)
-            },
-            |p| p.width as f32,
-        ),
-        photo_height: message.content.photo.as_ref().map_or_else(
-            || {
-                message
-                    .content
-                    .video
-                    .as_ref()
-                    .map_or(480., |v| v.height as f32)
-            },
-            |p| p.height as f32,
-        ),
+        photo_width: message
+            .content
+            .photo
+            .as_ref()
+            .or(message.content.sticker.as_ref())
+            .map_or_else(
+                || {
+                    message
+                        .content
+                        .video
+                        .as_ref()
+                        .map_or(640., |v| v.width as f32)
+                },
+                |p| p.width as f32,
+            ),
+        photo_height: message
+            .content
+            .photo
+            .as_ref()
+            .or(message.content.sticker.as_ref())
+            .map_or_else(
+                || {
+                    message
+                        .content
+                        .video
+                        .as_ref()
+                        .map_or(480., |v| v.height as f32)
+                },
+                |p| p.height as f32,
+            ),
         photo_image: Default::default(),
         photo_state: 0,
-        photo_status: crate::photos::State::Idle.label().into(),
+        photo_status: crate::photos::State::Idle
+            .image_label(message.content.sticker.is_some())
+            .into(),
         body_url: crate::message_content::web_url(
             message.content.body.as_deref().unwrap_or(&message.text),
         )
@@ -284,6 +298,7 @@ pub(crate) fn message_row(
 }
 
 pub(crate) fn sidebar(ui: &AppWindow, chats: impl Into<Arc<[domain::ChatSummary]>>) {
+    let _step = crate::diagnostics::ui_step("chat list");
     let model = ui.get_chats();
     if let Some(model) = model.as_any().downcast_ref::<chat_list::ChatListModel>() {
         model.update(chats.into());
@@ -297,6 +312,7 @@ pub(crate) fn conversation(
     view: &domain::Conversation,
     restore_draft: bool,
 ) -> bool {
+    let _step = crate::diagnostics::ui_step("conversation timeline");
     let layout_changed = ui.get_selected_id() != view.chat.id
         || ui.get_older_count() != view.older_count as i32
         || ui.get_chat_is_group() != view.is_group;
@@ -1188,6 +1204,7 @@ mod tests {
         let reply = messaging::SendReply {
             request,
             chat: 1,
+            target: 1,
             text: "Submitted text".into(),
             saved: true,
         };
@@ -1270,6 +1287,7 @@ mod tests {
         let runtime = Runtime::new().unwrap();
         let live_ui = check_live_message_handoff();
         send_tests::check_ui();
+        send_tests::check_merged_chat_ui();
         media_tests::check_ui();
         super::chat_management_tests::check_ui();
         crate::presentation_avatars::check_ui();

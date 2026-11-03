@@ -287,6 +287,9 @@ In progress: received JPEG/PNG photos use authenticated SDK streaming downloads,
 encrypted original/preview storage, native inline pictures and a conditional
 larger viewer. Download/decode demand follows nearby rows, with size limits,
 manual retry, an automatic-download preference and offline cached viewing.
+Static WebP stickers share that bounded image worker/cache while rendering
+transparently outside photo albums/galleries. Saved unsupported stickers upgrade
+on startup; animated/Lottie sticker playback remains pending. See [stickers](stickers.md).
 Synthetic tests cover storage/lifecycle/layout; live received-photo compatibility
 still requires the owner's check. Received audio now has a single GStreamer
 player, authenticated on-demand downloads, encrypted cache, waveform seeking,

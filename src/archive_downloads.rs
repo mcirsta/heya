@@ -26,7 +26,7 @@ impl Archive {
     }
     pub async fn download_cached(&self, request: &Request, kind: Kind) -> Result<Option<Vec<u8>>> {
         let table = match kind {
-            Kind::Photo => "message_photos",
+            Kind::Photo | Kind::Sticker => "message_photos",
             Kind::Audio => "message_audio",
             Kind::Video => "message_videos",
             _ => return Ok(None),

@@ -8,6 +8,7 @@ use tokio::{runtime::Runtime, sync::watch, task::JoinHandle};
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Media {
     Photos,
+    Stickers,
     Documents,
 }
 
@@ -36,6 +37,8 @@ pub fn start(
             let p = if media == Media::Documents {
                 let image = crate::fixtures::document_thumbnail();
                 photos::Pixels { width: image.width(), height: image.height(), rgba: image.into_raw() }
+            } else if media == Media::Stickers {
+                crate::fixtures::sticker_pixels()
             } else { crate::fixtures::photo_pixels(i, photos::INLINE_EDGE) };
             let mut encoded = Vec::new();
             let mut encoder = png::Encoder::new(&mut encoded, p.width, p.height);
@@ -50,7 +53,7 @@ pub fn start(
             for message in messages {
                 let content = serde_json::to_string(&*message.content).expect("synthetic content");
                 tx.execute("INSERT INTO messages(id,chat_id,sender,wire_id,stamp,outgoing,sender_name,body,raw,visible,source_chat,source_sender,content,thumbnail) VALUES(?1,1,'synthetic',?1,1,0,'Synthetic','',X'00',1,'synthetic','synthetic',?2,?3)", rusqlite::params![message.id, content, if media == Media::Documents && message.content.document.as_ref().is_some_and(|d| d.has_thumbnail) { previews[0].as_slice() } else { &[] }])?;
-                if media == Media::Photos { tx.execute("INSERT INTO message_photos(message_id,original,preview,state,revision) VALUES(?1,?2,?2,2,1)", rusqlite::params![message.id, previews[message.id.unsigned_abs() as usize%3]])?; }
+                if media != Media::Documents { tx.execute("INSERT INTO message_photos(message_id,original,preview,state,revision) VALUES(?1,?2,?2,2,1)", rusqlite::params![message.id, previews[message.id.unsigned_abs() as usize%3]])?; }
             }
             tx.commit()?;
             Ok(())

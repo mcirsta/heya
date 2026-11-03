@@ -28,9 +28,20 @@ impl Archive {
             return Err(Error::Limit);
         }
         let request = request.clone();
-        self.call(move |db| Ok(db.execute(
+        let (saved,retry)=self.call(move |db| {
+            let tx=db.transaction()?;
+            let saved=tx.execute(
             &format!("INSERT INTO message_videos(message_id,original) SELECT m.id,?3 FROM messages m WHERE m.id=?1 AND m.raw=?2 AND {ELIGIBLE} ON CONFLICT(message_id) DO UPDATE SET original=excluded.original"),
             params![request.id,request.raw,bytes],
-        )?>0)).await
+            )?>0;
+            // A partial MP4 may lack the metadata needed for a poster. A newly
+            // verified original makes that failed preview worth trying once.
+            let retry=saved && tx.execute("UPDATE document_previews SET retry_at=0 WHERE message_id=?1 AND sharp=0 AND retry_at>0",[request.id])?>0;
+            tx.commit()?;Ok((saved,retry))
+        }).await?;
+        if retry {
+            self.changed();
+        }
+        Ok(saved)
     }
 }

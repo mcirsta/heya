@@ -1,6 +1,6 @@
 //! Real SQLCipher saves; the UI owns the one-pending-submission gate.
 use super::*;
-use crate::archive::tests::{PN, fixture};
+use crate::archive::tests::{LID, PN, fixture};
 
 #[tokio::test]
 async fn queued_typing_does_not_make_send_wait_for_every_obsolete_draft() {
@@ -170,4 +170,70 @@ async fn send_replies_report_committed_text_and_allow_retry_after_failure() {
     assert_eq!(final_view.reply.as_ref().unwrap().request, 3);
     assert!(final_view.reply.as_ref().unwrap().saved);
     assert!(final_view.view.is_some());
+}
+
+#[tokio::test]
+async fn a_send_through_a_merged_chat_names_its_target_and_does_not_restore_the_draft() {
+    let (_temp, db) = fixture();
+    let old = db.create_chat(LID.into()).await.unwrap();
+    let target = db.create_chat(PN.into()).await.unwrap();
+    // The UI still names the LID chat after this PN/LID merge.
+    db.ingest(crate::archive::Batch {
+        aliases: vec![(LID.into(), PN.into())],
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    let (archives, receiver) = watch::channel(None);
+    let (commands, rx) = mpsc::channel(16);
+    let (updates, mut views) = watch::channel(Snapshot::empty());
+    let task = tokio::spawn(run(receiver, rx, updates));
+    archives.send_replace(Some(db.clone()));
+    views.changed().await.unwrap();
+    let text = "Synthetic merged-chat text 👩🏽‍💻\năâîșț".to_owned();
+    commands
+        .send(Command::Draft(old, text.clone(), 4))
+        .await
+        .unwrap();
+    commands
+        .send(Command::Send {
+            chat: old,
+            text: text.clone(),
+            request: 1,
+            draft_version: 4,
+        })
+        .await
+        .unwrap();
+    // The merged view can reach Slint first; its composer then names the
+    // target while still holding the submitted text.
+    commands
+        .send(Command::Select {
+            id: target,
+            previous: target,
+            draft: text.clone(),
+            draft_version: 4,
+            revision: 1,
+        })
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        while views.borrow_and_update().revision != 1 {
+            views.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    let snapshot = views.borrow().clone();
+    let reply = snapshot.reply.unwrap();
+    assert!(reply.saved);
+    assert_eq!((reply.chat, reply.target), (old, target));
+    let conversation = snapshot.view.unwrap().conversation.clone().unwrap();
+    assert_eq!(conversation.chat.id, target);
+    assert!(
+        conversation.draft.is_empty(),
+        "the sent text is not a draft"
+    );
+    assert_eq!(conversation.messages.last().unwrap().text, text);
+    drop(commands);
+    task.await.unwrap();
 }

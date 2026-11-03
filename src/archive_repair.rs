@@ -1,4 +1,4 @@
-//! Re-materialize previously unsupported text without changing message identity.
+//! Re-materialize previously unsupported content without changing message identity.
 use super::*;
 
 impl Archive {
@@ -54,14 +54,14 @@ impl Archive {
     }
     /// Called on the startup blocking worker before publishing the archive.
     /// The adapter owns decoding; storage only handles opaque saved envelopes.
-    /// The decoder supplies replacement text and whether the row is displayable.
+    /// The decoder supplies the replacement text, metadata and thumbnail.
     /// Hidden metadata keeps its envelope but contributes no unread message.
     /// Batches bound transaction size and decode one envelope at a time. A
     /// failed/interrupted pass can restart: repaired rows no longer qualify.
     pub fn repair_unsupported_messages(
         &self,
         revision: u32,
-        decode: impl Fn(&[u8]) -> Option<(String, bool)>,
+        decode: impl Fn(&[u8]) -> Option<crate::message_actions::Prepared>,
     ) -> Result<()> {
         let complete = self.blocking(|db| {
             Ok(db
@@ -104,12 +104,12 @@ impl Archive {
                 for (id,chat) in &ids {
                     let raw: Vec<u8> =
                         tx.query_row("SELECT raw FROM messages WHERE id=?1", [id], |r| r.get(0))?;
-                    if let Some((text,visible)) = decode(&raw).filter(|(text,visible)| !visible || !text.is_empty()) {
+                    if let Some(value) = decode(&raw).filter(|v| !v.visible || !v.text.is_empty()) {
                         changed |= tx.execute(
-                            "UPDATE messages SET body=?2,visible=?3,unread=CASE WHEN ?3 THEN unread ELSE 0 END WHERE id=?1 AND (body<>?2 OR visible<>?3)",
-                            params![id, text,visible],
+                            "UPDATE messages SET body=?2,visible=?3,unread=CASE WHEN ?3 THEN unread ELSE 0 END,content=?4,thumbnail=?5 WHERE id=?1 AND (body<>?2 OR visible<>?3 OR content<>?4 OR thumbnail<>?5)",
+                            params![id, value.text,value.visible,encode_content(&value.content)?,value.thumbnail],
                         )? > 0;
-                        if !visible {hidden_chats.insert(*chat);}
+                        if !value.visible {hidden_chats.insert(*chat);}
                     }
                 }
                 for chat in hidden_chats {reads::recount(&tx,chat)?;}
@@ -148,19 +148,22 @@ impl Archive {
         loop {
             let last=self.blocking(|db| {
                 let tx=db.transaction()?;
-                let rows=tx.prepare("SELECT id,chat_id,source_chat,source_sender,sender,outgoing,stamp,raw FROM messages WHERE id>?1 AND visible=0 AND deleted=0 AND length(raw)>0 ORDER BY id LIMIT 100")?
-                    .query_map([after],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i32>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,bool>(5)?,r.get::<_,i64>(6)?,r.get::<_,Vec<u8>>(7)?)))?
+                let rows=tx.prepare("SELECT id,chat_id,source_chat,source_sender,sender,outgoing,stamp,raw,wire_id FROM messages WHERE id>?1 AND visible=0 AND deleted=0 AND length(raw)>0 ORDER BY id LIMIT 100")?
+                    .query_map([after],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i32>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,bool>(5)?,r.get::<_,i64>(6)?,r.get::<_,Vec<u8>>(7)?,r.get::<_,String>(8)?)))?
                     .collect::<std::result::Result<Vec<_>,_>>()?;
                 let mut changed=std::collections::BTreeSet::new();
-                for (id,chat,source,sender,author,outgoing,stamp,raw) in &rows {
+                let mut read_keys=Vec::new();
+                for (id,chat,source,sender,author,outgoing,stamp,raw,wire) in &rows {
                     if let Some(change)=decode(raw,source,sender,*outgoing,*stamp)
                         && change.text.is_none()
                         && edits::record(&tx,*chat,&canonical(&tx,author)?,&change)? {
                             tx.execute("UPDATE messages SET raw=X'' WHERE id=?1",[id])?;
                             changed.insert(*chat);
+                            read_keys.push((*chat,canonical(&tx,author)?,change,wire));
                     }
                 }
                 for chat in changed { edits::apply(&tx,Some(chat))?; }
+                for (chat,author,change,wire) in read_keys { edits::read_key(&tx,chat,&author,&change,wire)?; }
                 if rows.is_empty() {
                     // Previously accepted early revokes also need a tombstone.
                     edits::apply(&tx,None)?;

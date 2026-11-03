@@ -70,6 +70,16 @@ impl State {
             Self::Invalid => "Could not display photo · click to retry",
         }
     }
+    pub fn image_label(self, sticker: bool) -> &'static str {
+        match (self, sticker) {
+            (Self::Idle, true) => "Download sticker",
+            (Self::Ready, true) => "Sticker",
+            (Self::TooLarge, true) => "Sticker exceeds the 1 MiB limit",
+            (Self::Unavailable, true) => "Sticker unavailable · try again or ask the sender",
+            (Self::Invalid, true) => "Could not display sticker · click to retry",
+            _ => self.label(),
+        }
+    }
 }
 
 #[derive(Clone, Default, PartialEq, Eq)]
@@ -150,8 +160,15 @@ fn decoded(bytes: &[u8]) -> Option<image::DynamicImage> {
         .ok()?;
     if !matches!(
         reader.format(),
-        Some(image::ImageFormat::Jpeg | image::ImageFormat::Png)
+        Some(image::ImageFormat::Jpeg | image::ImageFormat::Png | image::ImageFormat::WebP)
     ) {
+        return None;
+    }
+    if reader.format() == Some(image::ImageFormat::WebP)
+        && image::codecs::webp::WebPDecoder::new(Cursor::new(bytes))
+            .ok()?
+            .has_animation()
+    {
         return None;
     }
     let mut limits = image::Limits::default();
@@ -320,6 +337,7 @@ pub async fn demo_present(
     updates: watch::Sender<Arc<Snapshot>>,
 ) {
     let mut samples = Vec::new();
+    let mut sticker = None;
     let mut viewer: Option<(i32, Arc<Pixels>)> = None;
     loop {
         let wanted = demand.borrow_and_update().clone();
@@ -336,12 +354,19 @@ pub async fn demo_present(
             }
         }
         let mut result = Snapshot::default();
+        if sticker.is_none() && wanted.ids().iter().any(|id| (22500..22510).contains(id)) {
+            sticker = blocking(|| Arc::new(crate::fixtures::sticker_pixels())).await;
+        }
         for id in wanted.ids() {
             result.rows.insert(
                 id,
                 Photo {
                     state: State::Ready,
-                    image: Some(samples[id.unsigned_abs() as usize % 3].clone()),
+                    image: if (22500..22510).contains(&id) {
+                        sticker.clone()
+                    } else {
+                        Some(samples[id.unsigned_abs() as usize % 3].clone())
+                    },
                 },
             );
         }

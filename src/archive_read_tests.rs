@@ -408,8 +408,8 @@ async fn deleted_tail_can_be_read_without_a_sender_receipt() {
             sync.through, 100,
             "read the observed message, not the later deletion event"
         );
-        let key = sync.message.unwrap();
-        assert_eq!(key.wire, "deleted-tail");
+        let key = sync.messages.last().unwrap();
+        assert_eq!(key.wire, "delete-event");
         assert_eq!(key.sender, PN);
         assert!(!key.outgoing);
         assert!(
@@ -466,7 +466,7 @@ async fn deleted_tail_read_preserves_newer_same_second_arrivals() {
         "clear only the observed range, including its deletion placeholder"
     );
     let sync = db.next_read_sync().await.unwrap().unwrap();
-    assert_eq!(sync.message.unwrap().wire, "deleted-tail");
+    assert_eq!(sync.messages.last().unwrap().wire, "delete-event");
     let receipt = db.next_receipt().await.unwrap().unwrap();
     assert_eq!(
         receipt
@@ -511,4 +511,25 @@ async fn deleted_tail_from_expiry_is_a_readable_placeholder() {
     );
     assert_eq!(db.next_read_sync().await.unwrap().unwrap().through, 100);
     assert!(db.next_receipt().await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn an_unknown_key_never_rounds_a_read_echo_over_unobserved_same_second_rows() {
+    let (_temp, db) = fixture();
+    incoming(&db, "earlier", 90).await;
+    incoming(&db, "unobserved", 100).await;
+    db.read_updates(vec![ReadUpdate {
+        jid: PN.into(),
+        through: Some(100),
+        message: Some(ReadMessage {
+            wire: "an-older-revoke-key-no-longer-retained".into(),
+            sender: PN.into(),
+            outgoing: false,
+        }),
+        marked: false,
+        version: Some(200),
+    }])
+    .await
+    .unwrap();
+    assert_eq!(summary(&db).await.unread, 1);
 }

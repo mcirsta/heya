@@ -158,19 +158,16 @@ pub(super) fn accepted(db: &Connection, chat: i32, event: &str, status: &str) ->
     ) {
         return marks::accepted(db, chat, &control);
     }
-    edits::record(
-        db,
-        chat,
-        "#self",
-        &Change {
-            id: control.wire.clone(),
-            sender: "#self".into(),
-            text: (control.kind == ControlKind::Edit).then_some(control.text),
-            raw: Vec::new(),
-            version: control.version,
-        },
-    )?;
+    let change = Change {
+        id: control.wire.clone(),
+        sender: "#self".into(),
+        text: (control.kind == ControlKind::Edit).then_some(control.text),
+        raw: Vec::new(),
+        version: control.version,
+    };
+    edits::record(db, chat, "#self", &change)?;
     apply_mutations(db, chat)?;
+    edits::read_key(db, chat, "#self", &change, event)?;
     hide_if_needed(db, chat, "#self", &control.wire)?;
     db.execute(
         "UPDATE message_controls SET text='' WHERE event_wire=?1",

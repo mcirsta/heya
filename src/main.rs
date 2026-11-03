@@ -17,6 +17,7 @@ mod chat_management;
 mod clipboard;
 mod connection;
 mod contact_info;
+mod diagnostics;
 mod document_previews;
 mod domain;
 mod downloads;
@@ -111,8 +112,10 @@ mod protocol_presence;
 mod protocol_reads;
 mod protocol_receipts;
 mod protocol_sync;
+mod protocol_timing;
 mod protocol_uploads;
 mod protocol_video;
+mod protocol_video_previews;
 mod service;
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 mod skia_cpu_tests;
@@ -450,8 +453,11 @@ fn run(options: Options, trace: &startup::Trace) -> Result<(), Box<dyn std::erro
         });
     }
 
+    let ui_watchdog = runtime.spawn(diagnostics::watch_ui());
     trace.record("event_loop", "enter");
     let result = slint::run_event_loop();
+    // Window close and shutdown waits are not UI freezes.
+    ui_watchdog.abort();
     match &result {
         Ok(()) => trace.record("event_loop", "returned"),
         Err(error) => trace.record("event_loop", &format!("failed error={error}")),

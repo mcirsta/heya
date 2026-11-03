@@ -1,0 +1,146 @@
+//! Sending reactions to DM/group/status messages.
+//!
+//! Newsletter reactions go through a different (plaintext) wire path; use
+//! [`Client::newsletter`]'s `send_reaction` for channels.
+//!
+//! Community Announcement Groups never accept plaintext reactions: WA Web
+//! (`WAWebReactionEncryptMsgData`) encrypts the reaction with the target
+//! message's `messageSecret` and emits an `enc_reaction_message` envelope.
+//! [`Client::send_reaction`] applies the same gate transparently.
+
+use buffa::MessageField;
+use wacore_binary::{Jid, JidExt};
+use waproto::whatsapp as wa;
+
+use crate::client::Client;
+use crate::send::{SendError, SendResult};
+
+impl Client {
+    /// React using the message's chat/author scope. Newsletter reactions use
+    /// [`crate::features::Newsletter::send_reaction`]; explicit chat/key interop
+    /// is available through [`Client::send_reaction_raw`].
+    pub async fn send_reaction(
+        &self,
+        target: &crate::MessageRef<'_>,
+        emoji: &str,
+    ) -> Result<SendResult, SendError> {
+        // Status reactions have supported author fanout; broadcast lists do not.
+        if target.chat().is_broadcast_list() {
+            return Err(crate::MessageRefError::UnsupportedOrigin.into());
+        }
+        let mut key = self.message_ref_addon_key(target).await?;
+        if target.chat().is_status_broadcast() && key.participant.is_none() {
+            key.participant = Some(self.pn().ok_or(SendError::NotLoggedIn)?.to_non_ad_string());
+        }
+        self.send_reaction_raw(target.chat(), key, emoji).await
+    }
+
+    /// Explicit raw chat/key interop for DM, group, or status reactions.
+    ///
+    /// `target_key` references the message being reacted to. For groups and
+    /// status it must carry `participant` (the original sender) so the receipt
+    /// can be attributed; [`crate::bot::MessageContext::react`] fills this in
+    /// from the incoming message. An empty `emoji` removes a previous reaction
+    /// (WA Web's empty-text reaction == sender-revoke).
+    ///
+    /// For a Community Announcement Group the reaction is encrypted with the
+    /// target's `messageSecret` (captured when the message was received) and
+    /// sent as `enc_reaction_message`; reacting to a message whose secret was
+    /// never captured fails rather than emitting a plaintext reaction the
+    /// channel would reject.
+    ///
+    /// status@broadcast reactions fan out to the status author's devices; the
+    /// author is read from `target_key.participant` by the send path.
+    pub async fn send_reaction_raw(
+        &self,
+        chat: impl Into<Jid>,
+        target_key: wa::MessageKey,
+        emoji: &str,
+    ) -> Result<SendResult, SendError> {
+        let chat = &chat.into();
+        if chat.is_group() && self.is_community_announce_group(chat).await? {
+            return self.send_enc_reaction(chat, target_key, emoji).await;
+        }
+        let reaction = wacore::proto_helpers::build_reaction_message(
+            target_key,
+            emoji,
+            wacore::time::now_millis(),
+        );
+        self.send_message(chat, reaction).await
+    }
+
+    /// Whether `chat` is a Community Announcement Group (WA Web `isCag`).
+    ///
+    /// Served from the cached/persisted group metadata; a blob persisted
+    /// before the flag existed answers `None` and falls back to one full
+    /// metadata query.
+    pub(crate) async fn is_community_announce_group(
+        &self,
+        chat: &Jid,
+    ) -> Result<bool, crate::features::GroupError> {
+        if let Some(flag) = self
+            .groups()
+            .routing_info(chat)
+            .await?
+            .is_community_announce
+        {
+            return Ok(flag);
+        }
+        Ok(self
+            .groups()
+            .fetch_metadata(chat)
+            .await?
+            .is_default_sub_group)
+    }
+
+    async fn send_enc_reaction(
+        &self,
+        chat: &Jid,
+        mut target_key: wa::MessageKey,
+        emoji: &str,
+    ) -> Result<SendResult, SendError> {
+        let (author, secret) = self
+            .resolve_outgoing_addon_parent(chat, &target_key)
+            .await?;
+        let target_id = target_key
+            .id
+            .clone()
+            .ok_or_else(|| SendError::InvalidRequest("target message key missing id".into()))?;
+        // Receivers derive the addon key with the STANZA sender, which in a
+        // CAG is our LID identity regardless of the parent author's namespace;
+        // mirror the comment path (WA Web authors CAG addons under LID).
+        let reactor = self
+            .lid()
+            .or_else(|| self.pn())
+            .map(|j| j.to_non_ad())
+            .ok_or(SendError::NotLoggedIn)?;
+
+        let (enc_payload, iv) = wacore::reaction::encrypt_reaction_with_secret(
+            emoji,
+            wacore::time::now_millis(),
+            &secret,
+            &target_id,
+            &author.to_non_ad_string(),
+            &reactor.to_non_ad_string(),
+        )?;
+
+        // Receivers resolve the parent author from the envelope key, so it
+        // must carry the same identity the HKDF was derived with.
+        if target_key.participant.is_none() {
+            target_key.participant = Some(author.to_non_ad_string());
+        }
+
+        let message = {
+            let mut proto = wa::Message::default();
+            proto.enc_reaction_message = MessageField::some({
+                let mut proto = wa::message::EncReactionMessage::default();
+                proto.target_message_key = MessageField::some(target_key);
+                proto.enc_payload = Some(enc_payload);
+                proto.enc_iv = Some(iv.to_vec());
+                proto
+            });
+            proto
+        };
+        self.send_message(chat, message).await
+    }
+}

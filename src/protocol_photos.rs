@@ -1,7 +1,7 @@
-//! Received-photo protocol boundary.
+//! Received-photo and static-sticker protocol boundary.
 use crate::photos::{self, Source, State};
 use std::sync::Arc;
-use whatsapp_rust::{Client, prelude::MessageExt, waproto::codec};
+use whatsapp_rust::{Client, download::Downloadable, prelude::MessageExt, waproto::codec};
 pub struct Photos(pub Arc<Client>);
 #[async_trait::async_trait]
 impl Source for Photos {
@@ -10,29 +10,38 @@ impl Source for Photos {
         if message.is_view_once() {
             return Err(State::Unavailable);
         }
-        let photo = message
-            .get_base_message()
-            .image_message
-            .as_option()
-            .ok_or(State::Unavailable)?;
-        if photo
-            .file_length
-            .is_some_and(|n| n > photos::MAX_BYTES as u64)
-        {
+        let base = message.get_base_message();
+        let (media, limit): (&dyn Downloadable, usize) =
+            if let Some(photo) = base.image_message.as_option() {
+                (photo, photos::MAX_BYTES)
+            } else if let Some(sticker) = base
+                .sticker_message
+                .as_option()
+                .filter(|s| s.is_animated != Some(true) && s.is_lottie != Some(true))
+            {
+                (sticker, 1024 * 1024)
+            } else {
+                return Err(State::Unavailable);
+            };
+        if media.file_length().is_some_and(|n| n > limit as u64) {
             return Err(State::TooLarge);
         }
-        if [&photo.media_key, &photo.file_sha256, &photo.file_enc_sha256]
-            .iter()
-            .any(|v| v.as_ref().is_none_or(|v| v.len() != 32))
+        if [
+            media.media_key(),
+            media.file_sha256(),
+            media.file_enc_sha256(),
+        ]
+        .iter()
+        .any(|v| v.is_none_or(|v| v.len() != 32))
         {
             return Err(State::Unavailable);
         }
-        // Ordinary received photos use authenticated CDN routes, not arbitrary
+        // Received images use authenticated CDN routes, not arbitrary
         // static URLs supplied by senders. No unauthenticated image fetching.
-        if photo.static_url.is_some() {
+        if media.static_url().is_some() {
             return Err(State::Unavailable);
         }
-        crate::protocol_media::download(&self.0, photo, photos::MAX_BYTES)
+        crate::protocol_media::download(&self.0, media, limit)
             .await
             .map_err(|error| match error {
                 crate::protocol_media::Error::Failed => State::Failed,

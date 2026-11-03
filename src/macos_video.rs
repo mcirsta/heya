@@ -12,6 +12,14 @@ use std::{
 };
 use tokio::sync::watch;
 unsafe extern "C" {
+    fn heya_video_poster(
+        bytes: *const u8,
+        len: usize,
+        rgba: *mut u8,
+        capacity: usize,
+        width: *mut u32,
+        height: *mut u32,
+    ) -> i32;
     fn heya_video_new(
         bytes: *const u8,
         len: usize,
@@ -46,6 +54,28 @@ pub fn play(
     control: &mut watch::Receiver<Control>,
     output: &mut Emitter<impl Write>,
 ) -> Result<(), Error> {
+    if header.poster {
+        let mut rgba = vec![0; 480 * 480 * 4];
+        let (mut width, mut height) = (0, 0);
+        let result = unsafe {
+            heya_video_poster(
+                bytes.as_ptr(),
+                bytes.len(),
+                rgba.as_mut_ptr(),
+                rgba.len(),
+                &mut width,
+                &mut height,
+            )
+        };
+        if result != 1 || width == 0 || height == 0 || width > 480 || height > 480 {
+            return Err(Error::Codec);
+        }
+        return if output.poster_frame(width, height, &rgba[..(width * height * 4) as usize])? {
+            Ok(())
+        } else {
+            Err(Error::Codec)
+        };
+    }
     let uid = crate::macos_audio::selected_uid(false, &header.settings.output.id)
         .map_err(|_| Error::Playback)?;
     // `bytes` remains allocated until after Player::drop releases NSData's view.
@@ -112,7 +142,13 @@ pub fn play(
             return Err(Error::Codec);
         }
         if result == 1 {
-            output.frame(width, height, &pixels[..(width * height * 4) as usize])?;
+            if header.poster {
+                if output.poster_frame(width, height, &pixels[..(width * height * 4) as usize])? {
+                    return Ok(());
+                }
+            } else {
+                output.frame(width, height, &pixels[..(width * height * 4) as usize])?;
+            }
             saw_frame = true;
         }
         if progress.phase == 0 && saw_frame {

@@ -84,11 +84,14 @@ fn pdf_reference(doc: &DocumentMessage) -> Option<DownloadParams> {
 pub fn available(doc: &DocumentMessage) -> bool {
     thumbnail_available(doc) || pdf_available(doc)
 }
-pub struct Previews(pub Arc<Client>);
+pub struct Previews(pub Arc<Client>, pub crate::archive::Archive);
 #[async_trait::async_trait]
 impl Source for Previews {
-    async fn fetch(&self, raw: &[u8]) -> Option<Vec<u8>> {
-        let message = codec::message_decode(raw).ok()?;
+    async fn fetch(&self, request: &crate::document_previews::Request) -> Option<Vec<u8>> {
+        if request.video {
+            return crate::protocol_video_previews::fetch(&self.0, &self.1, request).await;
+        }
+        let message = codec::message_decode(&request.raw).ok()?;
         if message.is_view_once() {
             return None;
         }

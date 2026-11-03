@@ -8,8 +8,35 @@ pub(super) fn record(db: &Connection, chat: i32, author: &str, change: &Change) 
     if target != author || change.id.is_empty() {
         return Ok(false);
     }
-    db.execute("INSERT INTO mutations(chat_id,sender,wire_id,body,version,deleted,raw) VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(chat_id,sender,wire_id) DO UPDATE SET body=CASE WHEN mutations.deleted=1 THEN NULL ELSE excluded.body END,raw=CASE WHEN mutations.deleted=1 OR excluded.deleted=1 THEN X'' ELSE excluded.raw END,version=max(mutations.version,excluded.version),deleted=max(mutations.deleted,excluded.deleted) WHERE excluded.deleted=1 OR excluded.version>mutations.version",params![chat,target,change.id,change.text,change.version,change.text.is_none(),change.raw])?;
+    // Revocation wins over edits regardless of delivery order. Once revoked,
+    // its version must remain the revoke time, not a later edit's timestamp.
+    db.execute("INSERT INTO mutations(chat_id,sender,wire_id,body,version,deleted,raw) VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(chat_id,sender,wire_id) DO UPDATE SET body=CASE WHEN mutations.deleted=1 THEN NULL ELSE excluded.body END,raw=CASE WHEN mutations.deleted=1 OR excluded.deleted=1 THEN X'' ELSE excluded.raw END,version=CASE WHEN mutations.deleted=1 THEN CASE WHEN excluded.deleted=1 THEN max(mutations.version,excluded.version) ELSE mutations.version END ELSE excluded.version END,deleted=max(mutations.deleted,excluded.deleted) WHERE excluded.deleted=1 OR excluded.version>mutations.version",params![chat,target,change.id,change.text,change.version,change.text.is_none(),change.raw])?;
     Ok(true)
+}
+
+#[cfg(test)]
+#[path = "archive_read_keys_tests.rs"]
+mod read_key_tests;
+
+/// WhatsApp retains the original position/author but replaces a revoked bubble's
+/// read identity with the revoke envelope ID. Only an accepted sender mutation
+/// can supply it; expiry and hidden/foreign mutations cannot invent one.
+pub(super) fn read_key(
+    db: &Connection,
+    chat: i32,
+    author: &str,
+    change: &Change,
+    event: &str,
+) -> Result<()> {
+    if change.text.is_some() || canonical(db, &change.sender)? != author {
+        return Ok(());
+    }
+    let changed=db.execute("UPDATE messages SET read_wire=?4 WHERE chat_id=?1 AND sender=?2 AND wire_id=?3 AND visible=1 AND deleted=1 AND read_wire<>?4 AND EXISTS(SELECT 1 FROM mutations x WHERE x.chat_id=?1 AND x.sender=?2 AND x.wire_id=?3 AND x.deleted=1 AND x.version=?5)",params![chat,author,change.id,event,change.version])?;
+    if changed > 0 {
+        reads::settle(db, chat)?;
+        reads::recount(db, chat)?;
+    }
+    Ok(())
 }
 
 pub(super) fn apply(db: &Connection, chat: Option<i32>) -> Result<()> {

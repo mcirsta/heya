@@ -207,6 +207,8 @@ pub fn decorate(message: &wa::Message, content: &mut message_content::Content) {
                     .unwrap_or_else(|| {
                         if quoted.image_message.is_set() {
                             "[Photo]".into()
+                        } else if quoted.sticker_message.is_set() {
+                            "[Sticker]".into()
                         } else if quoted.audio_message.is_set() {
                             "[Audio message]".into()
                         } else {
