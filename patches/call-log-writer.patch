@@ -1,0 +1,128 @@
+diff --git a/src/features/call_log.rs b/src/features/call_log.rs
+index 2765f79..bc29a47 100644
+--- a/src/features/call_log.rs
++++ b/src/features/call_log.rs
+@@ -137,6 +137,61 @@ fn parse_call_creator_jid(index: &[String]) -> Option<Jid> {
+     }
+ }
+ 
++/// The index WA Web's `getCallLogMutation` writes:
++/// `["call_log", callCreatorJid, callId, fromMe ? "1" : "0"]`. The registry
++/// declares only the literal, so [`Client::send_app_state_action`] would put
++/// every call on the same index.
++fn call_log_index(call_creator: &Jid, call_id: &str, from_me: bool) -> anyhow::Result<Vec<u8>> {
++    let creator = call_creator.to_string();
++    let direction = if from_me { "1" } else { "0" };
++    Ok(serde_json::to_vec(&[
++        schemas::CALL_LOG.name,
++        creator.as_str(),
++        call_id,
++        direction,
++    ])?)
++}
++
++impl crate::client::Client {
++    /// Publish one call to the account's call history (`call_log` in the
++    /// `regular` collection), so the primary device and other companions list
++    /// it. The record is sent as given; the mutation timestamp is now.
++    ///
++    /// `call_creator` is the call's creator as it appeared in signaling (this
++    /// account for a call it placed), which readers compare against their own
++    /// identities to tell direction. `from_me` sets the index's direction flag
++    /// as WA Web does.
++    pub async fn send_call_log(
++        &self,
++        call_creator: &Jid,
++        call_id: &str,
++        from_me: bool,
++        record: wa::CallLogRecord,
++    ) -> Result<(), crate::AppStateError> {
++        if call_id.is_empty() {
++            return Err(crate::AppStateError::InvalidRequest(
++                "call log needs a call id".into(),
++            ));
++        }
++        let index = call_log_index(call_creator, call_id, from_me)?;
++        let mut value = wa::SyncActionValue::default();
++        value.timestamp = Some(wacore::time::now_millis());
++        value.call_log_action = buffa::MessageField::some({
++            let mut action = wa::sync_action_value::CallLogAction::default();
++            action.call_log_record = buffa::MessageField::some(record);
++            action
++        });
++        self.send_app_state_mutation(
++            schemas::CALL_LOG.collection.as_str(),
++            &index,
++            &value,
++            schemas::CALL_LOG.version as i32,
++            wa::syncd_mutation::SyncdOperation::SET,
++        )
++        .await
++    }
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+@@ -386,4 +441,61 @@ mod tests {
+         assert_eq!(outcome, AppStateDispatchOutcome::Unclaimed);
+         assert!(events.is_empty());
+     }
++
++    /// What the writer puts on the wire is what WA Web writes, and the reader
++    /// turns it back into the same call, placed by this account.
++    #[tokio::test]
++    async fn a_written_call_log_reads_back_as_the_same_placed_call() {
++        let creator: Jid = OWN_LID.parse().unwrap();
++        let record = {
++            let mut proto = wa::CallLogRecord::default();
++            proto.call_id = Some("call-77".into());
++            proto.call_result = Some(wa::call_log_record::CallResult::CONNECTED);
++            proto.duration = Some(64);
++            proto.start_time = Some(1_700_000_000);
++            proto.participants.push({
++                let mut peer = wa::call_log_record::ParticipantInfo::default();
++                peer.user_jid = Some(PEER.into());
++                peer
++            });
++            proto
++        };
++        let sent = record.clone();
++        let mutation = crate::features::chat_actions::capture_app_state_mutation(
++            schemas::CALL_LOG.collection.as_str(),
++            move |client| async move { client.send_call_log(&creator, "call-77", true, sent).await },
++        )
++        .await;
++
++        assert_eq!(mutation.operation, wa::syncd_mutation::SyncdOperation::Set);
++        assert_eq!(mutation.index, ["call_log", OWN_LID, "call-77", "1"]);
++        assert!(
++            mutation
++                .action_value
++                .as_ref()
++                .and_then(|value| value.timestamp)
++                .is_some_and(|ms| ms > 1_700_000_000_000)
++        );
++        let (outcome, events) = dispatch(&mutation, false);
++        assert_eq!(outcome, AppStateDispatchOutcome::Event("CallLogSync"));
++        let Event::CallLogSync(update) = events[0].as_ref() else {
++            panic!("expected CallLogSync event");
++        };
++        assert!(update.from_me);
++        assert_eq!(update.call_id, "call-77");
++        assert_eq!(update.call_creator_jid.to_string(), OWN_LID);
++        assert_eq!(*update.record, record);
++    }
++
++    #[tokio::test]
++    async fn a_call_log_without_a_call_id_is_refused_before_sending() {
++        let (client, _transport) = crate::test_utils::create_iq_test_client().await;
++        let creator: Jid = OWN_LID.parse().unwrap();
++        assert!(matches!(
++            client
++                .send_call_log(&creator, "", true, wa::CallLogRecord::default())
++                .await,
++            Err(crate::AppStateError::InvalidRequest(_))
++        ));
++    }
+ }

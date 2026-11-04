@@ -15,6 +15,40 @@ synthetic chats. See the
 [README](../README.md) for controls and the [roadmap](roadmap.md) for the remaining
 M0 integration checks.
 
+## Outgoing call that never rang — 3 November 2026
+
+A live outgoing audio call showed Calling for 48 s. The callee's phone showed no
+call. The journal had only `starting`, `offer sent` and `relay ready`, then a
+media summary with nothing received. "Relay ready" means the server acked the
+offer and allocated a relay, so the server accepted the offer. No accept,
+reject, preaccept or terminate reached Heya. The callee devices' offer receipts
+and `enc_rekey_retry` key requests arrive in the pinned SDK as plain receipts
+that Heya ignores, so the log could not show whether any device received or
+decrypted the offer. The SDK also does not answer a key request. A callee that
+fails to decrypt therefore never rings. That is the leading explanation, but it
+is unconfirmed. Other candidates are a callee-side privacy setting or an offer
+that reached only some devices.
+
+Outgoing calls now log a `Heya call trace:` setup summary (see
+[audio calling](audio-calling.md)). Read it after the next attempt with:
+
+```sh
+journalctl --user -t heya --since today | grep -E 'Heya call (signaling|trace|media|log)'
+```
+
+Two later live calls to phone-only contacts each addressed one device. The phone
+returned a ringing receipt after about 2 s and a preaccept shortly after; no
+call-key requests were seen. One call timed out unanswered after 47.6 s, and the
+other was declined after 14.9 s; the owner saw that phone ring. Signaling works.
+The owner's real complaint was the missing call entry: Heya never recorded
+calls it placed, and WhatsApp expects the placing device to publish the
+`call_log` record. Placed voice and video calls are now written to their chat and
+published to the account (see [audio calling](audio-calling.md) and the
+[call-log writer patch](../patches/README.md)). Synthetic tests cover the
+result-code mapping, the local row and its replacement by a synced record, and
+the SDK wire round trip. The phone's display of Heya-published records has not
+been observed.
+
 ## Freeze diagnostics and merged-chat sends — 3 November 2026
 
 A live instance stopped responding to chat-list clicks for a while after the

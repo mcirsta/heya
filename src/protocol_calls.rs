@@ -105,6 +105,7 @@ pub fn record(
         revision,
         outcome: match log.call_result {
             Some(O::CONNECTED) => CallOutcome::Connected,
+            Some(O::MISSED) if outgoing => CallOutcome::NoAnswer,
             Some(O::MISSED) => CallOutcome::Missed,
             Some(O::REJECTED) => CallOutcome::Declined,
             Some(O::CANCELLED | O::ABANDONED) => CallOutcome::Cancelled,
@@ -188,6 +189,30 @@ pub async fn save(archive: &Archive, calls: Vec<CallLogSync>) -> archive::Result
             ..Default::default()
         };
         archive.ingest_blocking(batch)
+    })
+    .await
+    .map_err(|_| archive::Error::Database)?
+}
+
+/// A call this device placed, shown in its chat whether or not the account's
+/// call log accepts the same record. A later synced record replaces it.
+pub async fn save_placed(
+    archive: &Archive,
+    log: wa::CallLogRecord,
+    creator: Jid,
+    id: String,
+) -> archive::Result<()> {
+    let archive = archive.clone();
+    tokio::task::spawn_blocking(move || {
+        let own = account(&archive)?;
+        let revision = chrono::Utc::now().timestamp_millis();
+        let messages = record(&log, &creator, &id, true, &own, revision)
+            .into_iter()
+            .collect();
+        archive.ingest_blocking(Batch {
+            messages,
+            ..Default::default()
+        })
     })
     .await
     .map_err(|_| archive::Error::Database)?

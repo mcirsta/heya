@@ -133,6 +133,52 @@ Call diagnostics record fixed setup stages (offer/answer sent, peer accepted,
 relay ready) and numeric media counters when the call closes. They contain no
 phone numbers, call IDs, packet contents or raw SDK errors. Calling is shown
 while signaling starts; it does not establish that a recipient is ringing.
+
+An outgoing call also logs one `Heya call trace:` line when its setup ends:
+connected, declined, ended, closed, failed, hung up, offline or dropped. The
+pinned SDK reports a callee device's offer receipt (when WhatsApp shows
+"Ringing") and its `enc_rekey_retry` call-key re-request only as plain receipts,
+and it does not re-send the call key. Heya's receipt handling ignores both. So
+`protocol_call_trace.rs` reads stanzas through the SDK's public raw-node
+forwarding lease and event subscription. These are held only from just before
+the offer until the setup outcome. A sent-node waiter captures the offer's
+shape. The line reports:
+- how long the SDK took to prepare the offer;
+- how many devices received an encrypted call key, how many of those used a new
+  Signal session, and whether a privacy token was attached;
+- the server's ack, or its error code;
+- distinct ringing devices and call-key requests, with first-arrival times;
+- up to four callee preaccept, accept, reject or terminate replies, with their
+  protocol reason;
+- the setup duration.
+Device JIDs are counted in memory only. Reasons outside short ASCII protocol
+words are written as "other". Synthetic stanzas test classification and the
+summary. Manual calls have exercised ringing receipts and preaccept replies;
+call-key retry behavior remains unverified.
+
+A voice or video call that Heya places is recorded when its session is released,
+in `protocol_call_log.rs`. Signaling failures before the offer are not recorded.
+The record goes into the call's chat first, through the same path as synced
+call logs. Heya then publishes the same `CallLogRecord` to the account's
+`call_log` with the patched SDK's `Client::send_call_log` (see
+[the patch notes](../patches/README.md)), so the phone and other companions can
+list it. Result codes follow WA Web's VoIP mapping:
+
+| Outcome | Call result | Callee result |
+| --- | --- | --- |
+| Answered (with duration) | connected | connected |
+| Declined | rejected | rejected |
+| Unanswered, or ended by the callee or server | missed | missed |
+| Hung up before answer | cancelled | missed |
+| Offline or media failure before answer | unavailable | missed |
+
+The record also carries the video flag, the offer time and the literal
+`isIncoming = false`. A decline that reaches Heya just after the SDK closed the
+call is still recorded as rejected. Heya shows an outgoing missed call as
+"No answer"; that also applies to outgoing calls synced from the phone. The
+account write is bounded to 10 seconds and is not retried, so a call that ends
+while offline appears only in Heya. One `Heya call log:` line reports whether it
+was published. A later synced record for the same call replaces Heya's local one.
 Queued SDK failures take precedence
 over the sticky end notification, so failed relay setup is reported as an error
 rather than an ordinary hangup. Synthetic tests cover both notifications becoming

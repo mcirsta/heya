@@ -16,6 +16,12 @@ use whatsapp_rust::{
     wacore_binary::Jid,
 };
 
+#[path = "protocol_call_log.rs"]
+mod call_log;
+#[path = "protocol_call_trace.rs"]
+mod trace;
+use call_log::{Placed, Setup};
+
 #[derive(Clone, Default)]
 struct Signal {
     id: String,
@@ -227,6 +233,9 @@ impl Network for Calling {
                 .filter(|o| o.action.call_id() == id)
         });
         eprintln!("Heya call signaling: starting");
+        let mut trace = offer
+            .is_none()
+            .then(|| trace::Outgoing::begin(&self.client));
         let handle = if let Some(id) = offer {
             let incoming = incoming.ok_or(Error::Unavailable)?;
             if incoming.action.call_id() != id {
@@ -256,6 +265,9 @@ impl Network for Calling {
                 // SDK error strings may contain account/network data. Log only
                 // the fixed category, never the raw error or call identifiers.
                 eprintln!("Heya call signaling failed: {}", setup_failure(&error));
+                if let Some(trace) = trace {
+                    eprintln!("{}", trace.summary("failed"));
+                }
                 if let Some(id) = offer {
                     self.clear_offer(id);
                 }
@@ -266,7 +278,13 @@ impl Network for Calling {
             "Heya call signaling: {} sent",
             if offer.is_some() { "answer" } else { "offer" }
         );
+        if let Some(trace) = &mut trace {
+            trace.sent(handle.call_id());
+        }
         let Some(events) = handle.take_events() else {
+            if let Some(trace) = trace {
+                eprintln!("{}", trace.summary("failed"));
+            }
             let _ = handle.terminate().await;
             return Err(Error::Network);
         };
@@ -274,6 +292,9 @@ impl Network for Calling {
         if let Some(video) = &mut video {
             video.start(handle.clone());
         }
+        let placed = offer
+            .is_none()
+            .then(|| Placed::new(&self.client, self.archive.clone(), video.is_some()));
         setup.1 = false;
         Ok(Box::new(Active {
             handle,
@@ -285,6 +306,8 @@ impl Network for Calling {
             relay: false,
             reported: false,
             video,
+            trace,
+            placed,
         }))
     }
     async fn decline(&self, id: &str) {
@@ -328,6 +351,20 @@ struct Active {
     relay: bool,
     reported: bool,
     video: Option<crate::protocol_call_video::Video>,
+    // Outgoing calls only, until the setup outcome is known.
+    trace: Option<trace::Outgoing>,
+    // Outgoing calls only: recorded in the chat and the account's call log on drop.
+    placed: Option<Placed>,
+}
+impl Active {
+    fn finish(&mut self, setup: Setup) {
+        if let Some(trace) = self.trace.take() {
+            eprintln!("{}", trace.summary(setup.phrase()));
+        }
+        if let Some(placed) = &mut self.placed {
+            placed.setup(setup);
+        }
+    }
 }
 // Sticky completion and a queued failure can become ready together. Preserve the
 // SDK's terminal event before falling back to its completion notification.
@@ -359,6 +396,19 @@ fn media_failure(event: &CallEvent) -> Option<&'static str> {
 }
 impl Drop for Active {
     fn drop(&mut self) {
+        self.finish(Setup::Dropped);
+        if let Some(placed) = self.placed.take() {
+            // The SDK can close a declined call before its reject reaches this queue.
+            let id = self.handle.call_id().to_owned();
+            let declined = std::iter::from_fn(|| self.signal.try_recv().ok())
+                .any(|signal| signal.id == id && signal.declined);
+            placed.finish(
+                &id,
+                self.handle.call_creator(),
+                self.handle.initial_peer_jid(),
+                declined && !self.reported,
+            );
+        }
         let stats = self.handle.media_stats();
         eprintln!(
             "Heya call media: received={} decoded={} opus_decoded={} auth_failed={} missing_decoder={} sink_dropped={}",
@@ -394,25 +444,27 @@ impl Session for Active {
             if self.accepted && self.relay && !self.reported {
                 self.reported = true;
                 eprintln!("Heya call signaling: connected");
+                self.finish(Setup::Connected);
                 return Event::Connected;
             }
             tokio::select! {
                 biased;
                 signal=self.signal.recv()=>match signal {
                     Some(signal) if signal.id==self.handle.call_id()=>{
-                        if signal.declined{return Event::Failed(Error::Declined);}
-                        if signal.ended{return Event::Ended;}
+                        if signal.declined{self.finish(Setup::Declined);return Event::Failed(Error::Declined);}
+                        if signal.ended{self.finish(Setup::Ended);return Event::Ended;}
                         if signal.accepted&&!self.accepted {eprintln!("Heya call signaling: accepted");self.accepted=true;if !self.relay{return Event::Accepted;}}
                     },
-                    Some(_)=>{},None=>return Event::Failed(Error::Offline),
+                    Some(_)=>{},None=>{self.finish(Setup::Offline);return Event::Failed(Error::Offline)},
                 },
                 event=receive_media(&mut self.events, self.handle.wait_ended())=>match event {
                     Some(event) if media_failure(&event).is_some()=>{
                         eprintln!("Heya call media failed: {}", media_failure(&event).unwrap());
+                        self.finish(Setup::MediaFailed);
                         return Event::Failed(Error::Network);
                     },
                     Some(CallEvent::RelayAllocated)=>{self.relay=true;eprintln!("Heya call signaling: relay ready");},
-                    Some(CallEvent::Closed(_))|None=>return Event::Ended,
+                    Some(CallEvent::Closed(_))|None=>{self.finish(Setup::Closed);return Event::Ended},
                     Some(CallEvent::AudioSilent{dominant_reason,..}) if self.reported=>eprintln!("Heya call media: silent ({dominant_reason:?})"),
                     Some(CallEvent::AudioReceptionStalled{..}) if self.reported=>eprintln!("Heya call media: reception stalled"),
                     Some(CallEvent::VideoKeyframeNeeded)=>return Event::Keyframe,
@@ -436,6 +488,7 @@ impl Session for Active {
         self.handle.is_muted()
     }
     async fn end(&mut self) {
+        self.finish(Setup::HungUp);
         if let Some(video) = &mut self.video {
             video.stop().await;
         }

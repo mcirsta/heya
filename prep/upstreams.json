@@ -46,6 +46,14 @@
           "vendored_path": "vendor/whatsapp-rust",
           "status": "local, not submitted",
           "reason": "Bounded ranged video-poster transport behind the public SDK client; original download APIs unchanged"
+        },
+        {
+          "path": "patches/call-log-writer.patch",
+          "sha256": "cfa6aef2d3b58bafe31f29f1537ccc01ff3d1ee196e43140bb63a37c1153e7cb",
+          "crate": "whatsapp-rust",
+          "vendored_path": "vendor/whatsapp-rust",
+          "status": "local, not submitted",
+          "reason": "Public Client::send_call_log writes the call_log app-state mutation with WA Web's [call_log, creator, callId, fromMe] index, which the literal-only registry schema cannot express"
         }
       ],
       "video_preview_reference": {

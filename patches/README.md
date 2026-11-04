@@ -9,12 +9,15 @@ Runtime SDK base: `oxidezap/whatsapp-rust` at
 | [document-thumbnail.patch](document-thumbnail.patch) | `DocumentMessage` has a separate thumbnail path and hashes, but `MediaType` cannot represent its HKDF context. | Adds `DocumentThumbnail`, its crypto/MMS/path mappings, and synthetic tests in `wacore/src/download.rs`. | Local; not submitted. Live interoperability still to verify. |
 | [video-preview-core.patch](video-preview-core.patch) | Video posters have their own thumbnail crypto type; prefix decoding isn't a full authenticated download. | Adds `VideoThumbnail`, explicitly preview-only block decoding and crypto regressions to `wacore`. | Local; not submitted. |
 | [video-preview-client.patch](video-preview-client.patch) | No public bounded initial-video download helper. | Adds `Client::download_video_preview_to_writer`, using existing route refresh/host retry, strict range/read caps, cancellation-aware writers and synthetic HTTP tests. | Local; not submitted. |
+| [call-log-writer.patch](call-log-writer.patch) | The SDK reads `call_log` app-state mutations but cannot write one. The registry schema declares only the `call_log` literal, so `send_app_state_action` would put every call on one index, and the raw-index writer is crate-private. | Adds `Client::send_call_log`, which writes WA Web's `["call_log", creator, callId, fromMe]` index and a `callLogAction` value, with a wire-capture round trip through the existing reader. | Local; not submitted. Live interoperability still to verify. |
 
 The video preview client extension vendors the same pinned SDK's root library in
 `vendor/whatsapp-rust`; its only runtime source changes are `src/download.rs` and
-the new `src/download_video_preview.rs`. All other SDK siblings remain at the
-exact Git revision above. No calling, send, authentication or session behavior is
-changed. The vendored source retains upstream MIT notices and optional features.
+the new `src/download_video_preview.rs`, plus the call-log writer in
+`src/features/call_log.rs`. All other SDK siblings remain at the exact Git
+revision above. No calling, send, authentication or session behavior is changed;
+the writer adds one app-state mutation through the existing patch path. The
+vendored source retains upstream MIT notices and optional features.
 The root manifest is mechanically flattened for use outside its original workspace;
 the separate SDK lockfile fixes test-only dependencies too.
 
@@ -82,6 +85,33 @@ The test dependency resolution is saved in `vendor/wacore/Cargo.lock`; it does
 not change Heya's runtime dependency versions. Heya separately tests metadata
 selection and bounds through its protocol adapter. Live CDN compatibility is
 not established by these synthetic tests.
+
+## Call-log writer
+
+[call-log-writer.patch](call-log-writer.patch) applies to the pinned
+`src/features/call_log.rs` and is applied after the video-preview client patch by
+`scripts/vendor-video-preview.py`. WA Web publishes every call it handles as a
+`call_log` mutation in the `regular` collection, so the phone and other
+companions list it. The index is `["call_log", callCreatorJid, callId,
+fromMe ? "1" : "0"]`, the encoding the SDK's reader documents and parses. The
+generated schema registry declares only the literal, and the raw-index writer is
+crate-private. A Heya-side workaround would have to re-implement syncd encoding.
+`Client::send_call_log` encodes the caller's `CallLogRecord` under schema
+version 1 and sends it as a `Set` through the existing patch path. Heya chooses
+the result codes from WA Web's VoIP mapping (`WAWebVoipWaCallEnums`) and the
+literal `isIncoming`, as the phone writes for its own calls.
+
+Run the SDK tests with:
+
+```sh
+CARGO_TARGET_DIR=target cargo test --manifest-path vendor/whatsapp-rust/Cargo.toml --locked --no-default-features --features tokio-runtime,tokio-transport,sqlite-storage,ureq-client,tokio-native,voip --lib features::call_log
+```
+
+The wire-capture test decodes the sent patch with the test sync key and feeds it
+back through the reader: same call, creator and record, read as placed by this
+account. An empty call ID is refused before anything is sent. Whether the phone
+lists Heya's calls has not been observed yet. Remove the patch when an upstream
+revision offers a call-log writer.
 
 ## Text shaping patch
 

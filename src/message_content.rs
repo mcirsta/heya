@@ -105,6 +105,8 @@ pub enum CallOutcome {
     AnsweredElsewhere,
     Ongoing,
     Scheduled,
+    // An outgoing call the callee did not answer; WhatsApp records it as missed.
+    NoAnswer,
 }
 impl Call {
     pub fn label(self) -> &'static str {
@@ -133,6 +135,7 @@ impl Call {
             CallOutcome::AnsweredElsewhere => Some("Answered on another device".into()),
             CallOutcome::Ongoing => Some("Ongoing".into()),
             CallOutcome::Scheduled => Some("Scheduled".into()),
+            CallOutcome::NoAnswer => Some("No answer".into()),
             _ => None,
         };
         detail.map_or_else(|| direction.into(), |d| format!("{direction} · {d}"))
