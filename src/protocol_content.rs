@@ -86,6 +86,12 @@ fn extract_body(message: &wa::Message) -> (Option<String>, Content, Vec<u8>) {
         return (Some(text), content, Vec::new());
     }
     let base = message.get_base_message();
+    if let Some((text, content)) = crate::protocol_system::content(base) {
+        return (Some(text), content, Vec::new());
+    }
+    if let Some(location) = crate::protocol_locations::extract(base) {
+        return location;
+    }
     if let Some(sticker) = base.sticker_message.as_option() {
         if sticker.is_animated == Some(true) || sticker.is_lottie == Some(true) {
             return (

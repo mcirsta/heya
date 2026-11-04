@@ -135,40 +135,44 @@ impl Archive {
 }
 
 impl Archive {
-    /// Reprocess delete envelopes rejected by the old sender-relative key check.
+    /// Reprocess saved control events through the same mapping as new arrivals.
     /// Uses the normal mutation writer/projection on the startup archive worker.
-    pub fn repair_deletions(
+    pub fn repair_events(
         &self,
-        decode: impl Fn(&[u8], &str, &str, bool, i64) -> Option<Change>,
+        decode: impl Fn(&[u8], &str, &str, bool, i64, &str) -> Option<Record>,
     ) -> Result<()> {
-        if self.blocking(|db| Ok(db.query_row("SELECT EXISTS(SELECT 1 FROM metadata WHERE key='delete_decoder_revision' AND value='1')",[],|r|r.get::<_,bool>(0))?))? {
+        if self.blocking(|db| Ok(db.query_row("SELECT EXISTS(SELECT 1 FROM metadata WHERE key='event_decoder_revision' AND value='1')",[],|r|r.get::<_,bool>(0))?))? {
             return Ok(());
         }
         let mut after = 0_i64;
         loop {
             let last=self.blocking(|db| {
                 let tx=db.transaction()?;
-                let rows=tx.prepare("SELECT id,chat_id,source_chat,source_sender,sender,outgoing,stamp,raw,wire_id FROM messages WHERE id>?1 AND visible=0 AND deleted=0 AND length(raw)>0 ORDER BY id LIMIT 100")?
+                expire(&tx)?;
+                let rows=tx.prepare("SELECT id,chat_id,source_chat,source_sender,sender,outgoing,stamp,raw,wire_id FROM messages m WHERE id>?1 AND (visible=0 OR body='[Unsupported message]') AND deleted=0 AND length(raw)>0 AND (expires IS NULL OR expires>unixepoch()) AND NOT EXISTS(SELECT 1 FROM mutations x WHERE x.chat_id=m.chat_id AND x.sender=m.sender AND x.wire_id=m.wire_id) ORDER BY id LIMIT 100")?
                     .query_map([after],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i32>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,bool>(5)?,r.get::<_,i64>(6)?,r.get::<_,Vec<u8>>(7)?,r.get::<_,String>(8)?)))?
                     .collect::<std::result::Result<Vec<_>,_>>()?;
                 let mut changed=std::collections::BTreeSet::new();
                 let mut read_keys=Vec::new();
                 for (id,chat,source,sender,author,outgoing,stamp,raw,wire) in &rows {
-                    if let Some(change)=decode(raw,source,sender,*outgoing,*stamp)
-                        && change.text.is_none()
-                        && edits::record(&tx,*chat,&canonical(&tx,author)?,&change)? {
-                            tx.execute("UPDATE messages SET raw=X'' WHERE id=?1",[id])?;
-                            changed.insert(*chat);
-                            read_keys.push((*chat,canonical(&tx,author)?,change,wire));
+                    if let Some(record)=decode(raw,source,sender,*outgoing,*stamp,wire) {
+                        let visible=event_visibility(&tx,&record)?;
+                        if let Some(change)=&record.change
+                            && edits::record(&tx,*chat,&canonical(&tx,author)?,change)? {
+                                read_keys.push((*chat,canonical(&tx,author)?,change.clone(),wire));
+                        }
+                        tx.execute("UPDATE messages SET body=?2,content=?3,visible=?4,unread=CASE WHEN ?4 THEN unread ELSE 0 END,seen=CASE WHEN ?4 THEN seen ELSE 1 END,raw=?5 WHERE id=?1",params![id,record.text,encode_content(&record.content)?,visible,record.raw])?;
+                        if !visible {tx.execute("DELETE FROM outgoing_receipts WHERE message_id=?1",[id])?;}
+                        changed.insert(*chat);
                     }
                 }
-                for chat in changed { edits::apply(&tx,Some(chat))?; }
+                for chat in changed { edits::apply(&tx,Some(chat))?; reads::recount(&tx,chat)?; }
                 for (chat,author,change,wire) in read_keys { edits::read_key(&tx,chat,&author,&change,wire)?; }
                 if rows.is_empty() {
                     // Previously accepted early revokes also need a tombstone.
                     edits::apply(&tx,None)?;
                     tx.execute("UPDATE messages SET body=?1 WHERE deleted=1 AND body='[Message deleted]'",[domain::DELETED_MESSAGE])?;
-                    tx.execute("INSERT OR REPLACE INTO metadata(key,value) VALUES('delete_decoder_revision','1')",[])?;
+                    tx.execute("INSERT OR REPLACE INTO metadata(key,value) VALUES('event_decoder_revision','1')",[])?;
                 }
                 tx.commit()?;
                 Ok(rows.last().map(|row|row.0))

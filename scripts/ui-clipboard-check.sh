@@ -14,8 +14,34 @@ cc -O2 -Wall -Wextra "$heya_root/scripts/ui-drop-source.c" -lX11 -o "$heya_fixtu
 heya_pid=$!
 heya_window=$(timeout 15s xdotool search --sync --onlyvisible --name '^Heya' | head -n1)
 sleep 2
+heya_editor_menu() {
+    xdotool mousemove --window "$heya_window" 700 842 click 3
+    sleep 0.1
+    xdotool key --repeat "$1" --repeat-delay 20 Down
+    xdotool key Return
+    sleep 0.2
+}
+printf 'Menu paste 🙂\nSecond line' > "$heya_fixture/expected.txt"
+xclip -selection clipboard -in "$heya_fixture/expected.txt"
+xdotool windowfocus "$heya_window" mousemove --window "$heya_window" 700 842 click 1 click 3
+sleep 0.2
+import -window "$heya_window" "${heya_output}-menu.png"
+xdotool key Escape
+heya_editor_menu 5 # Paste through the same worker as Ctrl+V.
+heya_editor_menu 6 # Select All.
+heya_editor_menu 4 # Copy into another process's clipboard read.
+timeout 3s xclip -selection clipboard -out > "$heya_fixture/actual.txt"
+cmp "$heya_fixture/expected.txt" "$heya_fixture/actual.txt"
+heya_editor_menu 3 # Cut, then native undo and redo.
+heya_editor_menu 1
+heya_editor_menu 6
+heya_editor_menu 4
+timeout 3s xclip -selection clipboard -out > "$heya_fixture/actual.txt"
+cmp "$heya_fixture/expected.txt" "$heya_fixture/actual.txt"
+heya_editor_menu 2
+echo "Native composer menu: multiline Unicode Paste, Select All, Copy, Cut, Undo and Redo"
 xclip -selection clipboard -in -target image/png "$heya_fixture/Sample 你好.png"
-xdotool windowfocus "$heya_window" mousemove --window "$heya_window" 700 842 click 1 key ctrl+v
+heya_editor_menu 5
 sleep 2
 import -window "$heya_window" "${heya_output}-paste.png"
 xdotool key Escape

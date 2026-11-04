@@ -31,6 +31,7 @@ fn contains(parent: &ElementHandle, item: &ElementHandle) {
 pub(crate) fn check_ui() {
     check_same_name_participants();
     check_documents();
+    check_locations();
     let ui = AppWindow::new().unwrap();
     ui.set_demo_mode(true);
     ui.set_show_conversation(true);
@@ -229,6 +230,83 @@ pub(crate) fn check_ui() {
         Target::Unavailable,
         "removed message must not leave an executable action"
     );
+}
+
+fn check_locations() {
+    let ui = AppWindow::new().unwrap();
+    ui.set_demo_mode(true);
+    ui.set_show_conversation(true);
+    let mut demo = fixtures::demo();
+    demo.select(7);
+    let mut view = demo.conversation();
+    fixtures::fill_locations(Arc::make_mut(&mut view.messages));
+    let images = Arc::new(
+        view.messages
+            .iter()
+            .map(|m| (m.id, Arc::new(fixtures::location_pixels())))
+            .collect(),
+    );
+    let clicked = Rc::new(Cell::new((0, 0)));
+    ui.on_activate_message({
+        let clicked = clicked.clone();
+        move |id, index| clicked.set((id, index))
+    });
+    for dark in [false, true] {
+        ui.global::<Theme>().set_dark(dark);
+        for width in [1200., 800., 520., 1200.] {
+            ui.window().set_size(slint::LogicalSize::new(width, 1000.));
+            presentation::conversation(&ui, &view, true);
+            ui.show().unwrap();
+            ui.invoke_layout_timeline();
+            let geometry = (ui.get_timeline_height(), ui.get_timeline_y());
+            super::publish_images(&ui, &images);
+            assert_eq!(
+                geometry,
+                (ui.get_timeline_height(), ui.get_timeline_y()),
+                "map arrival must not shift the chat"
+            );
+            let mut cards = 0;
+            for item in ElementHandle::find_by_element_type_name(&ui, "TimelineItem")
+                .filter(|e| e.id().as_deref() != Some("AppWindow::measure-row"))
+            {
+                let bubble = child(&item, "MessageBubble::bubble");
+                let card = child(&item, "MessageBubble::location");
+                contains(&bubble, &card);
+                contains(&bubble, &child(&item, "MessageBubble::stamp"));
+                let map = child(&card, "LocationCard::map");
+                contains(&card, &map);
+                map.query_descendants()
+                    .match_type_name("ContentTarget")
+                    .find_first()
+                    .unwrap()
+                    .invoke_accessible_default_action();
+                assert_eq!(
+                    clicked.get().1,
+                    -20,
+                    "map clicks must reach the external-action callback, not quote navigation"
+                );
+                assert!(view.messages.iter().any(|m| m.id == clicked.get().0));
+                if let Some(credit) = card
+                    .query_descendants()
+                    .match_id("LocationCard::attribution")
+                    .find_first()
+                {
+                    contains(&map, &credit);
+                }
+                cards += 1;
+            }
+            assert!(cards > 0);
+            let id = view.messages[0].id;
+            assert!(
+                matches!(crate::presentation::timeline::action(&ui,id,-20),Target::Url(url) if url==view.messages[0].content.location.as_ref().unwrap().map_url())
+            );
+            assert_eq!(
+                crate::presentation::timeline::action(&ui, id, -22),
+                Target::Copy("0, 0".into())
+            );
+        }
+    }
+    ui.hide().unwrap();
 }
 
 fn check_documents() {

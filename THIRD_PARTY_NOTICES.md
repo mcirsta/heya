@@ -49,6 +49,14 @@ Its notice is recorded in
 Use the pinned repository as a dependency; retain notices in distributed credits
 and audit transitive dependencies once the lockfile exists.
 
+## OpenStreetMap
+
+Received-location previews use OpenStreetMap map tiles, with visible
+`© OpenStreetMap contributors` attribution and a link to
+[OpenStreetMap copyright and licensing](https://www.openstreetmap.org/copyright).
+Tiles are fetched on demand and cached in the account archive, not bundled in
+the repository. The development fixture is independently generated geometry.
+
 ## Slint
 
 The toolkit offers GPLv3, a royalty-free desktop/mobile/web license, and commercial

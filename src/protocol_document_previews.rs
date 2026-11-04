@@ -88,12 +88,16 @@ pub struct Previews(pub Arc<Client>, pub crate::archive::Archive);
 #[async_trait::async_trait]
 impl Source for Previews {
     async fn fetch(&self, request: &crate::document_previews::Request) -> Option<Vec<u8>> {
-        if request.video {
+        if request.kind == crate::document_previews::Kind::Video {
             return crate::protocol_video_previews::fetch(&self.0, &self.1, request).await;
         }
         let message = codec::message_decode(&request.raw).ok()?;
         if message.is_view_once() {
             return None;
+        }
+        if request.kind == crate::document_previews::Kind::Location {
+            let (_, content, _) = crate::protocol_locations::extract(message.get_base_message())?;
+            return crate::location_maps::fetch(self.1.clone(), content.location?).await;
         }
         let doc = message.get_base_message().document_message.as_option()?;
         let thumbnail = match reference(doc) {

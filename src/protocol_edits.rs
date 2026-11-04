@@ -120,6 +120,27 @@ pub fn apply(original: &[u8], edited: &[u8], legacy: &str) -> Option<Applied> {
         }
         same_media = false;
     }
+    // Subsequent encrypted edits still need the original message secret.
+    if let Some(original) = &original {
+        if message.message_context_info.is_unset() {
+            message.message_context_info = original.message_context_info.clone();
+        }
+        if let Some(secret) = original
+            .message_context_info
+            .message_secret
+            .as_ref()
+            .or(original
+                .get_base_message()
+                .message_context_info
+                .message_secret
+                .as_ref())
+        {
+            message
+                .message_context_info
+                .get_or_insert_default()
+                .message_secret = Some(secret.clone());
+        }
+    }
     let text = text(&message)?;
     let (_, content, thumbnail) = crate::protocol_content::extract(&message);
     Some(Applied {
@@ -132,4 +153,61 @@ pub fn apply(original: &[u8], edited: &[u8], legacy: &str) -> Option<Applied> {
         },
         same_media,
     })
+}
+
+/// Recover a retained encrypted edit when its original arrives through history.
+/// Authentication uses the original author's PN/LID forms, never a target's
+/// sender-relative `fromMe` flag. Only the edited body enters the normal writer.
+pub fn decrypt(
+    original: &[u8],
+    encrypted: &[u8],
+    wire: &str,
+    author: &str,
+    alternate: Option<&str>,
+) -> Option<Vec<u8>> {
+    use whatsapp_rust::features::message_edit;
+    let envelope = codec::message_decode(encrypted).ok()?;
+    let edit = message_edit::extract_envelope(&envelope)?;
+    if edit.target_id()? != wire {
+        return None;
+    }
+    let original = codec::message_decode(original).ok()?;
+    if original.is_view_once() {
+        return None;
+    }
+    let secret = original
+        .message_context_info
+        .message_secret
+        .as_deref()
+        .or(original
+            .get_base_message()
+            .message_context_info
+            .message_secret
+            .as_deref())?;
+    let author = author.parse().ok()?;
+    let alternate = alternate.and_then(|s| s.parse().ok());
+    let inner = message_edit::decrypt_with_fallback(
+        edit.enc_payload,
+        edit.enc_iv,
+        secret,
+        wire,
+        &author,
+        &author,
+        alternate.as_ref(),
+        alternate.as_ref(),
+    )
+    .ok()?;
+    let protocol = inner.protocol_message.as_option()?;
+    if protocol.key.id.as_deref().is_some_and(|id| id != wire) {
+        return None;
+    }
+    let edited = protocol.edited_message.as_option()?;
+    text(edited)?;
+    Some(codec::message_to_vec(edited))
+}
+
+pub fn encrypted(raw: &[u8]) -> bool {
+    codec::message_decode(raw)
+        .ok()
+        .is_some_and(|m| m.secret_encrypted_message.is_set())
 }

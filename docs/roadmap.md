@@ -30,7 +30,7 @@ one bounded feature, its failure paths and validation before starting the next.
 | 5 | Desktop notifications and existing-window activation | A second launch activates the existing window. Notifications honor preview/privacy settings, open the intended conversation and handle unavailable services or denied permissions. Use native platform services. |
 | 6 | Richer message text | Add bold/italic/code formatting, inline links and mentions while preserving original text, copying, selection, Unicode and stable timeline geometry. Validate each text behavior before combining them. |
 | 7 | Chat management | Implement manual read/unread, pin/archive/mute, then favorites and the remaining filters. Persist real state and synchronize supported actions; do not present placeholder filters as working. |
-| 8 | Additional cards and advanced interaction | Polls, contact and location cards, cross-message drag selection and remaining advanced message-control variants follow the everyday messaging work above. Scope and validate each separately. |
+| 8 | Additional cards and advanced interaction | Polls, contact and live-location cards, cross-message drag selection and remaining advanced message-control variants follow the everyday messaging work above. Scope and validate each separately. |
 
 The first chat-management increment synchronizes mute/archive/lock state and
 adds mute durations, unmute, archive/unarchive and Lock controls. Locked chats
@@ -413,3 +413,5 @@ reference machine, release build, 10,000-message fixture and representative medi
 
 Measure text/clipboard correctness before optimizing it away. ZapFast's published
 performance numbers are context, not transferable results for a Slint rewrite.
+
+Received fixed-location cards are implemented; see [scope and validation](locations.md). Live-location tracking and location sending remain outside this slice.

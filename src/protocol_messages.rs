@@ -18,6 +18,9 @@ mod delete_tests;
 #[path = "message_edit_tests.rs"]
 mod edit_tests;
 #[cfg(test)]
+#[path = "protocol_location_tests.rs"]
+mod location_tests;
+#[cfg(test)]
 #[path = "protocol_notice_tests.rs"]
 mod notice_tests;
 #[cfg(test)]
@@ -26,6 +29,9 @@ mod phone_tests;
 #[cfg(test)]
 #[path = "protocol_sticker_tests.rs"]
 mod sticker_tests;
+#[cfg(test)]
+#[path = "protocol_system_tests.rs"]
+mod system_tests;
 use crate::archive::{self, Archive, Batch, Change, ChatMeta, Record};
 use std::sync::{
     Arc,
@@ -210,14 +216,12 @@ fn live_batch(messages: &[InboundMessage]) -> Batch {
 // The encrypted envelope identifies the conversation and author. A direct
 // message's inner key is sender-relative: remote_jid may name our account.
 // Group participant ownership is checked after PN/LID canonicalization in storage.
-fn mutation(
+fn change_target(
     chat: &Jid,
     sender: &Jid,
     outgoing: bool,
-    timestamp: i64,
-    protocol: &wa::message::ProtocolMessage,
-) -> Option<Change> {
-    let key = protocol.key.as_option()?;
+    key: &wa::MessageKey,
+) -> Option<(String, String)> {
     let id = key.id.as_ref().filter(|id| !id.is_empty())?;
     if let Some(remote) = &key.remote_jid {
         let remote: Jid = remote.parse().ok()?;
@@ -245,6 +249,17 @@ fn mutation(
             .map(|jid| address(&jid))
             .unwrap_or(author)
     };
+    Some((id.clone(), sender))
+}
+
+fn mutation(
+    chat: &Jid,
+    sender: &Jid,
+    outgoing: bool,
+    timestamp: i64,
+    protocol: &wa::message::ProtocolMessage,
+) -> Option<Change> {
+    let (id, sender) = change_target(chat, sender, outgoing, protocol.key.as_option()?)?;
     use wa::message::protocol_message::Type;
     let (text, raw, version) = if protocol.r#type == Some(Type::REVOKE) {
         (None, Vec::new(), timestamp.saturating_mul(1000))
@@ -261,11 +276,36 @@ fn mutation(
         return None;
     };
     Some(Change {
-        id: id.clone(),
+        id,
         sender,
         text,
         raw,
         version,
+    })
+}
+
+fn encrypted_change(
+    message: &wa::Message,
+    chat: &Jid,
+    sender: &Jid,
+    outgoing: bool,
+    stamp: i64,
+) -> Option<Change> {
+    let edit = message.secret_encrypted_message.as_option()?;
+    if edit.secret_enc_type
+        != Some(wa::message::secret_encrypted_message::SecretEncType::MESSAGE_EDIT)
+        || edit.enc_iv.as_ref()?.len() != 12
+        || edit.enc_payload.as_ref()?.is_empty()
+    {
+        return None;
+    }
+    let (id, author) = change_target(chat, sender, outgoing, edit.target_message_key.as_option()?)?;
+    Some(Change {
+        id,
+        sender: author,
+        text: Some(String::new()),
+        version: stamp.saturating_mul(1000),
+        raw: codec::message_to_vec(message),
     })
 }
 
@@ -294,6 +334,9 @@ fn record(
     } else if let Some(protocol) = message.protocol_message.as_option() {
         visible = false;
         change = mutation(chat, sender, outgoing, timestamp, protocol);
+    } else if crate::protocol_system::hidden(message) {
+        visible = false;
+        change = encrypted_change(message, chat, sender, outgoing, timestamp);
     } else if message.reaction_message.is_set()
         || message.sender_key_distribution_message.is_set()
         || message.album_message.is_set()
@@ -342,55 +385,61 @@ fn record(
 
 /// Decode saved envelopes with the same rules as new live/history messages.
 pub fn repair_text(archive: &Archive) -> archive::Result<()> {
-    archive.repair_deletions(|raw, chat, sender, outgoing, stamp| {
+    archive.repair_events(|raw, chat, sender, outgoing, stamp, wire| {
         let message = codec::message_decode(raw).ok()?;
-        let protocol = message.get_base_message().protocol_message.as_option()?;
-        let change = mutation(
+        if !crate::protocol_system::repairable(&message) {
+            return None;
+        }
+        Some(record(
             &chat.parse().ok()?,
             &sender.parse().ok()?,
-            outgoing,
+            wire.into(),
             stamp,
-            protocol,
-        )?;
-        change.text.is_none().then_some(change)
+            outgoing,
+            String::new(),
+            &message,
+            None,
+        ))
     })?;
-    archive.repair_unsupported_messages(5, |raw| {
+    archive.repair_unsupported_messages(6, |raw| {
         let message = codec::message_decode(raw).ok()?;
         let (decoded, content, thumbnail) = crate::protocol_content::extract(&message);
-        let (text, visible) =
-            if !message.is_view_once() && message.get_base_message().sticker_message.is_set() {
-                decoded.map(|text| (text, true))
-            } else if !message.is_view_once() && message.get_base_message().album_message.is_set() {
-                Some((String::new(), false))
-            } else if !message.is_view_once() && message.get_base_message().image_message.is_set() {
-                Some((
-                    format!(
-                        "[Photo] {}",
-                        message
-                            .get_base_message()
-                            .image_message
-                            .caption
-                            .as_deref()
-                            .unwrap_or("")
-                    ),
-                    true,
-                ))
-            } else if !message.is_view_once() && message.get_base_message().video_message.is_set() {
-                Some((
-                    format!(
-                        "[Video] {}",
-                        message
-                            .get_base_message()
-                            .video_message
-                            .caption
-                            .as_deref()
-                            .unwrap_or("")
-                    ),
-                    true,
-                ))
-            } else {
-                crate::protocol_business::text(&message).map(|text| (text, true))
-            }?;
+        let (text, visible) = if !message.is_view_once()
+            && (message.get_base_message().sticker_message.is_set()
+                || message.get_base_message().location_message.is_set())
+        {
+            decoded.map(|text| (text, true))
+        } else if !message.is_view_once() && message.get_base_message().album_message.is_set() {
+            Some((String::new(), false))
+        } else if !message.is_view_once() && message.get_base_message().image_message.is_set() {
+            Some((
+                format!(
+                    "[Photo] {}",
+                    message
+                        .get_base_message()
+                        .image_message
+                        .caption
+                        .as_deref()
+                        .unwrap_or("")
+                ),
+                true,
+            ))
+        } else if !message.is_view_once() && message.get_base_message().video_message.is_set() {
+            Some((
+                format!(
+                    "[Video] {}",
+                    message
+                        .get_base_message()
+                        .video_message
+                        .caption
+                        .as_deref()
+                        .unwrap_or("")
+                ),
+                true,
+            ))
+        } else {
+            crate::protocol_business::text(&message).map(|text| (text, true))
+        }?;
         Some(crate::message_actions::Prepared {
             text,
             visible,

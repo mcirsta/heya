@@ -6,7 +6,7 @@ use whatsapp_rust::prelude::{MessageExt, wa};
 #[path = "protocol_business_tests.rs"]
 pub(crate) mod tests;
 
-const PHONE: &str = "[Business message · open on your phone]";
+const PHONE: &str = crate::protocol_system::PHONE;
 
 pub fn text(message: &wa::Message) -> Option<String> {
     parse(message).map(|(text, _)| text)
@@ -119,7 +119,7 @@ fn hydrated_text(
         message::template_message::hydrated_four_row_template::Title,
     };
     if template.mask_linked_devices == Some(true) {
-        parts.push(Some(PHONE));
+        parts.push(Some(crate::protocol_system::CODE));
         return;
     }
     match &template.title {

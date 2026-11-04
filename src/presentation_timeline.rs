@@ -768,6 +768,11 @@ fn same_row(a: &TimelineRow, b: &TimelineRow) -> bool {
         && am.actions == bm.actions
         && am.has_thumbnail == bm.has_thumbnail
         && am.has_attachment == bm.has_attachment
+        && am.has_location == bm.has_location
+        && am.location_name == bm.location_name
+        && am.location_address == bm.location_address
+        && am.location_domain == bm.location_domain
+        && am.location_coordinates == bm.location_coordinates
         && am.has_document == bm.has_document
         && am.document_name == bm.document_name
         && am.document_type == bm.document_type
@@ -1077,6 +1082,19 @@ pub(crate) fn action(ui: &AppWindow, id: i32, index: i32) -> crate::message_cont
             return;
         };
         target = match index {
+            -25..=-20 => message
+                .content
+                .location
+                .as_ref()
+                .map(|location| match index {
+                    -20 => Target::Url(location.map_url()),
+                    -21 => Target::Copy(location.map_url()),
+                    -22 => Target::Copy(location.coordinate_text()),
+                    -23 => Target::Copy(location.address.clone()),
+                    -24 => Target::Url(location.website.clone()),
+                    _ => Target::Url("https://www.openstreetmap.org/copyright".into()),
+                })
+                .unwrap_or_default(),
             -6 if !message.content.unavailable => Target::Copy(
                 message
                     .content

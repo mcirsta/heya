@@ -37,6 +37,8 @@ mod gstreamer_video;
 mod linux_emoji;
 mod live_presentation;
 mod local_worker;
+mod location_maps;
+mod locations;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
@@ -105,6 +107,7 @@ mod protocol_document_previews;
 mod protocol_downloads;
 mod protocol_edits;
 mod protocol_history;
+mod protocol_locations;
 mod protocol_media;
 mod protocol_messages;
 mod protocol_outbox;
@@ -113,6 +116,7 @@ mod protocol_presence;
 mod protocol_reads;
 mod protocol_receipts;
 mod protocol_sync;
+mod protocol_system;
 mod protocol_timing;
 mod protocol_uploads;
 mod protocol_video;

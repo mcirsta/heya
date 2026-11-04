@@ -33,6 +33,19 @@ export component Composer inherits Rectangle {
     in property <string> reply-text;
     callback cancel-reply();
     public function focus-editor() {editor.focus();}
+    function paste-clipboard() {
+        editor.focus();
+        if editor.preedit-text == "" {
+            // Undo/redo can retain offsets past the new text. Let TextInput
+            // normalize them before the asynchronous clipboard read captures them.
+            editor.set-selection-offsets(editor.anchor-position-byte-offset, editor.cursor-position-byte-offset);
+            if root.custom-paste {
+                root.paste(editor.anchor-position-byte-offset, editor.cursor-position-byte-offset);
+            } else {
+                editor.paste();
+            }
+        }
+    }
     in property <bool> enabled: true;
     in property <bool> can-send: true;
     in property <bool> saving;
@@ -107,46 +120,70 @@ export component Composer inherits Rectangle {
                 activated=>{root.emoji(self.absolute-position.x,self.absolute-position.y);}
             }
 
-            field := Flickable {
+            field := ContextMenuArea {
                 x: 72px + max(0px,(root.band - 34px) / 2);
                 y: 2px + root.field-margin;
                 width: parent.width - self.x - root.band - 12px;
                 height: root.visible-text;
-                content-width: self.width;
-                content-height: root.text-height;
-                editor := TextInput {
-                    x: 0px;
-                    y: 0px;
-                    width: parent.width;
-                    height: root.text-height;
-                    text <=> root.draft;
-                    enabled: root.enabled && root.voice-phase==0;
-                    edited => { root.edited(self.text); }
-                    color: Theme.text;
-                    font-size: Metrics.body;
-                    wrap: word-wrap;
-                    single-line: false;
-                    page-height: field.height;
-                    selection-background-color: Theme.accent;
-                    selection-foreground-color: Theme.on-accent;
-                    accessible-label: @tr("Message draft");
-                    cursor-position-changed(pos) => {
-                        if pos.y + field.content-y < 0px {
-                            field.content-y = min(0px, max(field.height - self.height, -pos.y));
-                        } else if pos.y + root.line-height + field.content-y > field.height {
-                            field.content-y = min(0px, max(field.height - self.height, field.height - pos.y - root.line-height));
-                        }
+                enabled: root.enabled && root.voice-phase==0;
+                Menu {
+                    MenuItem { title: @tr("Undo"); activated => { editor.focus(); editor.undo(); } }
+                    MenuItem { title: @tr("Redo"); activated => { editor.focus(); editor.redo(); } }
+                    MenuSeparator { }
+                    MenuItem {
+                        title: @tr("Cut");
+                        enabled: root.anchor != root.cursor;
+                        activated => { editor.focus(); editor.cut(); }
                     }
-                    key-pressed(event) => {
-                        if root.custom-paste && !event.modifiers.alt && ((event.modifiers.control && !event.modifiers.shift && event.text == "v") || (event.modifiers.shift && event.text == Key.Insert)) {
-                            if !event.repeat && editor.preedit-text == "" { root.paste(editor.anchor-position-byte-offset,editor.cursor-position-byte-offset); }
-                            return accept;
+                    MenuItem {
+                        title: @tr("Copy");
+                        enabled: root.anchor != root.cursor;
+                        activated => { editor.focus(); editor.copy(); }
+                    }
+                    MenuItem { title: @tr("Paste"); activated => { root.paste-clipboard(); } }
+                    MenuItem {
+                        title: @tr("Select All");
+                        enabled: !root.draft.is-empty;
+                        activated => { editor.focus(); editor.select-all(); }
+                    }
+                }
+                scroll := Flickable {
+                    content-width: self.width;
+                    content-height: root.text-height;
+                    editor := TextInput {
+                        x: 0px;
+                        y: 0px;
+                        width: parent.width;
+                        height: root.text-height;
+                        text <=> root.draft;
+                        enabled: root.enabled && root.voice-phase==0;
+                        edited => { root.edited(self.text); }
+                        color: Theme.text;
+                        font-size: Metrics.body;
+                        wrap: word-wrap;
+                        single-line: false;
+                        page-height: field.height;
+                        selection-background-color: Theme.accent;
+                        selection-foreground-color: Theme.on-accent;
+                        accessible-label: @tr("Message draft");
+                        cursor-position-changed(pos) => {
+                            if pos.y + scroll.content-y < 0px {
+                                scroll.content-y = min(0px, max(field.height - self.height, -pos.y));
+                            } else if pos.y + root.line-height + scroll.content-y > field.height {
+                                scroll.content-y = min(0px, max(field.height - self.height, field.height - pos.y - root.line-height));
+                            }
                         }
-                        if event.text == Key.Return && !event.modifiers.shift && !event.modifiers.alt && (event.modifiers.control || (root.enter-sends && !event.modifiers.meta)) {
-                            if root.enabled && root.can-send && !event.repeat { root.send(); }
-                            return accept;
+                        key-pressed(event) => {
+                            if root.custom-paste && !event.modifiers.alt && ((event.modifiers.control && !event.modifiers.shift && event.text == "v") || (event.modifiers.shift && event.text == Key.Insert)) {
+                                if !event.repeat { root.paste-clipboard(); }
+                                return accept;
+                            }
+                            if event.text == Key.Return && !event.modifiers.shift && !event.modifiers.alt && (event.modifiers.control || (root.enter-sends && !event.modifiers.meta)) {
+                                if root.enabled && root.can-send && !event.repeat { root.send(); }
+                                return accept;
+                            }
+                            return reject;
                         }
-                        return reject;
                     }
                 }
             }

@@ -147,6 +147,34 @@ pub(crate) fn message_row(
         local: message.local,
         first_in_run,
         has_document: message.content.document.is_some(),
+        has_location: message.content.location.is_some(),
+        location_name: message
+            .content
+            .location
+            .as_ref()
+            .map_or("", |l| l.name.as_str())
+            .into(),
+        location_address: message
+            .content
+            .location
+            .as_ref()
+            .map_or("", |l| l.address.as_str())
+            .into(),
+        location_domain: message
+            .content
+            .location
+            .as_ref()
+            .and_then(|l| url::Url::parse(&l.website).ok())
+            .and_then(|u| u.host_str().map(str::to_owned))
+            .unwrap_or_default()
+            .into(),
+        location_coordinates: message
+            .content
+            .location
+            .as_ref()
+            .map(|l| l.coordinate_text())
+            .unwrap_or_default()
+            .into(),
         document_name: message
             .content
             .document
@@ -272,7 +300,8 @@ pub(crate) fn message_row(
                 .document
                 .as_ref()
                 .is_some_and(|d| d.has_thumbnail)
-            || message.content.video.is_some(),
+            || message.content.video.is_some()
+            || message.content.location.is_some(),
         thumbnail: Default::default(),
         actions: if message.content.actions.is_empty() {
             Default::default()

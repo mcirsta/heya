@@ -423,6 +423,9 @@ Normalize dropped local-file URIs without interpreting arbitrary URLs as files.
 
 ## System notices
 
+Edit and system-event handling, saved-event repair and intentional phone-only
+content are described in [message events](message-events.md).
+
 Pin/unpin events use an optional application-owned `Notice` in message content.
 The adapter recognizes the SDK's `PinInChatMessage` enum; unknown values remain
 unsupported. Content decoder revision 8 repairs saved notices in bounded batches,

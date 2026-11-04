@@ -216,7 +216,7 @@ fn migrating_existing_controls_keeps_old_payloads_and_adds_marker_controls() {
         assert_eq!(control.text, "Keep this edit");
         assert_eq!(
             c.pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))?,
-            20
+            21
         );
         Ok(())
     })

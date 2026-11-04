@@ -3,6 +3,9 @@ import { Palette } from "std-widgets.slint";
 export global Metrics {
     out property <length> message-action-height: 44px;
     out property <length> message-preview-height: 88px;
+    public pure function location-height(named:bool,address:bool,website:bool)->length {
+        return 150px + (named ? 28px : 0px) + (address ? 40px : 0px) + (website ? 22px : 0px);
+    }
     out property <length> header: 60px;
     out property <length> sidebar: 320px;
     out property <length> narrow: 620px;

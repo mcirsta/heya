@@ -51,7 +51,7 @@ pub fn decode(bytes: &[u8]) -> Option<Pixels> {
 }
 
 pub async fn demo_present(mut demand: watch::Receiver<Vec<i32>>, updates: watch::Sender<Snapshot>) {
-    let Ok((link, document, video)) = tokio::task::spawn_blocking(|| {
+    let Ok((link, document, video, location)) = tokio::task::spawn_blocking(|| {
         let link = crate::fixtures::message_image_samples([0])[&0].clone();
         let document = crate::fixtures::document_thumbnail();
         let document = image::imageops::crop_imm(
@@ -70,6 +70,7 @@ pub async fn demo_present(mut demand: watch::Receiver<Vec<i32>>, updates: watch:
                 rgba: document.into_raw(),
             }),
             Arc::new(crate::fixtures::video_pixels(0.)),
+            Arc::new(crate::fixtures::location_pixels()),
         )
     })
     .await
@@ -84,7 +85,9 @@ pub async fn demo_present(mut demand: watch::Receiver<Vec<i32>>, updates: watch:
             .map(|id| {
                 (
                     *id,
-                    if (24000..25000).contains(id) {
+                    if (54000..55000).contains(id) {
+                        location.clone()
+                    } else if (24000..25000).contains(id) {
                         document.clone()
                     } else if *id >= 27000 {
                         video.clone()
@@ -163,7 +166,7 @@ pub async fn present(
                     "SELECT revision, CASE WHEN revision=?2 THEN NULL ELSE bytes END, document FROM (
                         SELECT CASE WHEN length(p.preview)>0 THEN p.id ELSE 0 END revision,
                         CASE WHEN length(p.preview)>0 THEN p.preview ELSE m.thumbnail END bytes,
-                        CASE WHEN json_type(nullif(m.content,''),'$.document')='object' THEN 1 WHEN json_type(nullif(m.content,''),'$.video')='object' THEN 2 ELSE 0 END document
+                        CASE WHEN json_type(nullif(m.content,''),'$.document')='object' THEN 1 WHEN json_type(nullif(m.content,''),'$.video')='object' OR json_type(nullif(m.content,''),'$.location')='object' THEN 2 ELSE 0 END document
                         FROM messages m LEFT JOIN document_previews p ON p.message_id=m.id
                         WHERE m.id=?1 AND m.visible=1 AND m.deleted=0
                         AND (m.expires IS NULL OR m.expires>unixepoch())

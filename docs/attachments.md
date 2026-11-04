@@ -262,3 +262,12 @@ Automated tests use only synthetic files/accounts and never send an account
 message. SDK primitives and mocked services do not establish live account,
 server, recipient or compositor compatibility. The supplied Windows desktop
 findings and their limits are in [the desktop audit](desktop-media-audit.md).
+
+
+The composer also exposes Slint's standard editing context menu (Undo, Redo,
+Cut, Copy, Paste, Select All). Menu Paste shares the keyboard clipboard worker
+and attachment-review path; it restores editor focus and normalizes selection
+offsets through TextInput before capturing the request. It does not create a
+second undo stack or bypass stale-draft/recipient checks. Synthetic menu tests
+cover Unicode/multiline text, selection and undo/redo. The private X11 UI harness
+also exercises these menu actions and pastes an image through the menu.

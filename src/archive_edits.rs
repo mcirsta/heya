@@ -92,6 +92,20 @@ pub(super) fn apply(db: &Connection, chat: Option<i32>) -> Result<()> {
                 db.execute("UPDATE messages SET body=?3,content='',thumbnail=X'',raw=X'',deleted=1,edit_version=?2 WHERE id=?1",params![id,version,domain::DELETED_MESSAGE])?;
                 continue;
             }
+            let edited = if crate::protocol_edits::encrypted(&edited) {
+                let (wire,author):(String,String)=db.query_row("SELECT wire_id,CASE WHEN sender='#self' THEN coalesce((SELECT value FROM metadata WHERE key='identity'),source_sender) ELSE sender END FROM messages WHERE id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?)))?;
+                let alternate: Option<String> = db
+                    .query_row(
+                        "SELECT alias FROM aliases WHERE canonical=?1 LIMIT 1",
+                        [&author],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                crate::protocol_edits::decrypt(&raw, &edited, &wire, &author, alternate.as_deref())
+                    .unwrap_or(edited)
+            } else {
+                edited
+            };
             if let Some(applied) =
                 crate::protocol_edits::apply(&raw, &edited, body.as_deref().unwrap_or_default())
             {

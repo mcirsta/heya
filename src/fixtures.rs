@@ -503,6 +503,11 @@ pub fn demo() -> DemoState {
         chat.title = "Received stickers".into();
         fill_stickers(&mut chat.messages);
     }
+    if std::env::var_os("HEYA_DEMO_LOCATIONS").is_some() {
+        let chat = chats.iter_mut().find(|c| c.id == 7).unwrap();
+        chat.title = "Received locations".into();
+        fill_locations(&mut chat.messages);
+    }
     DemoState::new(chats)
 }
 
@@ -774,5 +779,48 @@ pub fn fill_audio(messages: &mut [Message]) {
             }),
             ..Default::default()
         });
+    }
+}
+
+/// Deliberately synthetic map/card content for layout checks.
+pub fn fill_locations(messages: &mut [Message]) {
+    for (i, m) in messages.iter_mut().enumerate() {
+        let mut location = crate::locations::Location::new(0., 0.).unwrap();
+        if i % 2 == 0 {
+            location.name = "Sample meeting point".into();
+            location.address = "42 Example Street · Synthetic district".into();
+            location.website = "https://example.org/place".into();
+        }
+        m.id = 54000 + i as i32;
+        m.text = location.transcript();
+        m.content = std::sync::Arc::new(crate::message_content::Content {
+            body: Some(String::new()),
+            location: Some(location),
+            ..Default::default()
+        });
+    }
+}
+pub fn location_pixels() -> crate::photos::Pixels {
+    let image = image::RgbaImage::from_fn(
+        crate::location_maps::WIDTH,
+        crate::location_maps::HEIGHT,
+        |x, y| {
+            let river = (x as i32 - y as i32 / 2 - 70).abs() < 20;
+            let street = x % 85 < 12 || y % 64 < 10;
+            image::Rgba(if river {
+                [160, 211, 231, 255]
+            } else if street {
+                [255, 255, 253, 255]
+            } else if x > 300 && y < 100 {
+                [194, 220, 173, 255]
+            } else {
+                [235, 230, 216, 255]
+            })
+        },
+    );
+    crate::photos::Pixels {
+        width: image.width(),
+        height: image.height(),
+        rgba: image.into_raw(),
     }
 }

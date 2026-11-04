@@ -72,7 +72,7 @@ async fn video_posters_keep_aspect_upgrade_once_and_never_populate_the_original_
         .await
         .unwrap()
         .unwrap();
-    assert!(request.video);
+    assert_eq!(request.kind, Kind::Video);
     let pixels = video_decode(&png(image::RgbaImage::from_pixel(
         720,
         1280,

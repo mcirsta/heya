@@ -31,6 +31,38 @@ fn capture(ui: &AppWindow) -> Paste {
         generation: ui.get_paste_generation(),
     }
 }
+fn composer_menu(ui: &AppWindow, action: &str) {
+    use i_slint_backend_testing::ElementHandle;
+    use slint::platform::PointerEventButton;
+    let field = ElementHandle::find_by_element_id(ui, "Composer::field")
+        .next()
+        .unwrap();
+    let p = field.absolute_position();
+    let s = field.size();
+    let position = slint::LogicalPosition::new(p.x + s.width / 2., p.y + s.height / 2.);
+    ui.window().dispatch_event(WindowEvent::PointerPressed {
+        position,
+        button: PointerEventButton::Right,
+    });
+    ui.window().dispatch_event(WindowEvent::PointerReleased {
+        position,
+        button: PointerEventButton::Right,
+    });
+    let actions = ["Undo", "Redo", "Cut", "Copy", "Paste", "Select All"];
+    for label in actions {
+        assert!(
+            ElementHandle::find_by_accessible_label(ui, label)
+                .next()
+                .is_some(),
+            "missing composer menu action: {label}"
+        );
+    }
+    for _ in 0..=actions.iter().position(|label| *label == action).unwrap() {
+        key(ui, Key::DownArrow);
+    }
+    key(ui, Key::Return);
+    slint::platform::update_timers_and_animations();
+}
 pub fn check_ui() {
     let ui = AppWindow::new().unwrap();
     ui.set_demo_mode(true);
@@ -79,6 +111,35 @@ pub fn check_ui() {
         "A🙂oldZ",
         "native undo must retain the replaced selection"
     );
+    composer_menu(&ui, "Select All");
+    assert_eq!(ui.get_composer_anchor().min(ui.get_composer_cursor()), 0);
+    assert_eq!(ui.get_composer_anchor().max(ui.get_composer_cursor()), 9);
+    composer_menu(&ui, "Copy");
+    assert_eq!(ui.get_draft(), "A🙂oldZ");
+    composer_menu(&ui, "Cut");
+    assert_eq!(ui.get_draft(), "");
+    composer_menu(&ui, "Undo");
+    assert_eq!(ui.get_draft(), "A🙂oldZ");
+    composer_menu(&ui, "Redo");
+    assert_eq!(ui.get_draft(), "");
+    composer_menu(&ui, "Paste");
+    let Command::Paste(paste) = rx.try_recv().unwrap() else {
+        panic!("menu must use the same clipboard worker as the shortcut")
+    };
+    assert!(rx.try_recv().is_err());
+    assert!(
+        ui.get_composer_focused(),
+        "menu paste must return editor focus"
+    );
+    ui.set_clipboard_busy(false);
+    insert_text(&ui, paste, "A🙂oldZ\nsecond line");
+    assert_eq!(
+        ui.get_draft(),
+        "A🙂oldZ\nsecond line",
+        "{}",
+        ui.get_notice()
+    );
+    assert_eq!(sends.get(), 0, "menu paste cannot submit a multiline draft");
     let paste = capture(&ui);
     key(&ui, "!");
     let changed = ui.get_draft();

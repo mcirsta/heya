@@ -209,6 +209,8 @@ pub fn decorate(message: &wa::Message, content: &mut message_content::Content) {
                             "[Photo]".into()
                         } else if quoted.sticker_message.is_set() {
                             "[Sticker]".into()
+                        } else if quoted.location_message.is_set() {
+                            "[Location]".into()
                         } else if quoted.audio_message.is_set() {
                             "[Audio message]".into()
                         } else {

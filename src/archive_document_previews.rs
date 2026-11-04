@@ -1,13 +1,13 @@
 //! Encrypted document-preview cache with mutation/expiry and late-write guards.
 use super::*;
-use crate::document_previews::{MAX_BYTES, Request};
-const ELIGIBLE: &str = "m.visible=1 AND m.deleted=0 AND (m.expires IS NULL OR m.expires>unixepoch()) AND (json_type(nullif(m.content,''),'$.document')='object' OR json_type(nullif(m.content,''),'$.video')='object') AND NOT EXISTS(SELECT 1 FROM chats c JOIN chat_settings s ON s.jid=c.jid AND s.kind=2 AND s.value=1 WHERE c.id=m.chat_id)";
+use crate::document_previews::{Kind, MAX_BYTES, Request};
+const ELIGIBLE: &str = "m.visible=1 AND m.deleted=0 AND (m.expires IS NULL OR m.expires>unixepoch()) AND (json_type(nullif(m.content,''),'$.document')='object' OR json_type(nullif(m.content,''),'$.video')='object' OR json_type(nullif(m.content,''),'$.location')='object') AND NOT EXISTS(SELECT 1 FROM chats c JOIN chat_settings s ON s.jid=c.jid AND s.kind=2 AND s.value=1 WHERE c.id=m.chat_id)";
 impl Archive {
     pub async fn document_preview_request(&self, ids: Vec<i32>) -> Result<Option<Request>> {
         self.call(move |db| {
-            let mut query = db.prepare_cached(&format!("SELECT m.raw,json_type(nullif(m.content,''),'$.video')='object' FROM messages m LEFT JOIN document_previews p ON p.message_id=m.id WHERE m.id=?1 AND {ELIGIBLE} AND coalesce(p.sharp,0)=0 AND coalesce(p.retry_at,0)<=unixepoch()"))?;
+            let mut query = db.prepare_cached(&format!("SELECT m.raw,CASE WHEN json_type(nullif(m.content,''),'$.location')='object' THEN 2 WHEN json_type(nullif(m.content,''),'$.video')='object' THEN 1 ELSE 0 END FROM messages m LEFT JOIN document_previews p ON p.message_id=m.id WHERE m.id=?1 AND {ELIGIBLE} AND coalesce(p.sharp,0)=0 AND coalesce(p.retry_at,0)<=unixepoch()"))?;
             for id in ids.into_iter().take(crate::message_thumbnails::MAX_DEMAND) {
-                if let Some((raw,video)) = query.query_row([id], |r|Ok((r.get(0)?,r.get::<_,Option<bool>>(1)?.unwrap_or(false)))).optional()? { return Ok(Some(Request {id,raw,video})); }
+                if let Some((raw,kind)) = query.query_row([id], |r|Ok((r.get(0)?,r.get::<_,i32>(1)?))).optional()? { return Ok(Some(Request {id,raw,kind:match kind {2=>Kind::Location,1=>Kind::Video,_=>Kind::Document}})); }
             }
             Ok(None)
         }).await
@@ -27,10 +27,10 @@ impl Archive {
         {
             return Err(Error::Limit);
         }
-        let (id, raw, video) = (request.id, request.raw.clone(), request.video);
+        let (id, raw, kind) = (request.id, request.raw.clone(), request.kind);
         let changed = self.call(move |db| {
             if let Some(preview) = preview {
-                let sharp = video || crate::document_previews::sharp_enough(&preview);
+                let sharp = kind != Kind::Document || crate::document_previews::sharp_enough(&preview);
                 // Replacing gets a fresh monotonic id: the presenter must swap
                 // its texture even when an older low-resolution cache exists.
                 Ok(db.execute(&format!("INSERT OR REPLACE INTO document_previews(message_id,preview,retry_at,sharp)
@@ -81,7 +81,7 @@ mod tests {
             .blocking(|c| {
                 assert_eq!(
                     c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?,
-                    20
+                    21
                 );
                 assert_eq!(
                     c.query_row("SELECT draft FROM chats", [], |r| r.get::<_, String>(0))?,

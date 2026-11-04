@@ -116,6 +116,16 @@ pub(super) fn check_ui() {
             );
         }
     }
+    Arc::make_mut(&mut Arc::make_mut(&mut view.messages)[1].content).notice =
+        Some(crate::message_content::Notice::HistoryShared);
+    conversation(&ui, &view, false);
+    layout(&ui);
+    assert!(
+        ui.get_timeline_rows()
+            .iter()
+            .any(|r| r.message.system_notice
+                && r.message.text == "Mira Sample shared message history")
+    );
     // Bound shaping for pathological names, wrap Unicode, and remeasure after
     // content replacement without leaving a stale bubble or sender run.
     Arc::make_mut(&mut view.messages)[1].sender = "مرحبا 👩🏽‍💻 文字\n".repeat(100);

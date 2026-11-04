@@ -48,6 +48,14 @@ video validation remains open.
 Nearby video cards use supplied sharp posters or generate a frame before playback;
 the existing preview cache preserves the result without leaving a decoder running.
 
+Received fixed locations display map cards with OpenStreetMap previews, place
+details and copy/open actions. Existing saved unsupported locations are repaired
+in place. See [location behavior and map caching](docs/locations.md).
+
+Edits and poll-vote updates stay out of ordinary chat bubbles; retained edits
+wait for their original message. History-sharing notices and phone-only codes
+have explicit display rules. See [message events](docs/message-events.md).
+
 macOS startup diagnostics are saved automatically under `~/Library/Logs/Heya`.
 If the process appears in the Dock without a window, retain the newest logs and
 try `--software-rendering --demo` after closing it. See

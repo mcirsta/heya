@@ -159,7 +159,10 @@ fn hydrated_template_variants_preserve_sections_and_respect_linked_device_mask()
     hydrated.mask_linked_devices = Some(true);
     let mut masked = TemplateMessage::default();
     masked.hydrated_template = MessageField::some(hydrated);
-    assert_eq!(text(&template_message(masked)).unwrap(), PHONE);
+    assert_eq!(
+        text(&template_message(masked)).unwrap(),
+        crate::protocol_system::CODE
+    );
     assert_eq!(
         text(&template_message(TemplateMessage::default())).unwrap(),
         PHONE

@@ -25,10 +25,17 @@ pub fn sharp_enough(bytes: &[u8]) -> bool {
         .is_some_and(|(w, h)| (WIDTH..=4096).contains(&w) && (HEIGHT..=4096).contains(&h))
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Kind {
+    Document,
+    Video,
+    Location,
+}
+
 pub struct Request {
     pub id: i32,
     pub raw: Vec<u8>,
-    pub video: bool,
+    pub kind: Kind,
 }
 #[async_trait::async_trait]
 pub trait Source: Send + Sync {
@@ -139,9 +146,9 @@ pub async fn fetch_worker(
             if let Some(request) = archive.document_preview_request(ids).await? {
                 let work = async {
                     let bytes = source.fetch(&request).await?;
-                    let video = request.video;
+                    let kind = request.kind;
                     crate::photos::blocking(move || {
-                        if video {
+                        if kind != Kind::Document {
                             encode(video_decode(&bytes)?)
                         } else {
                             prepare(bytes)

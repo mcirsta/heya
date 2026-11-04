@@ -183,7 +183,7 @@ impl Archive {
         db.busy_timeout(Duration::from_secs(5))?;
         db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA secure_delete=ON; PRAGMA temp_store=MEMORY;")?;
         let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if version > 20 {
+        if version > 21 {
             return Err(Error::Database);
         }
         if version == 0 {
@@ -308,6 +308,12 @@ impl Archive {
             let tx = db.transaction()?;
             tx.execute_batch(include_str!("archive_read_keys.sql"))?;
             tx.pragma_update(None, "user_version", 20)?;
+            tx.commit()?;
+        }
+        if version < 21 {
+            let tx = db.transaction()?;
+            tx.execute_batch(include_str!("archive_location_maps.sql"))?;
+            tx.pragma_update(None, "user_version", 21)?;
             tx.commit()?;
         }
         // Never resend something that may have reached the network before a crash.
@@ -811,10 +817,11 @@ fn upsert_chat(tx: &Transaction<'_>, meta: &ChatMeta) -> Result<i32> {
     tx.execute("INSERT INTO chats(jid,name,is_group,read_only,ephemeral) VALUES(?1,?2,?3,coalesce(?4,0),coalesce(?5,0)) ON CONFLICT(jid) DO UPDATE SET listed=1,name=CASE WHEN excluded.name<>'' THEN excluded.name ELSE chats.name END, read_only=coalesce(?4,chats.read_only),ephemeral=coalesce(?5,chats.ephemeral)", params![jid,meta.name,meta.group,meta.read_only,meta.ephemeral])?;
     Ok(tx.query_row("SELECT id FROM chats WHERE jid=?1", [jid], |r| r.get(0))?)
 }
-fn insert_record(tx: &Transaction<'_>, r: Record, live: bool) -> Result<()> {
+fn insert_record(tx: &Transaction<'_>, mut r: Record, live: bool) -> Result<()> {
     if r.id.is_empty() || r.chat.is_empty() || r.sender.is_empty() {
         return Err(Error::Invalid);
     }
+    r.visible = event_visibility(tx, &r)?;
     let chat = upsert_chat(
         tx,
         &ChatMeta {
@@ -909,6 +916,32 @@ fn encode_content(content: &crate::message_content::Content) -> Result<String> {
         return Ok(String::new());
     }
     serde_json::to_string(content).map_err(|_| Error::Invalid)
+}
+
+fn event_visibility(db: &Connection, record: &Record) -> Result<bool> {
+    if record.content.notice != Some(crate::message_content::Notice::HistoryShared) {
+        return Ok(record.visible);
+    }
+    if record.outgoing || !record.chat.ends_with("@g.us") {
+        return Ok(false);
+    }
+    let own: Option<String> = db
+        .query_row("SELECT value FROM metadata WHERE key='identity'", [], |r| {
+            r.get(0)
+        })
+        .optional()?;
+    let Some(own) = own else {
+        return Ok(false);
+    };
+    let Some(receivers) = crate::protocol_system::history_receivers(&record.raw) else {
+        return Ok(false);
+    };
+    for receiver in receivers {
+        if canonical(db, &receiver)? == canonical(db, &own)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn apply_mutations(db: &Connection, chat: i32) -> Result<()> {

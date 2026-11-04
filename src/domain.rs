@@ -277,9 +277,14 @@ impl Chat {
             preview: chat_preview(
                 &self.draft,
                 self.id == selected,
-                notice
-                    .as_deref()
-                    .unwrap_or_else(|| last.map_or("", |m| m.text.as_str())),
+                notice.as_deref().unwrap_or_else(|| {
+                    last.map_or("", |m| {
+                        m.content
+                            .location
+                            .as_ref()
+                            .map_or(m.text.as_str(), |l| l.summary())
+                    })
+                }),
                 last.filter(|m| m.content.photo.is_some())
                     .map(|m| m.content.body.as_deref().unwrap_or_default()),
                 last.filter(|m| self.is_group && !m.outgoing && m.content.notice.is_none())

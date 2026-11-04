@@ -38,6 +38,8 @@ pub struct Content {
     pub video: Option<Video>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub document: Option<Document>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub location: Option<crate::locations::Location>,
     /// Attachments without a dedicated photo/audio projection. Never inferred
     /// from body text. Omit false to preserve existing media cache fingerprints.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -65,6 +67,7 @@ pub struct Content {
 pub enum Notice {
     MessagePinned,
     MessageUnpinned,
+    HistoryShared,
     Call(Call),
 }
 impl Notice {
@@ -72,6 +75,7 @@ impl Notice {
         match self {
             Self::MessagePinned => "pinned a message",
             Self::MessageUnpinned => "unpinned a message",
+            Self::HistoryShared => "shared message history",
             Self::Call(call) => call.label(),
         }
     }

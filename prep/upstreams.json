@@ -75,6 +75,56 @@
             "sha256": "c0e0f68688dc9b4cf787e9ec6ec14155ac831c244e1ab0961f8ba95f88e6f645"
           }
         ]
+      },
+      "location_reference": {
+        "reviewed_on": "2026-11-04",
+        "modules": [
+          "WAWebParseLocationMessageProto",
+          "WAWebMessageLocation.react",
+          "WAWebMapUtils",
+          "WAWebFormatLocationMsgText"
+        ],
+        "bundles": [
+          {
+            "url": "https://static.whatsapp.net/rsrc.php/v4izAp4/yG/l/en_US-j/VqAKj5YSriBEJC63gonxl161bdVNXjDXQWccp9_FixzWa3VChRD1-8-BIJJc6KuTipteFGUkYqT7O0zFg8gynLKTIDKAQTM8HsFcgjUKBsGUBJosOX1VeQVx7eJPkgcKFtUlBLyPrSzMppaWLKKR4rG5wkNmhlqGuCvKVqJrL5f2e0Kw5W07gZ4Hvm9PycYmAtRzmhFfV5XC22PJnG7iiY1OU4Ur8Mq49gve1Yd0WtK7V2SdJo.js",
+            "sha256": "f2d55f03f265b6e98a27557551cbe42e52af852fdc9cc808ec48ad2bfbe73b41"
+          },
+          {
+            "url": "https://static.whatsapp.net/rsrc.php/v4iyEZ4/yM/l/en_US-j/Si8LFO-Ol4QhcQSVcY_N5D4rNio554Ksoe00iVVZca3ZFOI7FFcQsjdOPd7jfeaxtjtmjuuH44R_iJMtIVK-mlYVNIDK0L9insxKm1CBjbpD28zUjjP6BerOEghyuADIhRsvwONk3_75vwBpSRVmcUg2bhBEVESlKhA9oipn3W3pZE9PfiVs0UCEUx65dh0Lh_D7Hjc_KGA1Q7TC37P0FGTM3YN3E7RfzEsFUd7PmsoPO1nNAlfUVsY1flszrDj3676SUhU_dVNcJDnmSWZ6lcRvyuRlCZMEE82yjzhN4c9CC1Io-viLTSpNtJ6jYG7kS5cgDH91Af.js",
+            "sha256": "3d422c323f849ea0b1c071b85ac855b1bab73d6d372f575f6fc2518283c59a47"
+          },
+          {
+            "url": "https://static.whatsapp.net/rsrc.php/v4ife54/yv/l/en_US-j/3EjdTRCmQab.js",
+            "sha256": "4f1682fca777074420b40cdcdaa4c349e33781c582cab7630e7a5a4400d3d279"
+          }
+        ],
+        "implementation": "Independent Heya adapter and map card; existing public SDK fields suffice. Owner selected OpenStreetMap previews; no WhatsApp Google Maps key is reused."
+      },
+      "message_event_reference": {
+        "reviewed_on": "2026-11-04",
+        "modules": [
+          "WAWebParseMessageEditEncryptedMessageProto",
+          "WAWebPollVoteAddonMessageProcessor",
+          "WAWebParseMessageHistoryNoticeProto",
+          "WAWebMessageHistoryNoticeMessage.react",
+          "WAWebFormatBizContentPlaceholderMsgText",
+          "WAWebMessageLiveLocation.react"
+        ],
+        "bundles": [
+          {
+            "url": "https://static.whatsapp.net/rsrc.php/v4izAp4/yG/l/en_US-j/VqAKj5YSriBEJC63gonxl161bdVNXjDXQWccp9_FixzWa3VChRD1-8-BIJJc6KuTipteFGUkYqT7O0zFg8gynLKTIDKAQTM8HsFcgjUKBsGUBJosOX1VeQVx7eJPkgcKFtUlBLyPrSzMppaWLKKR4rG5wkNmhlqGuCvKVqJrL5f2e0Kw5W07gZ4Hvm9PycYmAtRzmhFfV5XC22PJnG7iiY1OU4Ur8Mq49gve1Yd0WtK7V2SdJo.js",
+            "sha256": "f2d55f03f265b6e98a27557551cbe42e52af852fdc9cc808ec48ad2bfbe73b41"
+          },
+          {
+            "url": "https://static.whatsapp.net/rsrc.php/v4iyEZ4/yM/l/en_US-j/Si8LFO-Ol4QhcQSVcY_N5D4rNio554Ksoe00iVVZca3ZFOI7FFcQsjdOPd7jfeaxtjtmjuuH44R_iJMtIVK-mlYVNIDK0L9insxKm1CBjbpD28zUjjP6BerOEghyuADIhRsvwONk3_75vwBpSRVmcUg2bhBEVESlKhA9oipn3W3pZE9PfiVs0UCEUx65dh0Lh_D7Hjc_KGA1Q7TC37P0FGTM3YN3E7RfzEsFUd7PmsoPO1nNAlfUVsY1flszrDj3676SUhU_dVNcJDnmSWZ6lcRvyuRlCZMEE82yjzhN4c9CC1Io-viLTSpNtJ6jYG7kS5cgDH91Af.js",
+            "sha256": "3d422c323f849ea0b1c071b85ac855b1bab73d6d372f575f6fc2518283c59a47"
+          },
+          {
+            "url": "https://static.whatsapp.net/rsrc.php/v4ife54/yv/l/en_US-j/3EjdTRCmQab.js",
+            "sha256": "4f1682fca777074420b40cdcdaa4c349e33781c582cab7630e7a5a4400d3d279"
+          }
+        ],
+        "implementation": "Independent Heya event mapping and archive repair; encrypted edits use the existing public SDK cryptography API. No proprietary implementation copied."
       }
     },
     "zapfast": {
