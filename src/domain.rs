@@ -663,14 +663,42 @@ impl DemoState {
                 chat,
                 message,
                 emoji,
+                album,
                 request,
             } => {
-                let source = self
+                let messages = self
                     .chats
                     .iter_mut()
                     .find(|c| c.id == chat)
-                    .and_then(|c| c.messages.iter_mut().find(|m| m.id == message));
-                if let Some(source) = source
+                    .map(|c| &mut c.messages);
+                let key = messages.as_ref().and_then(|messages| {
+                    let source = messages.iter().find(|m| m.id == message)?;
+                    match source.content.album.as_ref().map(|a| &a.key) {
+                        Some(key @ crate::photo_albums::Key::Explicit(_)) => {
+                            Some((key.clone(), source.sender_id.clone()))
+                        }
+                        _ => None,
+                    }
+                });
+                if album && !(emoji.is_empty() || emojis::get(&emoji).is_some()) {
+                    (request, 1, false)
+                } else if album {
+                    // One reaction for the whole album, shown on every member.
+                    if let (Some(messages), Some((key, sender))) = (messages, key) {
+                        for member in messages.iter_mut().filter(|m| {
+                            m.sender_id == sender
+                                && m.content.album.as_ref().is_some_and(|a| a.key == key)
+                        }) {
+                            let content = std::sync::Arc::make_mut(&mut member.content);
+                            content.album_own_reaction = emoji.clone();
+                            content.album_reaction_summary = emoji.clone();
+                        }
+                        (request, 1, true)
+                    } else {
+                        (request, 1, false)
+                    }
+                } else if let Some(source) =
+                    messages.and_then(|messages| messages.iter_mut().find(|m| m.id == message))
                     && (emoji.is_empty() || emojis::get(&emoji).is_some())
                 {
                     let content = std::sync::Arc::make_mut(&mut source.content);

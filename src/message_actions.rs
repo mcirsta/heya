@@ -168,6 +168,8 @@ pub enum Command {
         chat: i32,
         message: i32,
         emoji: String,
+        /// React to the album that `message` belongs to, not to the photo.
+        album: bool,
         request: i32,
     },
     Forward {

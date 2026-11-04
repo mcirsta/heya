@@ -83,6 +83,7 @@ pub fn bind(ui: &AppWindow, submit: Rc<impl Fn(Command) -> bool + 'static>) -> R
         }
         ui.set_action_chat(ui.get_selected_id());
         ui.set_action_message(ids[0]);
+        ui.set_action_album(false);
         ui.set_action_error("".into());
         match action {
             1 => {

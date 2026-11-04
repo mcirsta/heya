@@ -28,6 +28,8 @@ export struct MessageRow {
     reactions:string,
     own-reaction:string,
     reaction-status:string,
+    // An explicit album card: its reaction fields describe the album message.
+    album-target:bool,
     id: int,
     sender: string,
     sender-id: string,

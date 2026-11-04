@@ -90,16 +90,19 @@ impl Archive {
 mod tests {
     use super::*;
     use crate::archive::tests::{PN, fixture, record};
-    #[tokio::test]
-    async fn timeline_album_counts_cover_other_pages_and_refresh_after_changes() {
-        let (_temp, db) = fixture();
-        let records = (0..38)
+    use whatsapp_rust::{
+        prelude::wa,
+        waproto::{buffa::MessageField, codec},
+    };
+
+    fn album_photos(count: i32) -> Vec<Record> {
+        (0..count)
             .map(|i| {
                 let mut m = record(&format!("grid-{i}"));
                 m.timestamp += i64::from(i);
                 m.album = Some(Album {
                     parent: "grid-parent".into(),
-                    index: Some(i),
+                    index: Some(i as u32),
                 });
                 m.content = crate::message_content::Content {
                     body: Some(String::new()),
@@ -112,7 +115,157 @@ mod tests {
                 };
                 m
             })
-            .collect();
+            .collect()
+    }
+
+    fn album_parent() -> Record {
+        let mut album = wa::message::AlbumMessage::default();
+        album.expected_image_count = Some(38);
+        let mut message = wa::Message::default();
+        message.album_message = MessageField::some(album);
+        let mut parent = record("grid-parent");
+        parent.visible = false;
+        parent.text = String::new();
+        parent.raw = codec::message_to_vec(&message);
+        parent
+    }
+
+    #[tokio::test]
+    async fn an_album_reaction_is_one_message_to_the_album_and_shows_on_every_photo() {
+        let (_temp, db) = fixture();
+        db.bind_account("15550000009@s.whatsapp.net".into(), "Owner".into())
+            .await
+            .unwrap();
+        let mut messages = album_photos(38);
+        messages.push(album_parent());
+        // A contact reacts to the album, and separately to one photo.
+        for (id, target, emoji) in [
+            ("parent-like", "grid-parent", "❤️"),
+            ("photo-like", "grid-5", "😮"),
+        ] {
+            let mut event = record(id);
+            event.visible = false;
+            event.content.reaction = Some(crate::message_content::ReactionEvent {
+                target: target.into(),
+                emoji: emoji.into(),
+                at: 10,
+            });
+            messages.push(event);
+        }
+        db.ingest(Batch {
+            messages,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let chat = db.create_chat(PN.into()).await.unwrap();
+        let page = db
+            .view(chat, 100, String::new(), false, false)
+            .await
+            .unwrap()
+            .conversation
+            .unwrap();
+        assert_eq!(page.messages.len(), 38, "the album message stays hidden");
+        // Like WhatsApp's album bubble, the card totals album and photo reactions.
+        assert!(
+            page.messages
+                .iter()
+                .all(|m| m.content.album_reaction_summary == "❤️  😮")
+        );
+        assert!(
+            page.messages
+                .iter()
+                .all(|m| m.content.album_own_reaction.is_empty())
+        );
+        let reacted = page
+            .messages
+            .iter()
+            .find(|m| m.content.reaction_summary == "😮");
+        assert!(reacted.is_some(), "photo reactions stay on their photo");
+        assert_eq!(
+            crate::photo_albums::Layout::new(&page.messages, true).grids[&0]
+                .members
+                .len(),
+            38,
+            "a reacted photo stays in an explicit album card"
+        );
+
+        db.queue_album_reaction(
+            chat,
+            page.messages[20].id,
+            "album-reaction".into(),
+            "👍".into(),
+        )
+        .await
+        .unwrap();
+        let queued = db.claim_next().await.unwrap().unwrap();
+        assert!(
+            db.claim_next().await.unwrap().is_none(),
+            "one reaction, not one per photo"
+        );
+        let reaction = codec::message_decode(&queued.raw).unwrap();
+        let key = reaction.reaction_message.key.as_option().unwrap();
+        assert_eq!(key.id.as_deref(), Some("grid-parent"));
+        assert_eq!(key.from_me, Some(false));
+        assert_eq!(reaction.reaction_message.text.as_deref(), Some("👍"));
+        let page = db
+            .view(chat, 100, String::new(), false, false)
+            .await
+            .unwrap()
+            .conversation
+            .unwrap();
+        assert!(
+            page.messages
+                .iter()
+                .all(|m| m.content.album_own_reaction == "👍")
+        );
+        assert!(
+            page.messages
+                .iter()
+                .all(|m| m.content.album_reaction_summary == "❤️  👍  😮"),
+            "your queued album reaction joins the total"
+        );
+        assert!(
+            page.messages
+                .iter()
+                .all(|m| m.content.own_reaction.is_empty())
+        );
+    }
+
+    #[tokio::test]
+    async fn an_album_reaction_without_its_album_message_is_refused() {
+        let (_temp, db) = fixture();
+        db.bind_account("15550000009@s.whatsapp.net".into(), "Owner".into())
+            .await
+            .unwrap();
+        let mut messages = album_photos(3);
+        messages.push(record("plain"));
+        db.ingest(Batch {
+            messages,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let chat = db.create_chat(PN.into()).await.unwrap();
+        let page = db
+            .view(chat, 100, String::new(), false, false)
+            .await
+            .unwrap()
+            .conversation
+            .unwrap();
+        for message in page.messages.iter() {
+            assert!(
+                db.queue_album_reaction(chat, message.id, format!("r-{}", message.id), "👍".into())
+                    .await
+                    .is_err()
+            );
+        }
+        assert!(db.claim_next().await.unwrap().is_none());
+    }
+    #[tokio::test]
+    async fn timeline_album_counts_cover_other_pages_and_refresh_after_changes() {
+        let (_temp, db) = fixture();
+        let records = album_photos(38);
         db.ingest(Batch {
             messages: records,
             ..Default::default()

@@ -7,10 +7,27 @@ card. Larger runs shade the last preview and show `+N` for the remaining photos.
 Tiles crop to their reserved cells; the viewer keeps the original proportions.
 Each tile retains its timestamp and message identity. Clicking the counter opens
 that photo in the existing full-album viewer, with navigation to the other members.
-Native right-clicks and hover actions target the individual photo under the pointer.
+Reply, Forward, Download, Copy image and More from the hover bar or a right-click
+target the individual photo under the pointer.
 
-The first photo's caption, quote and reactions stay on the card. A later caption,
-quote or reaction starts a separate card, preserving its visible text/state.
+Reactions depend on the kind of album:
+- **Protocol albums** (an `albumMessage` followed by its photos) react as one
+  message. The hover React button, the card's reaction pill and the right-click
+  menu's reaction strip send one reaction to the hidden album message, however
+  many photos it has. Official clients react to an album card the same way.
+  Like WhatsApp's album bubble, the card's pill totals the album message's
+  reactions and those on all of its photos, including photos outside the loaded
+  page; choosing your emoji again removes only your album reaction. A photo's
+  own reaction, such as one added from a phone's viewer, keeps the photo in the
+  card and shows as a small badge on its visible tile. The photo viewer shows
+  that photo's reactions in a pill at the photo's bottom-left corner and still
+  reacts to the single photo. If the album message is not stored yet, the album
+  reaction is refused.
+- **Inferred albums** have no album message, so reactions go to the photo under
+  the pointer. A reacted photo then starts a separate card.
+
+The first photo's caption and quote stay on the card. A later caption or quote
+starts a separate card, preserving its visible text/state.
 Different participants, dates, forwarding state, unrelated messages and deleted
 photos also break a run.
 

@@ -210,6 +210,7 @@ impl State {
             row.photo_status = photo.state.image_label(row.has_sticker).into();
         }
         if let Some(grid) = self.albums.grids.get(&index) {
+            let explicit = explicit_album(message);
             let tiles = grid
                 .members
                 .iter()
@@ -224,9 +225,17 @@ impl State {
                         picture: photo.map(|p| p.image.clone()).unwrap_or_default(),
                         state: status as i32,
                         status: status.label().into(),
+                        reaction: if explicit {
+                            member.content.reaction_summary.as_str().into()
+                        } else {
+                            Default::default()
+                        },
                     }
                 })
                 .collect::<Vec<_>>();
+            if explicit {
+                album_reactions(&mut row, message);
+            }
             row.album_more = grid
                 .total
                 .saturating_sub(tiles.len())
@@ -785,6 +794,7 @@ fn same_row(a: &TimelineRow, b: &TimelineRow) -> bool {
         && am.reactions == bm.reactions
         && am.own_reaction == bm.own_reaction
         && am.reaction_status == bm.reaction_status
+        && am.album_target == bm.album_target
         && am.audio_waveform == bm.audio_waveform
         && am.audio_duration == bm.audio_duration
         && am.has_photo == bm.has_photo
@@ -816,6 +826,7 @@ fn same_album(
                 && a.time == b.time
                 && a.state == b.state
                 && a.status == b.status
+                && a.reaction == b.reaction
                 && same_image(&a.picture, &b.picture)
         })
 }
@@ -929,6 +940,39 @@ pub(crate) fn photo_message(ui: &AppWindow, id: i32) -> Option<crate::MessageRow
         }
     });
     result
+}
+
+/// A photo collapsed into an album card, for actions on its tile.
+pub(crate) fn album_member(ui: &AppWindow, id: i32) -> Option<crate::MessageRow> {
+    let mut result = None;
+    with(ui, |model| {
+        let state = model.state.borrow();
+        if let Some(i) = state.source.iter().position(|m| m.id == id)
+            && state.albums.hidden(i)
+        {
+            let mut row = super::message_row(&state.source[i], None);
+            if explicit_album(&state.source[i]) {
+                album_reactions(&mut row, &state.source[i]);
+            }
+            result = Some(row);
+        }
+    });
+    result
+}
+
+fn explicit_album(message: &domain::Message) -> bool {
+    matches!(
+        message.content.album.as_ref().map(|a| &a.key),
+        Some(crate::photo_albums::Key::Explicit(_))
+    )
+}
+
+/// An explicit album card reacts as one message: the hidden album parent.
+fn album_reactions(row: &mut MessageRow, message: &domain::Message) {
+    row.album_target = true;
+    row.reactions = message.content.album_reaction_summary.as_str().into();
+    row.own_reaction = message.content.album_own_reaction.as_str().into();
+    row.reaction_status = message.content.album_reaction_status.as_str().into();
 }
 
 pub(crate) fn photos(ui: &AppWindow, snapshot: &crate::photos::Snapshot) {

@@ -16,6 +16,7 @@ const DOWNLOAD: i32 = 5;
 pub(crate) mod viewer_tests;
 
 /// The viewer carries one archive-validated message, independently of timeline paging.
+/// Album members hidden inside a card have no timeline row of their own.
 pub(crate) fn source_row(ui: &AppWindow, id: i32) -> Option<crate::MessageRow> {
     let viewed = ui.get_photo_viewer_message();
     if id > 0
@@ -29,6 +30,7 @@ pub(crate) fn source_row(ui: &AppWindow, id: i32) -> Option<crate::MessageRow> {
         .iter()
         .find(|row| row.message.id == id)
         .map(|row| row.message)
+        .or_else(|| crate::presentation::timeline::album_member(ui, id))
 }
 
 pub fn bind(ui: &AppWindow, submit: impl Fn(Command) -> bool + 'static) {
@@ -62,6 +64,7 @@ pub fn bind(ui: &AppWindow, submit: impl Fn(Command) -> bool + 'static) {
                 return;
             }
             ui.set_action_source_actionable(row.actionable);
+            ui.set_action_album(row.album_target);
             ui.set_action_error("".into());
             ui.set_action_message(id);
             ui.set_action_chat(ui.get_selected_id());
@@ -302,6 +305,7 @@ pub fn bind(ui: &AppWindow, submit: impl Fn(Command) -> bool + 'static) {
                 chat: ui.get_action_chat(),
                 message: ui.get_action_message(),
                 emoji: emoji.clone(),
+                album: ui.get_action_album(),
                 request,
             });
             if ui.get_action_pending() && !emoji.is_empty() {

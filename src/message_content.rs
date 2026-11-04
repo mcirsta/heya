@@ -58,6 +58,13 @@ pub struct Content {
     pub own_reaction: String,
     #[serde(skip)]
     pub reaction_status: String,
+    /// Reactions to the hidden album message this photo belongs to.
+    #[serde(skip)]
+    pub album_reaction_summary: String,
+    #[serde(skip)]
+    pub album_own_reaction: String,
+    #[serde(skip)]
+    pub album_reaction_status: String,
     #[serde(skip)]
     pub unavailable: bool,
 }

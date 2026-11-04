@@ -25,6 +25,22 @@ pub(super) fn source(db: &Connection, chat: i32, id: i32) -> Result<Source> {
     ).optional()?;
     value.ok_or(Error::Invalid)
 }
+/// The hidden album message of a visible member photo. Official clients react
+/// to an album card through this parent, not through one of its photos.
+pub(super) fn album_source(db: &Connection, chat: i32, member: i32) -> Result<Source> {
+    let member = source(db, chat, member)?;
+    let value = db.query_row(
+        "SELECT p.id,p.chat_id,c.jid,p.source_sender,p.wire_id,p.outgoing,p.body,p.raw
+         FROM messages m JOIN messages p ON p.chat_id=m.chat_id AND p.sender=m.sender AND p.wire_id=m.album
+         JOIN chats c ON c.id=p.chat_id
+         WHERE m.id=?1 AND m.chat_id=?2 AND p.deleted=0 AND length(p.raw)>0
+           AND (p.expires IS NULL OR p.expires>unixepoch())",
+        params![member.id, member.chat],
+        |r| Ok(Source { id:r.get(0)?, chat:r.get(1)?, jid:r.get(2)?, sender:r.get(3)?,
+            wire:r.get(4)?, outgoing:r.get(5)?, body:r.get(6)?, raw:r.get(7)? }),
+    ).optional()?;
+    value.ok_or(Error::Invalid)
+}
 fn display_name(db: &Connection, sender: &str, outgoing: bool) -> Result<String> {
     if outgoing || sender == "#self" {
         return Ok("You".into());
@@ -70,8 +86,31 @@ struct ReactionView {
     own: String,
     status: String,
 }
+impl ReactionView {
+    fn summary(&self) -> String {
+        summary(&self.counts)
+    }
+}
+fn summary(counts: &std::collections::BTreeMap<String, usize>) -> String {
+    {
+        counts
+            .iter()
+            .take(6)
+            .map(|(emoji, count)| {
+                if *count > 1 {
+                    format!("{emoji} {count}")
+                } else {
+                    emoji.clone()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("  ")
+    }
+}
 pub(super) struct Projection {
     reactions: std::collections::HashMap<String, ReactionView>,
+    /// Reactions to the photos of each album, keyed by the album's wire ID.
+    album_photos: std::collections::HashMap<String, std::collections::BTreeMap<String, usize>>,
     names: std::collections::HashMap<String, String>,
     pending: std::collections::HashMap<String, String>,
 }
@@ -84,10 +123,25 @@ impl Projection {
     ) -> Result<Self> {
         let mut value = Self {
             reactions: Default::default(),
+            album_photos: Default::default(),
             names: Default::default(),
             pending: controls::pending(db, chat, limit)?,
         };
-        let mut q=db.prepare("SELECT r.target,r.actor,r.emoji,coalesce(m.delivery,r.delivery) FROM reactions r LEFT JOIN messages m ON r.actor='#self' AND m.chat_id=r.chat_id AND m.sender='#self' AND m.wire_id=r.event_wire WHERE r.chat_id=?1 AND r.target IN (SELECT wire_id FROM messages WHERE chat_id=?1 AND visible=1 AND deleted=0 AND (stamp,id)<=(?3,?4) ORDER BY stamp DESC,id DESC LIMIT ?2) AND (SELECT count(*) FROM messages original WHERE original.chat_id=r.chat_id AND original.wire_id=r.target AND original.visible=1)=1")?;
+        // An album card totals its photos' reactions too, including photos
+        // outside this page. Failed own reactions are not counted.
+        let mut q=db.prepare("WITH page AS (SELECT album FROM messages WHERE chat_id=?1 AND visible=1 AND deleted=0 AND album IS NOT NULL AND (stamp,id)<=(?3,?4) ORDER BY stamp DESC,id DESC LIMIT ?2) SELECT c.album,r.emoji FROM reactions r JOIN messages c ON c.chat_id=r.chat_id AND c.wire_id=r.target AND c.visible=1 AND c.deleted=0 LEFT JOIN messages m ON r.actor='#self' AND m.chat_id=r.chat_id AND m.sender='#self' AND m.wire_id=r.event_wire WHERE r.chat_id=?1 AND r.emoji<>'' AND coalesce(m.delivery,r.delivery)<>'failed' AND c.album IN (SELECT album FROM page)")?;
+        for row in q.query_map(params![chat, limit as i64, boundary.0, boundary.1], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })? {
+            let (album, emoji) = row?;
+            *value
+                .album_photos
+                .entry(album)
+                .or_default()
+                .entry(emoji)
+                .or_default() += 1;
+        }
+        let mut q=db.prepare("WITH page AS (SELECT wire_id,album FROM messages WHERE chat_id=?1 AND visible=1 AND deleted=0 AND (stamp,id)<=(?3,?4) ORDER BY stamp DESC,id DESC LIMIT ?2) SELECT r.target,r.actor,r.emoji,coalesce(m.delivery,r.delivery) FROM reactions r LEFT JOIN messages m ON r.actor='#self' AND m.chat_id=r.chat_id AND m.sender='#self' AND m.wire_id=r.event_wire WHERE r.chat_id=?1 AND ((r.target IN (SELECT wire_id FROM page) AND (SELECT count(*) FROM messages original WHERE original.chat_id=r.chat_id AND original.wire_id=r.target AND original.visible=1)=1) OR (r.target IN (SELECT album FROM page WHERE album IS NOT NULL) AND (SELECT count(*) FROM messages parent WHERE parent.chat_id=r.chat_id AND parent.wire_id=r.target AND parent.visible=0 AND parent.deleted=0)=1))")?;
         for row in q.query_map(params![chat, limit as i64, boundary.0, boundary.1], |r| {
             Ok((
                 r.get::<_, String>(0)?,
@@ -131,21 +185,23 @@ impl Projection {
             quote.sender = self.names[&quote.sender].clone();
         }
         if let Some(view) = self.reactions.get(wire) {
-            content.reaction_summary = view
-                .counts
-                .iter()
-                .take(6)
-                .map(|(emoji, count)| {
-                    if *count > 1 {
-                        format!("{emoji} {count}")
-                    } else {
-                        emoji.clone()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("  ");
+            content.reaction_summary = view.summary();
             content.own_reaction = view.own.clone();
             content.reaction_status = view.status.clone();
+        }
+        if let Some(crate::photo_albums::Key::Explicit(parent)) =
+            content.album.as_ref().map(|a| &a.key)
+        {
+            let view = self.reactions.get(parent);
+            let mut counts = view.map(|v| v.counts.clone()).unwrap_or_default();
+            for (emoji, count) in self.album_photos.get(parent).into_iter().flatten() {
+                *counts.entry(emoji.clone()).or_default() += count;
+            }
+            content.album_reaction_summary = summary(&counts);
+            if let Some(view) = view {
+                content.album_own_reaction = view.own.clone();
+                content.album_reaction_status = view.status.clone();
+            }
         }
         Ok(())
     }
@@ -206,6 +262,25 @@ impl Archive {
             let tx = db.transaction()?;
             let s = source(&tx, source_chat, message)?;
             queue(&tx, &s, destination, id, operation, false)?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await?;
+        self.changed();
+        Ok(())
+    }
+    /// React to the album that `member` belongs to.
+    pub async fn queue_album_reaction(
+        &self,
+        chat: i32,
+        member: i32,
+        id: String,
+        emoji: String,
+    ) -> Result<()> {
+        self.call(move |db| {
+            let tx = db.transaction()?;
+            let s = album_source(&tx, chat, member)?;
+            queue(&tx, &s, chat, id, Operation::React(emoji), false)?;
             tx.commit()?;
             Ok(())
         })

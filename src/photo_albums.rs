@@ -30,10 +30,15 @@ pub struct Candidate {
 }
 
 pub fn separate(content: &crate::message_content::Content) -> bool {
+    !content.reaction_summary.is_empty()
+        || !content.reaction_status.is_empty()
+        || separate_explicit(content)
+}
+
+/// Explicit albums keep reacted photos: their reactions show on the tile.
+pub fn separate_explicit(content: &crate::message_content::Content) -> bool {
     !content.body.as_deref().unwrap_or_default().is_empty()
         || content.quote.is_some()
-        || !content.reaction_summary.is_empty()
-        || !content.reaction_status.is_empty()
         || !content.actions.is_empty()
         || content.preview.is_some()
         || content.audio.is_some()
@@ -174,8 +179,13 @@ impl Layout {
                     || next.content.album.as_ref().is_none_or(|a| a.key != album.key)
                     || next.sender_id != first.sender_id || next.outgoing != first.outgoing
                     || next.date != first.date || next.content.forwarded != first.content.forwarded
-                    // Preserve separately captioned/quoted/reacted messages in the chat.
-                    || separate(&next.content)
+                    // Preserve separately captioned/quoted messages in the chat,
+                    // and reacted ones unless the album is explicit.
+                    || if matches!(album.key, Key::Explicit(_)) {
+                        separate_explicit(&next.content)
+                    } else {
+                        separate(&next.content)
+                    }
                 {
                     break;
                 }
@@ -395,7 +405,7 @@ mod tests {
         assert!(!layout.grids.contains_key(&0));
     }
     #[test]
-    fn captions_reactions_and_deleted_members_keep_separate_rows() {
+    fn captions_inferred_reactions_and_deleted_members_keep_separate_rows() {
         let mut source = sample(8);
         std::sync::Arc::make_mut(&mut source[4].content).body = Some("Preserved caption 👩🏽‍💻".into());
         let layout = Layout::new(&source, true);
@@ -404,7 +414,19 @@ mod tests {
         assert_eq!(layout.grids[&4].total, 4);
         assert_eq!(layout.owner(4), 4);
         std::sync::Arc::make_mut(&mut source[2].content).reaction_summary = "❤️ 2".into();
-        assert_eq!(Layout::new(&source, true).owner(2), 2);
+        assert_eq!(
+            Layout::new(&source, true).owner(2),
+            0,
+            "an explicit album keeps a reacted photo; its tile shows the reaction"
+        );
+        let mut inferred = source.clone();
+        for (i, m) in inferred.iter_mut().enumerate() {
+            std::sync::Arc::make_mut(&mut m.content).album = Some(Group {
+                key: Key::Inferred(source[0].id),
+                index: Some(i as u32),
+            });
+        }
+        assert_eq!(Layout::new(&inferred, true).owner(2), 2);
         std::sync::Arc::make_mut(&mut source[1].content).photo = None;
         assert!(!Layout::new(&source, true).hidden(1));
     }

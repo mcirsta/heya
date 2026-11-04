@@ -397,8 +397,8 @@ pub async fn run_with_chat_sources(
                         let result=db.set_reply(chat,message).await;
                         operation=Some(operation_reply(request,0,&result));result
                     }
-                    Command::Action(crate::message_actions::Command::React {chat,message,emoji,request})=>{
-                        let result=match fresh_id(){Ok(id)=>db.queue_operation(chat,message,chat,id,crate::message_actions::Operation::React(emoji)).await,Err(e)=>Err(e)};
+                    Command::Action(crate::message_actions::Command::React {chat,message,emoji,album,request})=>{
+                        let result=match fresh_id(){Ok(id) if album=>db.queue_album_reaction(chat,message,id,emoji).await,Ok(id)=>db.queue_operation(chat,message,chat,id,crate::message_actions::Operation::React(emoji)).await,Err(e)=>Err(e)};
                         operation=Some(operation_reply(request,1,&result));result
                     }
                     Command::Action(crate::message_actions::Command::Forward {chat,message,destination,request})=>{

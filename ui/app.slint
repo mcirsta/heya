@@ -220,6 +220,7 @@ export component AppWindow inherits Window {
     in-out property <length> action-y;
     in-out property <string> action-summary;
     in-out property <string> action-own-emoji;
+    in-out property <bool> action-album;
     in-out property <bool> action-source-actionable;
     in property <[string]> menu-reactions;
     callback prepare-quick-reactions(string);
@@ -1433,6 +1434,7 @@ export component AppWindow inherits Window {
             busy:root.action-pending;
             obscured:root.message-dialog!=0;
             starred:root.photo-viewer-message.starred;pinned:root.photo-viewer-message.pinned;
+            reactions:root.photo-viewer-message.reactions;reaction-status:root.photo-viewer-message.reaction-status;
             action-status:root.action-error!="" ? root.action-error : root.photo-viewer-message.operation-status;
             action(which)=>{root.message-action(root.photo-viewer-id,which,root.width - 280px,76px);}
             copy => { root.copy-photo(root.photo-viewer-id); }

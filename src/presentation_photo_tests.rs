@@ -387,7 +387,12 @@ fn check_grid() {
                 sender: "Sample".into(),
                 text: "An album reply".into(),
             });
-            content.reaction_summary = "❤️ 2".into();
+            // The first photo's own reaction belongs to its tile; the card
+            // shows reactions to the album message.
+            content.reaction_summary = "😮".into();
+            for message in messages.iter_mut() {
+                Arc::make_mut(&mut message.content).album_reaction_summary = "❤️ 2".into();
+            }
         }
         view.transcript = view
             .messages
@@ -415,6 +420,18 @@ fn check_grid() {
                     );
                     assert_eq!(row.message.quote_text, "An album reply");
                     assert_eq!(row.message.reactions, "❤️ 2");
+                    assert!(row.message.album_target);
+                    assert_eq!(row.message.album_photos.row_data(0).unwrap().reaction, "😮");
+                    let item = ElementHandle::find_by_element_type_name(&ui, "TimelineItem")
+                        .find(|e| e.id().as_deref() != Some("AppWindow::measure-row"))
+                        .unwrap();
+                    let tile = item
+                        .query_descendants()
+                        .match_type_name("PhotoTile")
+                        .find_first()
+                        .unwrap();
+                    let badge = child(&item, "PhotoGrid::reaction");
+                    contains(&tile, &badge);
                 }
                 assert_eq!(
                     demand.borrow().visible,

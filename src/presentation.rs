@@ -136,6 +136,7 @@ pub(crate) fn message_row(
         reactions: message.content.reaction_summary.as_str().into(),
         own_reaction: message.content.own_reaction.as_str().into(),
         reaction_status: message.content.reaction_status.as_str().into(),
+        album_target: false,
         id: message.id,
         sender: message.sender.as_str().into(),
         sender_id: message.sender_id.as_str().into(),
@@ -1334,6 +1335,7 @@ mod tests {
         crate::presentation_hover_tests::check_ui();
         crate::presentation_hover_tests::check_action_flows();
         crate::presentation_hover_tests::check_forward_chooser();
+        crate::presentation_album_action_tests::check_ui();
         crate::presentation_menu_tests::check_ui();
         crate::presentation_actions::viewer_tests::check_ui();
         crate::presentation_message_controls::tests::check_ui();

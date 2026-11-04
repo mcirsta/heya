@@ -220,6 +220,52 @@ pub(crate) fn check_ui() {
     finish(&ui, 1, true);
     assert_eq!(ui.get_message_dialog(), 0);
     assert_eq!(ui.get_photo_viewer_id(), PHOTO);
+    // The photo's own reactions sit on its corner and reopen the picker for it.
+    let mut reacted = row.clone();
+    reacted.reactions = "👏  ❤️ 2".into();
+    open(&ui, &reacted);
+    let viewer = ElementHandle::find_by_element_type_name(&ui, "PhotoViewer")
+        .next()
+        .unwrap();
+    let find = |id: &str| {
+        viewer
+            .query_descendants()
+            .match_id(id)
+            .find_first()
+            .unwrap_or_else(|| panic!("missing {id}"))
+    };
+    let (pill, stage, photo) = (
+        find("PhotoViewer::reaction"),
+        find("PhotoViewer::stage"),
+        find("PhotoViewer::photo-image"),
+    );
+    let (p, s) = (pill.absolute_position(), pill.size());
+    let (st, ss) = (stage.absolute_position(), stage.size());
+    assert!(
+        p.x >= st.x
+            && p.y >= st.y
+            && p.x + s.width <= st.x + ss.width
+            && p.y + s.height <= st.y + ss.height
+    );
+    assert!(
+        p.x >= photo.absolute_position().x,
+        "the pill starts inside the photo"
+    );
+    activate(&ui, "Photo reactions");
+    assert_eq!(ui.get_message_dialog(), 1);
+    assert!(
+        !ui.get_action_album(),
+        "the viewer reacts to the single photo"
+    );
+    ui.invoke_close_message_actions();
+    open(&ui, &row);
+    assert!(
+        viewer
+            .query_descendants()
+            .match_id("PhotoViewer::reaction")
+            .find_first()
+            .is_none()
+    );
     activate(&ui, "Forward photo");
     assert_eq!(ui.get_message_dialog(), 2);
     assert!(matches!(

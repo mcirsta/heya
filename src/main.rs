@@ -65,6 +65,8 @@ mod preferences;
 mod presence;
 mod presentation;
 mod presentation_actions;
+#[cfg(test)]
+mod presentation_album_action_tests;
 mod presentation_attachments;
 mod presentation_audio;
 mod presentation_avatars;
