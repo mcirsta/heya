@@ -37,6 +37,24 @@ fn key(ui: &AppWindow, key: slint::SharedString) {
         .dispatch_event(WindowEvent::KeyReleased { text: key });
     slint::platform::update_timers_and_animations();
 }
+fn line_boundary(ui: &AppWindow, end: bool) {
+    use slint::platform::Key;
+    if cfg!(target_os = "macos") {
+        // Slint maps macOS Command to Control; Home/End only scroll there.
+        ui.window().dispatch_event(WindowEvent::KeyPressed {
+            text: Key::Control.into(),
+        });
+        key(
+            ui,
+            if end { Key::RightArrow } else { Key::LeftArrow }.into(),
+        );
+        ui.window().dispatch_event(WindowEvent::KeyReleased {
+            text: Key::Control.into(),
+        });
+    } else {
+        key(ui, if end { Key::End } else { Key::Home }.into());
+    }
+}
 fn label(ui: &AppWindow, name: &str) -> ElementHandle {
     ElementHandle::find_by_accessible_label(ui, name)
         .next()
@@ -230,14 +248,14 @@ pub(crate) fn check_ui() {
     ] {
         use slint::platform::Key;
         click(&ui, hit);
-        key(&ui, if reverse { Key::End } else { Key::Home }.into());
+        line_boundary(&ui, reverse);
         ui.window().dispatch_event(WindowEvent::KeyPressed {
             text: Key::Shift.into(),
         });
         if multiline {
             key(&ui, Key::UpArrow.into());
         }
-        key(&ui, if reverse { Key::Home } else { Key::End }.into());
+        line_boundary(&ui, !reverse);
         ui.window().dispatch_event(WindowEvent::KeyReleased {
             text: Key::Shift.into(),
         });
