@@ -75,7 +75,7 @@ def main():
             marker = profile / "session.db"
             marker.write_bytes(b"Synthetic unopened session")
             settings = Path(os.environ["XDG_CONFIG_HOME"]) / "heya" / "settings.json"
-            settings.parent.mkdir(parents=True)
+            settings.parent.mkdir(parents=True, exist_ok=True)
             settings.write_text(json.dumps({"connect_automatically": False}))
         args = [sys.argv[1], "--size", "800x600"]
         if mode == "demo":

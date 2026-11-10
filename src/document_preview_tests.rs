@@ -45,6 +45,7 @@ async fn video_posters_keep_aspect_upgrade_once_and_never_populate_the_original_
     let mut r = record("synthetic-video-poster");
     r.thumbnail = tiny();
     r.content.video = Some(crate::message_content::Video {
+        round: false,
         width: 720,
         height: 1280,
         seconds: Some(10),
@@ -139,6 +140,7 @@ async fn a_new_verified_original_retries_a_failed_poster_once_without_a_retry_lo
     let (_temp, db) = fixture();
     let mut r = record("synthetic-video-retry");
     r.content.video = Some(crate::message_content::Video {
+        round: false,
         width: 1280,
         height: 720,
         seconds: Some(4),

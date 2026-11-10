@@ -7,7 +7,6 @@ use whatsapp_rust::{
 
 pub const PHONE: &str = "Open WhatsApp on your phone to view this message.";
 pub const CODE: &str = "One-time code. Open WhatsApp on your phone to view it.";
-pub const LIVE: &str = "Live location. Open WhatsApp on your phone to view it.";
 
 pub fn content(message: &wa::Message) -> Option<(String, Content)> {
     let text = if message.placeholder_message.is_set() {
@@ -18,8 +17,6 @@ pub fn content(message: &wa::Message) -> Option<(String, Content)> {
         } else {
             PHONE
         }
-    } else if message.live_location_message.is_set() {
-        LIVE
     } else if message.message_history_notice.is_set() {
         return Some((
             Notice::HistoryShared.description().into(),

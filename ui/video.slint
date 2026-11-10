@@ -69,11 +69,13 @@ export component VideoTile inherits Rectangle {
     in property <image> poster;
     in property <string> duration;
     in property <bool> expanded;
+    in property <bool> round;
     callback control(int,float);
     private property <bool> active:VideoPlayback.id==root.message-id;
     private property <int> state:root.active ? VideoPlayback.state : 0;
-    border-radius:6px;clip:true;background:#182229;
-    Image {width:parent.width;height:parent.height;image-fit:contain;
+    border-radius:root.round ? 0px : 6px;clip:!root.round;background:transparent;
+    surface:=Rectangle {x:0px;y:0px;width:parent.width;height:root.round ? parent.width : parent.height;border-radius:root.round ? self.width/2 : 6px;clip:true;background:#182229;
+    Image {width:parent.width;height:parent.height;image-fit:root.round ? cover : contain;
         source:root.active && VideoPlayback.frame.width>0 ? VideoPlayback.frame : root.poster;
     }
     if root.state!=2 && root.state!=3:Rectangle {
@@ -81,18 +83,19 @@ export component VideoTile inherits Rectangle {
         Image {x:13px;y:13px;width:22px;height:22px;source:root.state==1 ? @image-url("icons/photo-loading.svg") : root.state==4 ? @image-url("icons/photo-retry.svg") : @image-url("icons/play.svg");colorize:white;}
     }
     ContentTarget {
-        width:parent.width;height:parent.height - (root.state==2 || root.state==3 ? 38px : 0px);
+        width:parent.width;height:parent.height - (!root.round && (root.state==2 || root.state==3) ? 38px : 0px);
         label:root.state==1 ? @tr("Cancel video loading") : root.state==2 ? @tr("Pause video") : root.state==4 ? VideoPlayback.error : @tr("Play video");
         activated=>{root.control(root.state==1 ? 3 : 0,0);}
     }
-    if root.state==2 || root.state==3:VideoControls {
-        y:parent.height - self.height;width:parent.width;expanded:root.expanded;
-        control(action,value)=>{root.control(action,value);}
-    }
     if root.state!=2 && root.state!=3:Text {
-        x:8px;y:parent.height - 25px;width:parent.width - 16px;height:21px;
+        x:root.round ? 24px : 8px;y:parent.height - (root.round ? 36px : 25px);width:parent.width - (root.round ? 48px : 16px);height:21px;
         text:root.state==1 ? @tr("Loading…") : root.state==4 ? @tr("Unable to play · retry") : root.duration;
-        color:white;font-size:11px;vertical-alignment:center;overflow:elide;
+        color:white;font-size:11px;vertical-alignment:center;horizontal-alignment:root.round ? center : left;overflow:elide;
+    }
+    }
+    if root.state==2 || root.state==3:VideoControls {
+        y:root.round ? surface.height + 4px : parent.height - self.height;width:parent.width;expanded:root.expanded;border-radius:root.round ? 8px : 0px;
+        control(action,value)=>{root.control(action,value);}
     }
 }
 

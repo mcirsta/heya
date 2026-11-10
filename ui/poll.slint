@@ -1,0 +1,189 @@
+import { Theme } from "theme.slint";
+import { Avatar, IconButton } from "components.slint";
+import { ContentTarget } from "message-content.slint";
+import { SoftButton } from "settings.slint";
+import { ScrollView, ListView, CheckBox } from "std-widgets.slint";
+
+export struct PollOptionRow {label:string,count:int,selected:bool}
+export struct PollDraftOption {text:string}
+export struct PollVoterRow {jid:string,name:string,initials:string,detail:string}
+
+export component PollCard inherits Rectangle {
+    in property <string> question;
+    in property <string> hint;
+    in property <string> status;
+    in property <string> total;
+    in property <[PollOptionRow]> options;
+    in property <bool> multiple;
+    in property <bool> can-vote;
+    in property <bool> can-view;
+    in property <bool> busy;
+    in property <int> voters;
+    callback vote(int);
+    callback results();
+    // Fixed text probes give the virtual timeline synchronous intrinsic sizes;
+    // a repeater's delegates do not exist during its first measurement.
+    p0:=Text {visible:false;width:root.width - 96px;text:root.options.length>0 ? root.options[0].label : "";font-size:15px;wrap:word-wrap;}
+    p1:=Text {visible:false;width:root.width - 96px;text:root.options.length>1 ? root.options[1].label : "";font-size:15px;wrap:word-wrap;}
+    p2:=Text {visible:false;width:root.width - 96px;text:root.options.length>2 ? root.options[2].label : "";font-size:15px;wrap:word-wrap;}
+    p3:=Text {visible:false;width:root.width - 96px;text:root.options.length>3 ? root.options[3].label : "";font-size:15px;wrap:word-wrap;}
+    p4:=Text {visible:false;width:root.width - 96px;text:root.options.length>4 ? root.options[4].label : "";font-size:15px;wrap:word-wrap;}
+    p5:=Text {visible:false;width:root.width - 96px;text:root.options.length>5 ? root.options[5].label : "";font-size:15px;wrap:word-wrap;}
+    p6:=Text {visible:false;width:root.width - 96px;text:root.options.length>6 ? root.options[6].label : "";font-size:15px;wrap:word-wrap;}
+    p7:=Text {visible:false;width:root.width - 96px;text:root.options.length>7 ? root.options[7].label : "";font-size:15px;wrap:word-wrap;}
+    p8:=Text {visible:false;width:root.width - 96px;text:root.options.length>8 ? root.options[8].label : "";font-size:15px;wrap:word-wrap;}
+    p9:=Text {visible:false;width:root.width - 96px;text:root.options.length>9 ? root.options[9].label : "";font-size:15px;wrap:word-wrap;}
+    p10:=Text {visible:false;width:root.width - 96px;text:root.options.length>10 ? root.options[10].label : "";font-size:15px;wrap:word-wrap;}
+    p11:=Text {visible:false;width:root.width - 96px;text:root.options.length>11 ? root.options[11].label : "";font-size:15px;wrap:word-wrap;}
+    private property <[length]> heights:[root.options.length>0 ? max(52px,p0.preferred-height+28px)+8px : 0px, root.options.length>1 ? max(52px,p1.preferred-height+28px)+8px : 0px, root.options.length>2 ? max(52px,p2.preferred-height+28px)+8px : 0px, root.options.length>3 ? max(52px,p3.preferred-height+28px)+8px : 0px, root.options.length>4 ? max(52px,p4.preferred-height+28px)+8px : 0px, root.options.length>5 ? max(52px,p5.preferred-height+28px)+8px : 0px, root.options.length>6 ? max(52px,p6.preferred-height+28px)+8px : 0px, root.options.length>7 ? max(52px,p7.preferred-height+28px)+8px : 0px, root.options.length>8 ? max(52px,p8.preferred-height+28px)+8px : 0px, root.options.length>9 ? max(52px,p9.preferred-height+28px)+8px : 0px, root.options.length>10 ? max(52px,p10.preferred-height+28px)+8px : 0px, root.options.length>11 ? max(52px,p11.preferred-height+28px)+8px : 0px];
+    pure function offset(index:int)->length {return (index>0 ? root.heights[0] : 0px) + (index>1 ? root.heights[1] : 0px) + (index>2 ? root.heights[2] : 0px) + (index>3 ? root.heights[3] : 0px) + (index>4 ? root.heights[4] : 0px) + (index>5 ? root.heights[5] : 0px) + (index>6 ? root.heights[6] : 0px) + (index>7 ? root.heights[7] : 0px) + (index>8 ? root.heights[8] : 0px) + (index>9 ? root.heights[9] : 0px) + (index>10 ? root.heights[10] : 0px) + (index>11 ? root.heights[11] : 0px);}
+    private property <length> options-top:12px+title.preferred-height+8px+hint.preferred-height+8px;
+    private property <length> status-top:root.options-top+root.offset(root.options.length);
+    private property <length> status-space:root.status!="" ? status.preferred-height+8px : 0px;
+    preferred-height:root.status-top+root.status-space+1px+8px+36px+12px;
+    height:self.preferred-height;
+    title:=TextInput {x:12px;y:12px;width:root.width - 24px;height:self.preferred-height;text:root.question;read-only:true;single-line:false;wrap:word-wrap;color:Theme.text;font-size:17px;font-weight:600;accessible-label:@tr("Poll question");}
+    hint:=Text {x:12px;y:title.y+title.height+8px;width:root.width - 24px;height:self.preferred-height;text:root.hint;color:Theme.secondary;font-size:12px;}
+    for option[index] in root.options:row:=Rectangle {
+        x:12px;y:root.options-top+root.offset(index);width:root.width - 24px;height:root.heights[index]-8px;
+        Rectangle {x:1px;y:10px;width:20px;height:20px;border-radius:root.multiple ? 4px : 10px;border-width:option.selected ? 0px : 1.5px;border-color:Theme.secondary;background:option.selected ? Theme.accent : transparent;
+            if option.selected:Image {x:2px;y:2px;width:16px;height:16px;source:@image-url("icons/check.svg");colorize:Theme.on-accent;}
+        }
+        Text {x:34px;y:6px;width:parent.width - 72px;text:option.label;font-size:15px;color:Theme.text;wrap:word-wrap;}
+        Text {x:parent.width - 32px;y:6px;width:30px;height:24px;text:option.count;color:Theme.secondary;font-size:13px;horizontal-alignment:right;vertical-alignment:center;}
+        Rectangle {x:34px;y:parent.height - 10px;width:parent.width - 36px;height:4px;border-radius:2px;background:Theme.text.with-alpha(0.1);
+            Rectangle {x:0px;y:0px;width:parent.width * clamp(option.count / max(1,root.voters),0,1);height:parent.height;border-radius:2px;background:Theme.accent;}
+        }
+        ContentTarget {label:option.label;enabled:root.can-vote && !root.busy;activated=>{root.vote(index);}}
+    }
+    status:=Text {x:12px;y:root.status-top;width:root.width - 24px;height:root.status-space;text:root.status;visible:root.status!="";color:Theme.secondary;font-size:12px;wrap:word-wrap;}
+    Rectangle {x:12px;y:root.status-top+root.status-space;width:root.width - 24px;height:1px;background:Theme.outline;}
+    Rectangle {x:12px;y:root.status-top+root.status-space+9px;width:root.width - 24px;height:36px;
+        Image {x:0px;y:9px;width:18px;height:18px;source:@image-url("icons/poll.svg");colorize:Theme.link;}
+        Text {x:26px;y:0px;width:parent.width - 26px;height:18px;text:@tr("View votes");font-size:14px;color:Theme.link;}
+        Text {x:26px;y:19px;width:parent.width - 26px;height:17px;text:root.total;font-size:11px;color:Theme.secondary;}
+        ContentTarget {label:@tr("View votes");enabled:root.can-view;activated=>{root.results();}}
+    }
+
+}
+
+export component CreatePollDialog inherits Rectangle {
+    in-out property <string> question;
+    in-out property <bool> multiple;
+    in property <[PollDraftOption]> options;
+    in property <string> recipient;
+    in property <bool> busy;
+    in property <bool> available;
+    in property <string> error;
+    callback add();callback remove(int);callback send();callback close();
+    background:#0007;
+    TouchArea {clicked=>{if !root.busy {root.close();}}}
+    FocusScope {
+        init=>{self.focus();}
+        key-pressed(e)=>{if e.text==Key.Escape {if !root.busy {root.close();}return accept;}return reject;}
+        panel:=Rectangle {
+            x:(parent.width - self.width)/2;y:(parent.height - self.height)/2;width:min(500px,parent.width - 32px);height:min(700px,parent.height - 32px);
+            background:Theme.panel;border-radius:16px;drop-shadow-blur:24px;drop-shadow-color:Theme.modal-shadow;
+            TouchArea {}
+            VerticalLayout {
+                padding:0px;spacing:0px;
+                Rectangle {height:64px;
+                    Text {x:24px;y:0px;width:parent.width - 80px;height:parent.height;text:@tr("Create poll");font-size:20px;font-weight:600;color:Theme.text;vertical-alignment:center;}
+                    IconButton {x:parent.width - 48px;y:14px;icon:@image-url("icons/close.svg");label:@tr("Close poll creation");enabled:!root.busy;activated=>{root.close();}}
+                }
+                Text {height:34px;text:@tr("Send to {}",root.recipient);font-size:12px;color:Theme.secondary;horizontal-alignment:center;overflow:elide;}
+                ScrollView {
+                    vertical-stretch:1;horizontal-scrollbar-policy:always-off;
+                    VerticalLayout {
+                        padding:24px;spacing:12px;alignment:start;
+                        Text {text:@tr("Question");color:Theme.accent;font-size:14px;font-weight:600;}
+                        Rectangle {height:72px;background:Theme.surface;border-radius:10px;
+                            Text {x:12px;y:12px;width:parent.width - 24px;text:@tr("Ask a question");font-size:15px;color:Theme.dim;visible:root.question=="";}
+                            question-field:=Flickable {x:12px;y:10px;width:parent.width - 24px;height:52px;content-width:self.width;content-height:max(self.height,question.preferred-height);
+                                question:=TextInput {x:0px;y:0px;width:parent.width;height:max(parent.height,self.preferred-height);text<=>root.question;font-size:15px;color:Theme.text;single-line:false;wrap:word-wrap;enabled:!root.busy;accessible-label:@tr("Poll question");page-height:question-field.height;
+                                    cursor-position-changed(pos)=>{
+                                        if pos.y+question-field.content-y<0px {question-field.content-y=clamp(-pos.y,question-field.height - self.height,0px);}
+                                        else if pos.y+20px+question-field.content-y>question-field.height {question-field.content-y=clamp(question-field.height - pos.y - 20px,question-field.height - self.height,0px);}
+                                    }
+                                }
+                            }
+                        }
+                        Text {text:@tr("Options");color:Theme.accent;font-size:14px;font-weight:600;}
+                        for option[index] in root.options:Rectangle {
+                            height:46px;background:Theme.surface;border-radius:8px;
+                            Text {x:12px;y:0px;width:parent.width - 58px;height:parent.height;text:@tr("Option {}",index+1);font-size:14px;color:Theme.dim;vertical-alignment:center;visible:option.text=="";}
+                            TextInput {x:12px;y:0px;width:parent.width - 58px;height:parent.height;text<=>option.text;font-size:14px;color:Theme.text;single-line:true;vertical-alignment:center;enabled:!root.busy;accessible-label:@tr("Poll option {}",index+1);}
+                            if root.options.length>2:IconButton {x:parent.width - 40px;y:5px;icon:@image-url("icons/close.svg");icon-size:14px;label:@tr("Remove option {}",index+1);enabled:!root.busy;activated=>{root.remove(index);}}
+                        }
+                        if root.options.length<12:SoftButton {text:@tr("Add option");enabled:!root.busy;activated=>{root.add();}}
+                        CheckBox {text:@tr("Allow multiple answers");checked<=>root.multiple;enabled:!root.busy;}
+                    }
+                }
+                if root.error!="" || !root.available:Rectangle {height:status.preferred-height + 20px;
+                    status:=Text {x:24px;y:10px;width:parent.width - 48px;text:root.error!="" ? root.error : @tr("Connect to send this poll.");wrap:word-wrap;font-size:12px;color:Theme.secondary;}
+                }
+                Rectangle {height:1px;background:Theme.outline;}
+                Rectangle {height:72px;
+                    Text {x:24px;y:0px;width:parent.width - 164px;height:parent.height;text:root.busy ? @tr("Saving…") : @tr("{} options",root.options.length);font-size:13px;color:Theme.secondary;vertical-alignment:center;}
+                    SoftButton {x:parent.width - 128px;y:21px;width:104px;text:@tr("Send");enabled:!root.busy && root.available;activated=>{root.send();}}
+                }
+            }
+        }
+    }
+}
+
+export component PollResultsDialog inherits Rectangle {
+    in property <string> question;
+    in property <[PollOptionRow]> options;
+    in property <[PollVoterRow]> voters;
+    in property <int> selected;
+    in property <int> avatar-revision;
+    in property <bool> busy;
+    in property <bool> more;
+    in property <string> error;
+    callback select(int);callback load-more();callback close();
+    pure callback avatar(string,int)->image;
+    callback avatar-range(int,int);
+    background:#0007;
+    TouchArea {clicked=>{root.close();}}
+    FocusScope {
+        init=>{self.focus();}key-pressed(e)=>{if e.text==Key.Escape{root.close();return accept;}return reject;}
+        panel:=Rectangle {
+            x:(parent.width - self.width)/2;y:(parent.height - self.height)/2;width:min(520px,parent.width - 32px);height:min(680px,parent.height - 32px);
+            background:Theme.panel;border-radius:16px;drop-shadow-blur:24px;drop-shadow-color:Theme.modal-shadow;
+            TouchArea {}
+            VerticalLayout {
+                padding:0px;spacing:0px;
+                Rectangle {height:64px;
+                    Text {x:24px;y:0px;width:parent.width - 80px;height:parent.height;text:@tr("Poll votes");font-size:20px;font-weight:600;color:Theme.text;vertical-alignment:center;}
+                    IconButton {x:parent.width - 48px;y:14px;icon:@image-url("icons/close.svg");label:@tr("Close poll votes");activated=>{root.close();}}
+                }
+                Rectangle {height:min(90px,question.preferred-height+20px);
+                    question:=Text {x:24px;y:10px;width:parent.width - 48px;text:root.question;color:Theme.text;font-size:16px;font-weight:600;wrap:word-wrap;height:parent.height - 20px;overflow:elide;}
+                }
+                tabs:=ScrollView {height:52px;vertical-scrollbar-policy:always-off;horizontal-scrollbar-policy:always-on;content-width:root.options.length * 150px;content-height:38px;
+                    for option[index] in root.options:Rectangle {
+                        x:12px + index * 150px;y:3px;width:142px;height:32px;border-radius:16px;background:root.selected==index ? Theme.selected : Theme.surface;
+                        Text {x:10px;y:0px;width:parent.width - 20px;height:parent.height;text:option.label + " (" + option.count + ")";font-size:12px;color:Theme.text;overflow:elide;vertical-alignment:center;}
+                        ContentTarget {label:option.label;enabled:!root.busy;activated=>{root.select(index);}}
+                    }
+                }
+                list:=ListView {
+                    vertical-stretch:1;
+                    private property <int> first:max(0,floor(-self.content-y/66px));private property <int> count:ceil(self.visible-height/66px)+1;
+                    init=>{root.avatar-range(self.first,self.count);}changed first=>{root.avatar-range(self.first,self.count);}changed count=>{root.avatar-range(self.first,self.count);}
+                    for voter in root.voters:Rectangle {
+                        height:66px;
+                        Avatar {x:24px;y:9px;width:44px;height:44px;initials:voter.initials;picture:root.avatar(voter.jid,root.avatar-revision);tint:Theme.accent;}
+                        Text {x:84px;y:10px;width:parent.width - 108px;height:25px;text:voter.name;color:Theme.text;font-size:15px;overflow:elide;}
+                        Text {x:84px;y:37px;width:parent.width - 108px;height:18px;text:voter.detail;color:Theme.secondary;font-size:12px;overflow:elide;}
+                    }
+                }
+                if root.voters.length==0:Text {text:root.busy ? @tr("Loading votes…") : @tr("No votes for this option");font-size:14px;color:Theme.secondary;horizontal-alignment:center;vertical-stretch:0;}
+                if root.error!="":Text {text:root.error;font-size:12px;color:Theme.secondary;wrap:word-wrap;vertical-stretch:0;}
+                if root.more:SoftButton {text:@tr("Show more voters");enabled:!root.busy;activated=>{root.load-more();}}
+                Rectangle {height:16px;}
+            }
+        }
+    }
+}

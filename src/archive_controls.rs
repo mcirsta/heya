@@ -119,6 +119,7 @@ pub(super) fn hide_if_needed(db: &Connection, chat: i32, sender: &str, wire: &st
         db.execute("DELETE FROM reply_drafts WHERE message_id IN (SELECT id FROM messages WHERE chat_id=?1 AND sender=?2 AND wire_id=?3)",params![chat,sender,wire])?;
         db.execute("UPDATE messages SET visible=0,body='',raw=X'',content='',thumbnail=X'',unread=0,seen=1,delivery=CASE WHEN delivery='queued' THEN 'failed' ELSE delivery END WHERE chat_id=?1 AND sender=?2 AND wire_id=?3",params![chat,sender,wire])?;
         db.execute("UPDATE mutations SET body=NULL,raw=X'',deleted=1 WHERE chat_id=?1 AND sender=?2 AND wire_id=?3",params![chat,sender,wire])?;
+        super::polls::cleanup(db)?;
         reads::recount(db, chat)?;
     }
     Ok(())

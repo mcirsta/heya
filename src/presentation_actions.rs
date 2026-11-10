@@ -11,6 +11,7 @@ use std::{rc::Rc, sync::Arc};
 const MENU: i32 = 3;
 const COPY: i32 = 4;
 const DOWNLOAD: i32 = 5;
+const COPY_SELECTION: i32 = 20;
 #[cfg(test)]
 #[path = "presentation_viewer_action_tests.rs"]
 pub(crate) mod viewer_tests;
@@ -36,6 +37,8 @@ pub(crate) fn source_row(ui: &AppWindow, id: i32) -> Option<crate::MessageRow> {
 pub fn bind(ui: &AppWindow, submit: impl Fn(Command) -> bool + 'static) {
     crate::presentation_emoji::bind(ui);
     let submit = Rc::new(submit);
+    crate::presentation_contact_sending::bind(ui, submit.clone());
+    crate::presentation_polls::bind(ui, submit.clone());
     let selection = crate::presentation_message_controls::bind(ui, submit.clone());
     ui.on_search_message_actions({
         let weak = ui.as_weak();
@@ -186,6 +189,10 @@ pub fn bind(ui: &AppWindow, submit: impl Fn(Command) -> bool + 'static) {
                     }
                 }
                 2 => {
+                    if row.has_poll {
+                        ui.invoke_show_error("Polls cannot be forwarded.".into());
+                        return;
+                    }
                     ui.set_forward_query("".into());
                     ui.set_action_destinations(ModelRc::default());
                     ui.set_action_all_destinations(ModelRc::default());
@@ -193,6 +200,22 @@ pub fn bind(ui: &AppWindow, submit: impl Fn(Command) -> bool + 'static) {
                     request(&ui, &submit, |request| Command::Destinations { request });
                 }
                 MENU | 17 => {
+                    // Snapshot before the menu takes focus. Retain Slint's byte
+                    // offsets while selecting; only copy the substring on open.
+                    let selection = ui.get_message_text_selection();
+                    let selected = if action == 17
+                        && selection.focused
+                        && ui.get_message_text_selection_chat() == ui.get_selected_id()
+                        && selection.message == row.id
+                        && selection.text == row.text
+                    {
+                        let start = selection.anchor.min(selection.cursor).max(0) as usize;
+                        let end = selection.anchor.max(selection.cursor).max(0) as usize;
+                        selection.text.get(start..end).unwrap_or_default()
+                    } else {
+                        ""
+                    };
+                    ui.set_action_selected_text(selected.into());
                     ui.set_action_context_menu(action == 17);
                     ui.invoke_prepare_quick_reactions(ui.get_action_own_emoji());
                     ui.set_message_menu_entries(ModelRc::new(VecModel::from(menu_entries(
@@ -200,6 +223,7 @@ pub fn bind(ui: &AppWindow, submit: impl Fn(Command) -> bool + 'static) {
                     ))));
                     ui.set_message_menu_selection(first_menu_selection(&ui));
                     ui.set_message_dialog(MENU);
+                    ui.invoke_show_message_menu();
                 }
                 _ => {}
             }
@@ -231,8 +255,12 @@ pub fn bind(ui: &AppWindow, submit: impl Fn(Command) -> bool + 'static) {
                 let id = ui.get_action_message();
                 ui.invoke_close_message_actions();
                 ui.invoke_copy_photo(id);
-            } else if action == COPY {
-                ui.invoke_copy_value(row.text.clone());
+            } else if action == COPY || action == COPY_SELECTION {
+                ui.invoke_copy_value(if action == COPY_SELECTION {
+                    ui.get_action_selected_text()
+                } else {
+                    row.text.clone()
+                });
                 ui.invoke_close_message_actions();
             } else if action == DOWNLOAD {
                 let chat = ui.get_action_chat();
@@ -381,6 +409,9 @@ fn menu_entries(ui: &AppWindow, row: &crate::MessageRow) -> Vec<crate::ui::Messa
             separator,
         });
     };
+    if ui.get_action_context_menu() && !ui.get_action_selected_text().is_empty() {
+        add(COPY_SELECTION, "Copy selection", true, "", false);
+    }
     if !row.actionable {
         add(
             14,
@@ -429,6 +460,7 @@ fn menu_entries(ui: &AppWindow, row: &crate::MessageRow) -> Vec<crate::ui::Messa
         let now = chrono::Utc::now().timestamp();
         let stamp = row.sent_at.parse().unwrap_or(0);
         let editable = row.outgoing
+            && !row.has_poll
             && !row.has_attachment
             && row.actions.row_count() == 0
             && crate::message_actions::within_window(
@@ -449,7 +481,9 @@ fn menu_entries(ui: &AppWindow, row: &crate::MessageRow) -> Vec<crate::ui::Messa
             "Reply is unavailable in this conversation",
             false,
         );
-        add(2, "Forward", idle && online, "Connect to forward", false);
+        if !row.has_poll {
+            add(2, "Forward", idle && online, "Connect to forward", false);
+        }
         add(
             11,
             "Select",
@@ -458,7 +492,7 @@ fn menu_entries(ui: &AppWindow, row: &crate::MessageRow) -> Vec<crate::ui::Messa
             false,
         );
         if !row.text.is_empty() {
-            add(COPY, "Copy text", true, "", false);
+            add(COPY, "Copy message", true, "", false);
         }
         if editable {
             add(
@@ -551,17 +585,20 @@ fn menu_entries(ui: &AppWindow, row: &crate::MessageRow) -> Vec<crate::ui::Messa
             if row.has_photo || row.has_document {
                 "Copy caption"
             } else {
-                "Copy"
+                "Copy message"
             },
             true,
             "",
             false,
         );
     }
-    add(2, "Forward", idle && online, "Connect to forward", false);
+    if !row.has_poll {
+        add(2, "Forward", idle && online, "Connect to forward", false);
+    }
     let stamp = row.sent_at.parse().unwrap_or(0);
     let now = chrono::Utc::now().timestamp();
     if row.outgoing
+        && !row.has_poll
         && !row.has_attachment
         && row.actions.row_count() == 0
         && crate::message_actions::within_window(stamp, now, crate::message_actions::EDIT_WINDOW)
@@ -690,8 +727,8 @@ pub(crate) fn request(
     } else {
         ui.set_action_error("Heya is busy. Please try again.".into());
         if ui.get_message_dialog() == MENU {
-            ui.set_notice(ui.get_action_error());
             ui.invoke_close_message_actions();
+            ui.invoke_show_error(ui.get_action_error());
         }
     }
 }
@@ -713,6 +750,12 @@ fn search(ui: &AppWindow, query: &str) {
     }
 }
 pub fn publish(ui: &AppWindow, result: Option<&OperationReply>, destinations: &Arc<[Destination]>) {
+    if result.is_some_and(|r| crate::presentation_polls::publish(ui, r)) {
+        return;
+    }
+    if result.is_some_and(|r| crate::presentation_contact_sending::publish(ui, r)) {
+        return;
+    }
     if let Some(result) = result.filter(|r| r.kind == 7 && r.request == ui.get_action_request()) {
         ui.set_action_pending(false);
         if ui.get_message_dialog() == 8 {
@@ -747,9 +790,11 @@ pub fn publish(ui: &AppWindow, result: Option<&OperationReply>, destinations: &A
     ui.set_action_pending(false);
     if !result.saved {
         ui.set_action_error(result.error.as_str().into());
-        ui.set_notice(result.error.as_str().into());
-        if ui.get_message_dialog() == MENU {
-            ui.invoke_close_message_actions();
+        if ui.get_message_dialog() == 0 || ui.get_message_dialog() == MENU {
+            if ui.get_message_dialog() == MENU {
+                ui.invoke_close_message_actions();
+            }
+            ui.invoke_show_error(result.error.as_str().into());
         }
         return;
     }
@@ -773,27 +818,5 @@ pub fn publish(ui: &AppWindow, result: Option<&OperationReply>, destinations: &A
         if matches!(result.kind, 2 | 6) && ui.get_selection_active() {
             ui.invoke_selection_control(0);
         }
-        ui.set_notice(
-            if ui.get_demo_mode() {
-                "Updated locally in the demo"
-            } else if result.kind == 1 {
-                // The message already shows its durable sending/failure state.
-                // Saving to the outbox isn't a connection or delivery notice.
-                ""
-            } else if result.kind == 2 {
-                "Forward queued"
-            } else if result.kind == 4 {
-                "Edit queued"
-            } else if result.kind == 5 {
-                "Delete queued"
-            } else if result.kind == 8 {
-                "Star change queued"
-            } else if result.kind == 9 {
-                "Pin change queued"
-            } else {
-                "Deleted for you · linked-device sync queued"
-            }
-            .into(),
-        );
     }
 }

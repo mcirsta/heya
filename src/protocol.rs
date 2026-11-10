@@ -182,6 +182,7 @@ fn requested(requests: &watch::Receiver<Request>) -> bool {
 }
 
 pub struct LiveServices {
+    pub own_account_sources: watch::Sender<crate::own_account::Sources>,
     pub chat_sources: watch::Sender<crate::chat_management::Sources>,
     pub preferences: watch::Receiver<crate::preferences::Preferences>,
     pub avatar_demand: watch::Receiver<Vec<crate::avatars::Target>>,
@@ -198,6 +199,7 @@ pub struct LiveServices {
 
 impl LiveServices {
     fn clear_sources(&self) {
+        self.own_account_sources.send_replace(None);
         self.audio_sources.send_replace(None);
         self.video_sources.send_replace(None);
         self.call_sources.send_replace(None);
@@ -250,6 +252,7 @@ async fn connect(
         .map_err(archive_failure)?;
     let bot = Bot::builder()
         .with_backend(store)
+        .with_presence_policy(whatsapp_rust::PresencePolicy::Manual)
         .with_device_props(whatsapp_rust::wacore::store::DevicePropsOverride::new().with_os("Heya"))
         .with_transport_factory(crate::protocol_timing::TimedDials(
             whatsapp_rust::transport::TokioWebSocketTransportFactory::new(),
@@ -416,6 +419,7 @@ async fn connect(
                         if phase == Phase::Connected && let Err(error) = protocol_messages::verify_identity(&bot.client(),&archive).await { terminal=Some(archive_failure(error));break; }
                         // Counts and milliseconds only.
                         if phase == Phase::Connected && let Some(line) = timing.summary(bot.client().persistence_manager().get_device_snapshot().app_version_last_fetched_ms) { eprintln!("{line}"); }
+                        services.own_account_sources.send_replace((phase==Phase::Connected).then(||Arc::new(crate::protocol_own_account::Account(bot.client())) as Arc<dyn crate::own_account::Source>));
                         online_tx.send_replace(phase == Phase::Connected);
                         audio_sources.send_replace((phase==Phase::Connected).then(||Arc::new(crate::protocol_audio::Audio(bot.client())) as Arc<dyn crate::audio::Source>));
                         services.video_sources.send_replace((phase==Phase::Connected).then(||Arc::new(crate::protocol_video::Video(bot.client())) as Arc<dyn crate::video::Source>));
@@ -1261,6 +1265,7 @@ mod tests {
 
     pub(super) fn test_services() -> LiveServices {
         LiveServices {
+            own_account_sources: watch::channel(None).0,
             preferences: watch::channel(crate::preferences::Preferences::default()).1,
             avatar_demand: watch::channel(Vec::new()).1,
             photo_demand: watch::channel(crate::photos::Demand::default()).1,

@@ -9,6 +9,9 @@ mod business_tests;
 #[path = "protocol_call_tests.rs"]
 mod call_tests;
 #[cfg(test)]
+#[path = "protocol_contact_video_tests.rs"]
+mod contact_video_tests;
+#[cfg(test)]
 #[path = "message_content_tests.rs"]
 mod content_tests;
 #[cfg(test)]
@@ -347,11 +350,8 @@ fn record(
             "[Photo] {}",
             message.image_message.caption.as_deref().unwrap_or("")
         );
-    } else if message.video_message.is_set() {
-        text = format!(
-            "[Video] {}",
-            message.video_message.caption.as_deref().unwrap_or("")
-        );
+    } else if let Some(video) = crate::protocol_video::clip(message) {
+        text = format!("[Video] {}", video.caption.as_deref().unwrap_or(""));
     } else if message.audio_message.is_set() {
         text = "[Audio message]".into();
     } else if message.document_message.is_set() {
@@ -401,12 +401,20 @@ pub fn repair_text(archive: &Archive) -> archive::Result<()> {
             None,
         ))
     })?;
-    archive.repair_unsupported_messages(6, |raw| {
+    archive.repair_unsupported_messages(9, |raw| {
         let message = codec::message_decode(raw).ok()?;
         let (decoded, content, thumbnail) = crate::protocol_content::extract(&message);
-        let (text, visible) = if !message.is_view_once()
+        let base = message.get_base_message();
+        let (text, visible) = if let Some(poll) = content.poll.as_ref() {
+            Some((crate::protocol_polls::text(poll), true))
+        } else if !message.is_view_once()
+            && (base.contact_message.is_set() || base.contacts_array_message.is_set())
+        {
+            decoded.map(|text| (text, true))
+        } else if !message.is_view_once()
             && (message.get_base_message().sticker_message.is_set()
-                || message.get_base_message().location_message.is_set())
+                || message.get_base_message().location_message.is_set()
+                || message.get_base_message().live_location_message.is_set())
         {
             decoded.map(|text| (text, true))
         } else if !message.is_view_once() && message.get_base_message().album_message.is_set() {
@@ -424,13 +432,11 @@ pub fn repair_text(archive: &Archive) -> archive::Result<()> {
                 ),
                 true,
             ))
-        } else if !message.is_view_once() && message.get_base_message().video_message.is_set() {
+        } else if !message.is_view_once() && crate::protocol_video::clip(&message).is_some() {
             Some((
                 format!(
                     "[Video] {}",
-                    message
-                        .get_base_message()
-                        .video_message
+                    crate::protocol_video::clip(&message)?
                         .caption
                         .as_deref()
                         .unwrap_or("")
@@ -453,7 +459,9 @@ pub fn repair_text(archive: &Archive) -> archive::Result<()> {
         let (_, content, thumbnail) = crate::protocol_content::extract(&message);
         (content != Default::default()).then_some((content, thumbnail))
     })?;
-    archive.repair_albums(|raw| crate::protocol_content::album(&codec::message_decode(raw).ok()?))
+    archive
+        .repair_albums(|raw| crate::protocol_content::album(&codec::message_decode(raw).ok()?))?;
+    archive.repair_polls()
 }
 
 pub struct MessageEvents {
@@ -770,7 +778,7 @@ fn import_chunk(
             if chat.is_group() && !outgoing && sender == chat {
                 continue;
             }
-            batch.messages.push(record(
+            let mut row = record(
                 &chat,
                 &sender,
                 wire_id.clone(),
@@ -781,9 +789,13 @@ fn import_chunk(
                 message
                     .ephemeral_duration
                     .or(conversation.ephemeral_expiration),
-            ));
-            if batch.messages.len() == 100 {
-                archive.ingest_blocking(std::mem::take(&mut batch))?;
+            );
+            let votes = crate::protocol_polls::history(&mut row, message);
+            for item in std::iter::once(row).chain(votes) {
+                batch.messages.push(item);
+                if batch.messages.len() == 100 {
+                    archive.ingest_blocking(std::mem::take(&mut batch))?;
+                }
             }
         }
         archive.ingest_blocking(batch)?;
@@ -837,7 +849,7 @@ fn import_chunk(
         if let Some(call) = crate::protocol_calls::history(&log, &own) {
             batch.messages.push(call);
         }
-        if batch.messages.len() == 100 {
+        if batch.messages.len() >= 100 {
             archive.ingest_blocking(std::mem::take(&mut batch))?;
         }
     }

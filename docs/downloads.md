@@ -110,3 +110,32 @@ exercise these actual wire options without opening a desktop dialog.
 
 References: [portable user directories](https://docs.rs/directories/latest/directories/struct.UserDirs.html),
 [native file-chooser options](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.FileChooser.html).
+
+## Verified writer length — 5 November 2026
+
+The current SDK returns authenticated downloads with the writer rewound to zero.
+Heya incorrectly used that cursor position as the output length, rejecting
+otherwise valid uncached files at its final length check. Cached exports did
+not take the same rewind path, so those could still work.
+
+The file sink now keeps logical output length and cursor position separately.
+Seeking and rewinding do not change length; writes extend it only when their end
+exceeds the existing length, and truncation sets it explicitly. The 2 GiB write
+limit still checks the write position. MAC, ciphertext/plaintext hashes, declared
+length, source identity and safe publication checks remain in place. No retry
+loop, service or thread is added.
+
+A real-SDK synthetic regression reproduced a verified 4 MiB file being reported
+as zero bytes. Tests also exercise SDK-style rewinds through the save service,
+overwrite/append/truncate behavior, the write limit after a seek, incorrect final
+lengths, authentication failures and preservation of existing destinations.
+
+The strengthened SDK regression failed before the fix (0 bytes reported instead
+of 4,194,304) and passed afterward. All 23 matching download regressions passed,
+including cancellation, host failure/retry, wrong lengths, corrupt-cache recovery,
+private chooser cancellation and saved-status dismissal. Strict all-target
+release Clippy, the optimized build and the media-disabled configuration check
+passed. These tests do not download private account media. On 5 November 2026,
+the owner manually retried the reported `.doc` attachment and confirmed that it
+saves and opens correctly. This confirms that reported case; other attachment
+types and platforms retain their separate validation requirements.

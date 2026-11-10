@@ -304,6 +304,7 @@ mod tests {
         let mut video = record("info-video");
         video.timestamp += 1;
         video.content.video = Some(Video {
+            round: false,
             width: 1920,
             height: 1080,
             seconds: Some(75),

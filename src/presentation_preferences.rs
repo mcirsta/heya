@@ -120,6 +120,10 @@ pub fn attach(
                 }
                 return;
             }
+            if key == "about" {
+                ui.invoke_edit_status_message();
+                return;
+            }
             if key == "shortcuts" {
                 ui.set_settings_query("shortcuts".into());
                 refresh(&ui, &settings.borrow());
@@ -230,6 +234,7 @@ pub fn attach(
 }
 
 fn apply(ui: &AppWindow, preferences: &Preferences) {
+    ui.set_appear_offline(preferences.appear_offline);
     let theme = ui.global::<Theme>();
     theme.set_macos(cfg!(target_os = "macos"));
     theme.set_emoji_font(
@@ -421,6 +426,7 @@ fn refresh_audio(ui: &AppWindow, p: &Preferences) {
     }
 }
 fn refresh(ui: &AppWindow, p: &Preferences) {
+    let connection_error = ui.get_connection_error();
     let connection = match ui.get_connection_state() {
         1 if ui.get_connection_waiting_key_store() => "Waiting for the OS key store…",
         1 => "Opening saved chats…",
@@ -430,10 +436,10 @@ fn refresh(ui: &AppWindow, p: &Preferences) {
         5 => "Connected",
         6 => "Reconnecting…",
         7 => "Disconnecting…",
-        9 => "Connection needs attention",
+        9 => connection_error.as_str(),
         _ => "Offline",
     };
-    let sections = vec![
+    let mut sections = vec![
         (
             "Appearance",
             vec![
@@ -648,11 +654,26 @@ fn refresh(ui: &AppWindow, p: &Preferences) {
                     }
                 },
                 pending("Your name", "Edit your WhatsApp profile name."),
-                pending("About", "Edit your WhatsApp profile text."),
-                pending(
-                    "Change profile picture",
-                    "Choose your WhatsApp profile picture.",
-                ),
+                if ui.get_demo_mode() || ui.get_connection_state() == 5 {
+                    SettingRow {
+                        action: "Edit…".into(),
+                        ..row(
+                            "about",
+                            "Status message (About)",
+                            if ui.get_own_about().is_empty() {
+                                "Edit your WhatsApp profile text."
+                            } else {
+                                "Your WhatsApp About text."
+                            },
+                            4,
+                        )
+                    }
+                } else {
+                    info(
+                        "Status message (About)",
+                        "Connect to edit your WhatsApp profile text.",
+                    )
+                },
                 if ui.get_connection_can_relink() && !ui.get_demo_mode() {
                     SettingRow {
                         action: "Link again".into(),
@@ -709,7 +730,7 @@ fn refresh(ui: &AppWindow, p: &Preferences) {
             vec![
                 info(
                     "Heya 0.1.0",
-                    "A native WhatsApp client built with Rust, Slint and whatsapp-rust. Visual reference: ZapFast.",
+                    "A native WhatsApp client built with Rust and Slint, powered by the whatsapp-rust backend.",
                 ),
                 toggle(
                     "show_shortcut_hint",
@@ -728,6 +749,23 @@ fn refresh(ui: &AppWindow, p: &Preferences) {
             ],
         ),
     ];
+    if ui.get_history_recovery_needed()
+        && let Some((_, rows)) = sections.iter_mut().find(|(title, _)| *title == "Account")
+    {
+        rows.push(info(
+            "Saved history",
+            "Some history could not be imported. Its encrypted data is retained for recovery.",
+        ));
+    }
+    // Keep navigation complete and stable while search filters the content.
+    let categories: Vec<SharedString> = sections.iter().map(|(title, _)| (*title).into()).collect();
+    if ui
+        .get_settings_categories()
+        .iter()
+        .ne(categories.iter().cloned())
+    {
+        ui.set_settings_categories(model(categories));
+    }
     let query = ui.get_settings_query().trim().to_lowercase();
     let sections = sections
         .into_iter()
@@ -891,6 +929,54 @@ pub(crate) fn check_ui(runtime: &tokio::runtime::Runtime) {
     ui.invoke_preference_changed("theme".into(), 1);
     let rows_before = ui.get_settings_sections().row_count();
     assert_eq!(rows_before, 9);
+    assert_eq!(ui.get_settings_categories().row_count(), 9);
+    let audio_tab = ElementHandle::find_by_accessible_label(&ui, "Audio")
+        .find(|e| e.accessible_role() == Some(i_slint_backend_testing::AccessibleRole::Tab))
+        .unwrap();
+    audio_tab.invoke_accessible_default_action();
+    assert_eq!(ui.get_settings_tab(), 2);
+    assert_eq!(audio_tab.accessible_item_selected(), Some(true));
+    assert_eq!(
+        ElementHandle::find_by_element_type_name(&ui, "SettingsSectionView").count(),
+        1
+    );
+    assert_eq!(
+        ElementHandle::find_by_element_type_name(&ui, "SettingsSectionView")
+            .next()
+            .unwrap()
+            .accessible_label()
+            .as_deref(),
+        Some("Audio")
+    );
+    key(&ui, Key::UpArrow);
+    assert_eq!(
+        ui.get_settings_tab(),
+        1,
+        "arrow keys select the adjacent category"
+    );
+    // Search remains global even when a different category was selected.
+    ui.set_settings_query("messages".into());
+    ui.invoke_search_settings(ui.get_settings_query());
+    assert!(ui.get_settings_sections().row_count() > 1);
+    assert_eq!(ui.get_settings_categories().row_count(), 9);
+    assert_eq!(
+        audio_tab.accessible_item_selected(),
+        Some(false),
+        "global search must not claim a category is selected"
+    );
+    assert_eq!(
+        ElementHandle::find_by_element_type_name(&ui, "SettingsSectionView").count(),
+        ui.get_settings_sections().row_count()
+    );
+    ElementHandle::find_by_accessible_label(&ui, "Appearance")
+        .find(|e| e.accessible_role() == Some(i_slint_backend_testing::AccessibleRole::Tab))
+        .unwrap()
+        .invoke_accessible_default_action();
+    assert!(
+        ui.get_settings_query().is_empty(),
+        "selecting a tab leaves global search"
+    );
+    assert_eq!(ui.get_settings_tab(), 0);
     for (width, height) in [
         (1200., 800.),
         (800., 600.),
@@ -903,12 +989,24 @@ pub(crate) fn check_ui(runtime: &tokio::runtime::Runtime) {
         let page = ElementHandle::find_by_element_type_name(&ui, "SettingsPage")
             .next()
             .unwrap();
-        assert!(column.size().width <= 640.5);
-        assert!(column.absolute_position().x >= page.absolute_position().x + 31.5);
+        assert!(column.size().width <= 856.5);
+        assert!(column.absolute_position().x >= page.absolute_position().x + 23.5);
         assert!(
             column.absolute_position().x + column.size().width
-                <= page.absolute_position().x + page.size().width - 31.5
+                <= page.absolute_position().x + page.size().width - 23.5
         );
+        inside(&element(&ui, "SettingsPage::search-field"), &page);
+        if page.size().width >= 600. {
+            let nav = element(&ui, "SettingsPage::navigation");
+            inside(&nav, &page);
+            assert!(column.absolute_position().x >= nav.absolute_position().x + nav.size().width);
+        } else {
+            assert!(
+                ElementHandle::find_by_accessible_label(&ui, "Settings category: Appearance")
+                    .next()
+                    .is_some()
+            );
+        }
         for row in ElementHandle::find_by_element_type_name(&ui, "SettingsRow") {
             let labels = row
                 .query_descendants()

@@ -9,7 +9,7 @@ impl Archive {
         decode: impl Fn(&[u8]) -> Option<(crate::message_content::Content, Vec<u8>)>,
     ) -> Result<()> {
         if self.blocking(|db| Ok(db.query_row(
-            "SELECT EXISTS(SELECT 1 FROM metadata WHERE key='content_decoder_revision' AND value='12')",[],|r|r.get::<_,bool>(0))?))? {
+            "SELECT EXISTS(SELECT 1 FROM metadata WHERE key='content_decoder_revision' AND value='14')",[],|r|r.get::<_,bool>(0))?))? {
             return Ok(());
         }
         let mut after = 0_i64;
@@ -22,6 +22,11 @@ impl Archive {
                 for id in &ids {
                     let raw: Vec<u8> = tx.query_row("SELECT raw FROM messages WHERE id=?1",[id],|r|r.get(0))?;
                     if let Some((content, thumbnail)) = decode(&raw) {
+                        if let Some(location) = content.location.as_ref().filter(|l| l.live) {
+                            let caption = content.body.as_deref().unwrap_or_default();
+                            let text = if caption.is_empty() { location.transcript() } else {format!("{}\n{caption}",location.transcript())};
+                            tx.execute("UPDATE messages SET body=?2 WHERE id=?1",params![id,text])?;
+                        }
                         if let Some(notice) = content.notice {
                             tx.execute("UPDATE messages SET body=?2 WHERE id=?1", params![id, notice.description()])?;
                             if matches!(notice,crate::message_content::Notice::Call(_)) {
@@ -39,7 +44,7 @@ impl Archive {
                     }
                 }
                 if ids.is_empty() {
-                    tx.execute("INSERT OR REPLACE INTO metadata(key,value) VALUES('content_decoder_revision','12')",[])?;
+                    tx.execute("INSERT OR REPLACE INTO metadata(key,value) VALUES('content_decoder_revision','14')",[])?;
                 }
                 tx.commit()?;
                 Ok(ids.last().copied())

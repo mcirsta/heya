@@ -53,6 +53,7 @@ export component MessageMenu inherits Rectangle {
     in property <string> own-emoji;
     in-out property <int> selection: 7;
     callback close();
+    callback dismiss();
     callback choose(int);
     callback react(string);
     callback navigate(int);
@@ -71,7 +72,17 @@ export component MessageMenu inherits Rectangle {
     // the strip never covers the trigger. Flip above when needed, then clamp.
     // The one list scrolls only when the window cannot contain it.
     private property <length> top: clamp(root.context ? root.anchor-y : root.anchor-y - 26px + root.menu-height <= root.height - root.edge ? root.anchor-y - 26px - root.strip-height - 6px : root.anchor-y - root.total-height - 26px,root.edge,max(root.edge,root.height - root.total-height - root.edge));
+    // Popup focus preserves the source editor's selection and restores it on
+    // close. An ordinary overlay FocusScope clears TextInput selection instead.
+    out property <bool> is-open:popup.is-open;
+    public function show() { if !root.is-open {popup.show();} }
+    public function hide() { popup.close(); }
+    popup := PopupWindow {
+    x:0px;y:0px;width:root.width;height:root.height;
+    close-policy:no-auto-close;
+    private property <int> active-selection:root.selection;
     FocusScope {
+        init => {self.focus();}
         // The backdrop belongs inside the focus scope: a sibling focus scope
         // would accept outside pointer presses before the dismiss target.
         x: 0px;
@@ -83,8 +94,8 @@ export component MessageMenu inherits Rectangle {
             y: 0px;
             width: root.width;
             height: root.height;
-            clicked => { root.close(); }
-            scroll-event(event) => { root.close(); return accept; }
+            clicked => { root.dismiss(); }
+            scroll-event(event) => { root.dismiss(); return accept; }
         }
 
         key-pressed(event) => {
@@ -120,7 +131,7 @@ export component MessageMenu inherits Rectangle {
                 width: root.context ? 34px : (parent.width - 12px) / root.choices.length;
                 height: root.context ? 34px : 36px;
                 enabled: emoji == "+" || root.can-react;
-                selected: root.selection == index;
+                selected: root.is-open && root.selection == index;
                 label: emoji == "+" ? @tr("More reactions") : emoji == root.own-emoji ? @tr("Remove your reaction") : @tr("React with {}",emoji);
                 reason: !self.enabled ? @tr("Connect to react") : "";
                 focused => { root.selection = index; }
@@ -183,7 +194,7 @@ export component MessageMenu inherits Rectangle {
                         width: parent.width;
                         height: root.context ? 28px : root.row-height;
                         enabled: entry.enabled;
-                        selected: root.selection == index + root.choices.length;
+                        selected: root.is-open && root.selection == index + root.choices.length;
                         label: entry.label;
                         reason: entry.reason;
                         focused => { root.selection = index + root.choices.length; list.content-y = clamp(list.content-y,-max(0px,list.content-height - list.visible-height),0px); }
@@ -194,7 +205,7 @@ export component MessageMenu inherits Rectangle {
                             width: 16px;
                             height: 16px;
                             colorize: entry.enabled ? (root.context ? Theme.secondary : Theme.text) : Theme.dim;
-                            source: entry.action == 0 ? @image-url("icons/smile.svg") : entry.action == 1 ? @image-url("icons/reply.svg") : entry.action == 2 ? (root.context ? @image-url("icons/forward-single.svg") : @image-url("icons/forward.svg")) : entry.action == 4 || entry.action==16 || entry.action==18 ? @image-url("icons/copy.svg") : entry.action == 5 ? @image-url("icons/photo-download.svg") : entry.action == 6 ? @image-url("icons/pin.svg") : entry.action == 7 ? @image-url("icons/star.svg") : entry.action == 8 ? @image-url("icons/report.svg") : entry.action == 9 || entry.action==13 ? @image-url("icons/trash.svg") : entry.action==11 ? @image-url("icons/check.svg") : entry.action==12 ? @image-url("icons/square-pen.svg") : entry.action==14 ? @image-url("icons/eye-off.svg") : entry.action==15 ? @image-url("icons/info.svg") : entry.action==19 ? @image-url("icons/viewer-message.svg") : @image-url("icons/ai.svg");
+                            source: entry.action == 0 ? @image-url("icons/smile.svg") : entry.action == 1 ? @image-url("icons/reply.svg") : entry.action == 2 ? (root.context ? @image-url("icons/forward-single.svg") : @image-url("icons/forward.svg")) : entry.action == 4 || entry.action==16 || entry.action==18 || entry.action==20 ? @image-url("icons/copy.svg") : entry.action == 5 ? @image-url("icons/photo-download.svg") : entry.action == 6 ? @image-url("icons/pin.svg") : entry.action == 7 ? @image-url("icons/star.svg") : entry.action == 8 ? @image-url("icons/report.svg") : entry.action == 9 || entry.action==13 ? @image-url("icons/trash.svg") : entry.action==11 ? @image-url("icons/check.svg") : entry.action==12 ? @image-url("icons/square-pen.svg") : entry.action==14 ? @image-url("icons/eye-off.svg") : entry.action==15 ? @image-url("icons/info.svg") : entry.action==19 ? @image-url("icons/viewer-message.svg") : @image-url("icons/ai.svg");
                         }
 
                         Text {
@@ -214,7 +225,7 @@ export component MessageMenu inherits Rectangle {
         }
     }
 
-    changed selection => {
+    changed active-selection => {
         if root.selection >= root.choices.length {
             // Keep keyboard selection visible in a short window.
             let top=(root.selection - root.choices.length) * root.row-height + root.entries[root.selection - root.choices.length].offset * 1px;
@@ -222,4 +233,5 @@ export component MessageMenu inherits Rectangle {
             if top + root.row-height + list.content-y > list.visible-height { list.content-y = min(0px,list.visible-height - top - root.row-height); }
         }
     }
+}
 }

@@ -49,6 +49,12 @@ impl Images {
 }
 
 pub fn bind(ui: &AppWindow) -> watch::Receiver<Vec<avatars::Target>> {
+    let weak = ui.as_weak();
+    ui.on_cached_contact_avatar(move |number, _revision| {
+        weak.upgrade().map_or_else(slint::Image::default, |ui| {
+            crate::presentation::timeline::participant_avatar(&ui, &number)
+        })
+    });
     // Establish the model before either the archive or avatar snapshot arrives.
     crate::presentation::sidebar(ui, std::sync::Arc::from([]));
     let weak = ui.as_weak();
@@ -87,7 +93,39 @@ pub fn bind(ui: &AppWindow) -> watch::Receiver<Vec<avatars::Target>> {
         if ui.get_selected_id() > 0 && ui.get_selected_id() != call {
             ids.push(avatars::Target::Chat(ui.get_selected_id()));
         }
-        if ui.get_message_dialog() == 2 {
+        if ui.get_send_contact_phase() > 0 {
+            let rows = if ui.get_send_contact_phase() == 2 {
+                ui.get_send_contact_selected()
+            } else {
+                ui.get_send_contact_rows()
+            };
+            for row in rows
+                .iter()
+                .skip(ui.get_send_contact_avatar_first().max(0) as usize)
+                .take(ui.get_send_contact_avatar_count().clamp(0, 16) as usize)
+            {
+                let target = avatars::Target::Participant(format!("{}@s.whatsapp.net", row.number));
+                if !ids.contains(&target) && ids.len() < avatars::MAX_DEMAND {
+                    ids.push(target);
+                }
+            }
+        } else if ui.get_message_dialog() == 11 {
+            for row in ui
+                .get_poll_result_voters()
+                .iter()
+                .skip(ui.get_forward_avatar_first().max(0) as usize)
+                .take(ui.get_forward_avatar_count().clamp(0, 16) as usize)
+            {
+                let target = if row.jid == "#self" {
+                    avatars::Target::Chat(0)
+                } else {
+                    avatars::Target::Participant(row.jid.to_string())
+                };
+                if !ids.contains(&target) && ids.len() < avatars::MAX_DEMAND {
+                    ids.push(target);
+                }
+            }
+        } else if ui.get_message_dialog() == 2 {
             // The chooser covers the transcript. Request its visible contacts,
             // including archived/search-filtered chats absent from the sidebar.
             for row in ui
@@ -104,11 +142,26 @@ pub fn bind(ui: &AppWindow) -> watch::Receiver<Vec<avatars::Target>> {
         } else if ui.get_chat_is_group() && ui.get_history_active() {
             for row in ui.get_timeline_rows().iter().take(avatars::MAX_DEMAND) {
                 let m = row.message;
-                if m.outgoing || !m.first_in_run || m.system_notice || m.sender_id.is_empty() {
+                if m.outgoing
+                    || (!m.first_in_run && !m.location_live)
+                    || m.system_notice
+                    || m.sender_id.is_empty()
+                {
                     continue;
                 }
                 let target = avatars::Target::Participant(m.sender_id.to_string());
                 if !ids.contains(&target) && ids.len() < avatars::MAX_DEMAND {
+                    ids.push(target);
+                }
+            }
+        }
+        for row in ui.get_timeline_rows().iter().take(avatars::MAX_DEMAND) {
+            if !row.message.contact_account.is_empty() && ids.len() < avatars::MAX_DEMAND {
+                let target = avatars::Target::Participant(format!(
+                    "{}@s.whatsapp.net",
+                    row.message.contact_account
+                ));
+                if !ids.contains(&target) {
                     ids.push(target);
                 }
             }

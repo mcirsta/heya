@@ -17,7 +17,7 @@ use std::{
 use tokio::sync::watch;
 use whatsapp_rust::{
     Client,
-    prelude::{MessageBuilderExt, MessageExt, wa},
+    prelude::wa,
     wacore::{
         download::MediaType,
         upload::{EncryptedMediaInfo, UploadSource},
@@ -541,28 +541,8 @@ fn message(
         }
         message.document_message = MessageField::some(doc);
     }
-    if let Some(source) = &destination.reply {
-        let original = if source.raw.is_empty() {
-            wa::Message::text(source.body.clone())
-        } else {
-            codec::message_decode(&source.raw).map_err(|_| Error::Archive)?
-        };
-        if original.is_view_once() {
-            return Err(Error::Archive);
-        }
-        let mut context = wa::ContextInfo::default();
-        context.stanza_id = Some(source.wire.clone());
-        context.participant = Some(if source.outgoing {
-            destination.owner.clone()
-        } else {
-            source.sender.clone()
-        });
-        context.quoted_message =
-            MessageField::from_box(original.get_base_message().prepare_for_quote());
-        if !message.set_context_info(context) {
-            return Err(Error::Archive);
-        }
-    }
+    crate::protocol_actions::quote(&mut message, destination.reply.as_ref(), &destination.owner)
+        .map_err(|_| Error::Archive)?;
     let (text, content, thumbnail) = crate::protocol_content::extract(&message);
     let text = text.unwrap_or_else(|| {
         if file.kind == Kind::Voice {

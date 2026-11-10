@@ -452,6 +452,7 @@ pub fn demo() -> DemoState {
                 }),
                 has_attachment: true,
                 video: Some(crate::message_content::Video {
+                    round: false,
                     width: if i == 1 { 360 } else { 640 },
                     height: if i == 1 { 640 } else { 360 },
                     seconds: Some(5),
@@ -508,7 +509,64 @@ pub fn demo() -> DemoState {
         chat.title = "Received locations".into();
         fill_locations(&mut chat.messages);
     }
+    if std::env::var_os("HEYA_DEMO_LIVE_LOCATIONS").is_some() {
+        let chat = chats.iter_mut().find(|c| c.id == 7).unwrap();
+        chat.title = "Live locations".into();
+        fill_live_locations(&mut chat.messages);
+    }
+    if std::env::var_os("HEYA_DEMO_SHARED_CONTACTS").is_some() {
+        let chat = chats.iter_mut().find(|c| c.id == 7).unwrap();
+        chat.title = "Contacts and video messages".into();
+        fill_shared_contacts(&mut chat.messages);
+    }
+    if std::env::var_os("HEYA_DEMO_POLLS").is_some() {
+        let chat = chats.iter_mut().find(|c| c.id == 7).unwrap();
+        chat.title = "Polls".into();
+        fill_polls(&mut chat.messages);
+    }
     DemoState::new(chats)
+}
+
+pub fn fill_shared_contacts(messages: &mut Vec<Message>) {
+    let seed = messages[0].clone();
+    messages.clear();
+    for i in 0..3 {
+        let mut m = seed.clone();
+        m.id = if i == 2 { 27001 } else { 56000 + i };
+        m.time = format!("10:{:02}", 20 + i);
+        m.text = String::new();
+        m.outgoing = false;
+        m.sender = "Mira Sample".into();
+        m.sender_id = "demo:mira".into();
+        let mut content = crate::message_content::Content {
+            body: Some(String::new()),
+            has_attachment: true,
+            ..Default::default()
+        };
+        if i == 2 {
+            content.video = Some(crate::message_content::Video {
+                round: true,
+                width: 640,
+                height: 480,
+                seconds: Some(12),
+                size: Some(1024),
+                gif: false,
+            });
+        } else {
+            let names = if i == 0 {
+                vec!["Alex Sample"]
+            } else {
+                vec!["Mira Sample", "Sam Sample", "No phone number"]
+            };
+            content.contacts=names.into_iter().map(|name|crate::shared_contacts::parse(name,
+                "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Sample\r\nTEL;TYPE=CELL;waid=15550000001:+1 555 000 0001\r\nEMAIL:hello@example.invalid\r\nORG:Sample Workshop\r\nADR:;;42 Example Street;Sample Town;;;\r\nNOTE:Meeting notes\\nこんにちは 👩🏽‍💻\r\nEND:VCARD")).collect();
+            if let Some(contact) = content.contacts.get_mut(2) {
+                contact.phones.clear();
+            }
+        }
+        m.content = std::sync::Arc::new(content);
+        messages.push(m);
+    }
 }
 
 pub(crate) fn unlinked_album_messages(seed: &Message, count: usize) -> Vec<Message> {
@@ -822,5 +880,70 @@ pub fn location_pixels() -> crate::photos::Pixels {
         width: image.width(),
         height: image.height(),
         rgba: image.into_raw(),
+    }
+}
+
+/// Synthetic poll cards shared by UI checks and the offline demo.
+pub fn fill_polls(messages: &mut Vec<Message>) {
+    let seed = messages[0].clone();
+    messages.clear();
+    for (i, multiple) in [false, true].into_iter().enumerate() {
+        let mut m = seed.clone();
+        m.id = 57000 + i as i32;
+        m.outgoing = false;
+        m.text = String::new();
+        m.content = Default::default();
+        std::sync::Arc::make_mut(&mut m.content).body = Some(String::new());
+        let p = crate::polls::Poll {
+            question: if multiple {
+                "What should we bring for the picnic? 🧺"
+            } else {
+                "When should we meet?"
+            }
+            .into(),
+            options: if multiple {
+                vec![
+                    "Sandwiches 🥪".into(),
+                    "Fruit and drinks 🍎".into(),
+                    "A picnic blanket".into(),
+                ]
+            } else {
+                vec!["Saturday morning".into(), "Sunday afternoon".into()]
+            },
+            selectable: if multiple { 3 } else { 1 },
+            ready: true,
+            view: crate::polls::View {
+                counts: if multiple { vec![3, 5, 2] } else { vec![7, 4] },
+                voters: if multiple { 7 } else { 11 },
+                selected: vec![0],
+                can_vote: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        std::sync::Arc::make_mut(&mut m.content).poll = Some(p);
+        messages.push(m);
+    }
+}
+
+/// Live, ended and missing-coordinate shares have the same desktop-unavailable
+/// presentation. No timer, location subscription or network-backed demo.
+pub fn fill_live_locations(messages: &mut [Message]) {
+    fill_locations(messages);
+    for (i, m) in messages.iter_mut().enumerate() {
+        let content = std::sync::Arc::make_mut(&mut m.content);
+        let location = content.location.as_mut().unwrap();
+        *location = crate::locations::Location::new(0., 0.).unwrap();
+        location.live = true;
+        content.body = Some(if i % 2 == 0 {
+            "Meet here 👩🏽‍💻\nA caption stays selectable.".into()
+        } else {
+            String::new()
+        });
+        m.text = if content.body.as_deref() == Some("") {
+            "Live location".into()
+        } else {
+            format!("Live location\n{}", content.body.as_ref().unwrap())
+        };
     }
 }

@@ -178,6 +178,15 @@ pub fn start(
         "UI benchmark system notices: {}",
         if notices { "on" } else { "off" }
     );
+    if std::env::var_os("HEYA_BENCHMARK_POLLS").is_some() {
+        let mut samples = vec![state.chats[5].messages[0].clone()];
+        fixtures::fill_polls(&mut samples);
+        for (i, m) in state.chats[5].messages.iter_mut().enumerate() {
+            m.content = samples[i % 2].content.clone();
+            m.text = String::new();
+        }
+        println!("Poll benchmark: 10,000 synthetic cards with confirmed counts and selections");
+    }
     let cards = std::env::var_os("HEYA_BENCHMARK_MESSAGE_CARDS").is_some();
     println!(
         "UI benchmark message cards: {}",
@@ -320,7 +329,7 @@ pub fn start(
         revision: 0,
         view: Some(Arc::new(view.clone())),
         reply: None,
-        notice: String::new(),
+        error: String::new(),
     };
     live_presentation::publish_messages(ui, &snapshot);
     let avatar_count = if std::env::var_os("HEYA_BENCHMARK_NO_AVATARS").is_some() {

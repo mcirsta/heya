@@ -1630,3 +1630,45 @@ one player. Offscreen native framebuffer captures covered wide, narrow/dark,
 playing and expanded views. See [video playback](video-playback.md) for the real
 decoder-to-render measurements, paired photo-scroll comparison and validation
 limits. These checks do not close the native audio-device/macOS/account gates.
+
+## Quiet feedback and own status — 2026-11-06
+
+The older connection/notice-banner layout described above is superseded. Heya
+now keeps the conversation at a fixed header origin, removes routine success
+notices, and uses the icon beside Chats for connection and device availability.
+Account/profile settings remain on the main Settings page. See
+[status controls](own-status.md) for the independently implemented backend,
+profile editor, failure handling and validation limits.
+
+## Settings navigation update — 6 November 2026
+
+Settings now uses a left category rail and one content pane, with an accent
+background/marker and accessible selected-tab state. At less than 600 logical
+pixels of settings-panel width, a compact category selector leaves enough room
+for readable controls. Both layouts use the same setting rows and persistence
+callbacks. The search stays above the scrolling content and searches all category
+names, setting titles and descriptions, with results grouped by category. The
+category list remains complete while searching. Selecting a category clears the
+query; reopening Settings remembers the selected category for that window.
+
+The previous chat-selection callback queued navigation but left `settings-open`
+set, hiding the updated chat. Both the demo and live callbacks now use one small
+presentation action after command acceptance to close Settings and show the
+conversation. Failed enqueueing preserves Settings and the current draft; the
+backend still owns the selected conversation and unread updates. No new worker,
+timer or persistent navigation state was added.
+
+Synthetic callback tests cover current-chat re-selection, refused selection,
+keyboard tabs, global search and containment at 520–1920-pixel window widths.
+Private offscreen X11 captures reproduce the old covered-chat behavior and
+confirm the updated chat is revealed; wide light and dark category layouts were
+inspected with synthetic data. These checks do not establish native macOS or
+Windows interaction behavior.
+
+Sequential optimized Linux/offscreen OpenGL comparisons against the preceding
+status-controls build showed comparable chat timings: 10,000-message scrolling
+render CPU p95 was 13.20 → 12.80 ms, resizing 17.44 → 16.00 ms, and composer work
+17.30 → 17.38 ms. These synthetic runs used software OpenGL with Settings closed;
+they check for chat regressions, not Settings interaction latency or desktop
+compositor performance. The release build, strict application Clippy checks and
+contact-sync regressions also passed.

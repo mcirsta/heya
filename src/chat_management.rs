@@ -64,15 +64,6 @@ impl Action {
             stamp: Some(now),
         }
     }
-    pub fn success(self) -> &'static str {
-        match self {
-            Self::MuteHours(_) | Self::MuteAlways => "Chat muted.",
-            Self::Unmute => "Chat unmuted.",
-            Self::Archive(true) => "Chat archived.",
-            Self::Archive(false) => "Chat restored.",
-            Self::Lock => "Chat locked and hidden. Unlock it in WhatsApp on your phone.",
-        }
-    }
 }
 pub struct Target {
     pub jid: String,
@@ -100,7 +91,7 @@ pub trait Source: Send + Sync {
     async fn change(&self, target: Target, action: Action) -> Result<Update, Failure>;
 }
 pub type Sources = Option<Arc<dyn Source>>;
-pub type Pending = Pin<Box<dyn Future<Output = Result<&'static str, Failure>> + Send>>;
+pub type Pending = Pin<Box<dyn Future<Output = Result<(), Failure>> + Send>>;
 
 pub fn request(
     db: Archive,
@@ -126,7 +117,7 @@ pub fn request(
             db.save_chat_settings(vec![update])
                 .await
                 .map_err(|_| Failure::Failed)?;
-            Ok(action.success())
+            Ok(())
         };
         tokio::select! {
             biased;

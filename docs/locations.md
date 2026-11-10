@@ -1,4 +1,4 @@
-# Received fixed locations
+# Received locations
 
 Heya displays received fixed locations as map cards with a pin, optional place
 name/address and website domain. Clicking the map opens its coordinates in
@@ -63,3 +63,55 @@ Two optimized offscreen OpenGL comparisons showed no consistent change in the
 remain in both builds. These are application smoke measurements on a private
 display, not desktop-compositor or live-account latency guarantees. macOS
 runtime behavior was not tested here.
+
+## Live-location cards
+
+Received live shares use a separate static card: a 270 × 150 logical-pixel map,
+centred sender avatar, “Live location not available” label, optional selectable
+caption and the normal message footer. Clicking the map or label opens
+“Live location is not available on this device. View location on your phone.”
+with an OK button. It does not launch a fixed-coordinate map as though the
+sender's position were current. The availability message applies to active,
+stopped and expired shares alike, following Web's desktop limitation.
+
+The official `WAWebMessageLiveLocation.react` module was inspected in the
+retained official Web bundles on 5 November 2026. Its static map, 40-pixel avatar,
+caption and phone-instruction popup informed this independently written UI.
+Heya uses the existing OSM preview provider and bounded avatar cache. It displays
+the position supplied in the message, without subscribing to live updates or
+requesting the phone's final-location state. This is presentation support, not
+live tracking or location sending. No SDK patch, periodic task or idle thread
+is added. The map and avatar reserve their geometry before image arrival.
+
+The normal adapter decodes `LiveLocationMessage` and legacy `LocationMessage`
+with `isLive`, retaining captions, forwarding/quote context and original envelopes.
+Saved phone-only live-location placeholders upgrade locally through content
+repair revision 14. Identity, unread state, and deletion/expiry guards are
+preserved. Missing or invalid coordinates keep the recognizable unavailable
+card without requesting a map. The sidebar and quoted-message labels identify
+live shares explicitly.
+
+Synthetic fixtures and UI checks cover captions, empty captions, invalid
+coordinates, group sender avatars, map/avatar arrival without reflow, popup
+activation/dismissal, same-chat refresh, removal and stale clicks, plus light/dark
+and narrow layouts. `HEYA_DEMO_LIVE_LOCATIONS=1 scripts/ui-offscreen.sh
+--framebuffer /tmp/heya-live-locations.png --demo-chat 7` reproduces the card
+without account data or network requests. Native account and macOS validation
+remain separate.
+
+Validation on Linux, 5 November 2026: all 407 non-ignored application tests passed
+across the host-service, location-regression and final toolkit-UI runs (14 native
+or account-specific tests remain ignored). Strict release Clippy, the optimized
+build and the build without default media features passed. Private X11 captures
+verified light/dark and narrow cards plus a real pointer click opening the
+phone-instruction popup. The screenshots exposed a vertically centred map
+colliding with its label; explicit positioning and an overlap assertion fixed it.
+
+Both card variants now live behind the existing location-card condition, rather
+than adding an independent conditional to every ordinary message bubble. This
+keeps the reviewed pixels identical while avoiding unnecessary timeline work.
+The final optimized OpenGL smoke run measured render CPU p95 of 12.74 ms for
+scrolling 10,000 messages, 14.05 ms for resizing and 15.69 ms for composer edits.
+The two pre-feature baseline runs measured 12.16–13.22, 17.14–18.05 and
+15.39–19.16 ms respectively. These observations show no regression in this
+synthetic workload; they are not compositor or live-account latency guarantees.

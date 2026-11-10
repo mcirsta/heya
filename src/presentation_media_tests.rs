@@ -31,7 +31,7 @@ pub(crate) fn check_ui() {
             0,
             "a rejected audio command must not stop video"
         );
-        assert!(!ui.get_notice().is_empty());
+        assert!(!ui.get_error_message().is_empty());
         rx.try_recv().unwrap();
         ui.invoke_audio_control(-999, 0, 0.);
         assert_eq!(
@@ -64,7 +64,7 @@ pub(crate) fn check_ui() {
             0,
             "a rejected video command must not stop audio"
         );
-        assert!(!ui.get_notice().is_empty());
+        assert!(!ui.get_error_message().is_empty());
         rx.try_recv().unwrap();
         ui.invoke_video_control(id, 0, 0.);
         assert!(matches!(rx.try_recv().unwrap(), crate::video::Command::Toggle(i) if i==id));
@@ -81,7 +81,7 @@ pub(crate) fn check_ui() {
         ui.invoke_voice_control(0);
         assert_eq!(stops.get(), 0, "a rejected recording must not stop audio");
         assert_eq!(ui.get_voice_phase(), 0);
-        assert!(!ui.get_notice().is_empty());
+        assert!(!ui.get_error_message().is_empty());
         rx.try_recv().unwrap();
         ui.invoke_voice_control(0);
         assert!(matches!(
@@ -125,10 +125,10 @@ pub(crate) fn check_ui() {
         assert!(tx.try_send(crate::downloads::Command::Cancel).is_ok());
         crate::presentation_downloads::bind(&ui, tx);
         for action in [0, 1, 2] {
-            ui.set_notice("".into());
+            ui.invoke_close_error();
             ui.invoke_download_control(action);
             assert!(
-                !ui.get_notice().is_empty(),
+                !ui.get_error_message().is_empty(),
                 "a rejected transfer control needs feedback"
             );
         }

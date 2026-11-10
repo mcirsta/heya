@@ -33,6 +33,10 @@ fn message(kind: Kind, bytes: &[u8]) -> Message {
         Kind::Document => media!(DocumentMessage, document_message),
         Kind::Video => media!(VideoMessage, video_message),
         Kind::Sticker => media!(StickerMessage, sticker_message),
+        Kind::Contact => {
+            message.contact_message.get_or_insert_default().vcard =
+                Some(String::from_utf8_lossy(bytes).into_owned());
+        }
     }
     message
 }
@@ -199,8 +203,18 @@ async fn sdk_streaming_authenticates_before_publish_and_truncates_failed_host_ou
         .unwrap();
     assert_eq!(http.calls.load(Ordering::SeqCst), 2);
     assert!(!destination.exists());
-    let Writer { sink, _permit } = writer;
+    let Writer { mut sink, _permit } = writer;
     drop(_permit);
+    assert_eq!(
+        sink.bytes,
+        original.len() as u64,
+        "SDK authentication must not erase the verified length"
+    );
+    assert_eq!(
+        sink.stream_position().unwrap(),
+        0,
+        "SDK success returns a rewound writer"
+    );
     partial.publish(sink).unwrap();
     assert_eq!(std::fs::read(&destination).unwrap(), original);
 

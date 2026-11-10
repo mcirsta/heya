@@ -29,9 +29,11 @@ fn contains(parent: &ElementHandle, item: &ElementHandle) {
 
 // Shares the one toolkit test thread; never launches a browser or reads a desktop clipboard.
 pub(crate) fn check_ui() {
+    check_shared_contacts_and_round_video();
     check_same_name_participants();
     check_documents();
     check_locations();
+    check_live_locations();
     let ui = AppWindow::new().unwrap();
     ui.set_demo_mode(true);
     ui.set_show_conversation(true);
@@ -230,6 +232,127 @@ pub(crate) fn check_ui() {
         Target::Unavailable,
         "removed message must not leave an executable action"
     );
+}
+
+fn check_shared_contacts_and_round_video() {
+    let ui = AppWindow::new().unwrap();
+    ui.set_demo_mode(true);
+    ui.set_show_conversation(true);
+    crate::presentation_shared_contacts::bind(&ui);
+    let mut demo = fixtures::demo();
+    demo.select(7);
+    let mut view = demo.conversation();
+    let mut rows = view.messages.to_vec();
+    fixtures::fill_shared_contacts(&mut rows);
+    view.messages = rows.into();
+    ui.on_activate_message({
+        let weak = ui.as_weak();
+        move |id, action| {
+            if let Some(ui) = weak.upgrade() {
+                crate::presentation_shared_contacts::open(&ui, id, action == -31);
+            }
+        }
+    });
+    for dark in [false, true] {
+        ui.global::<Theme>().set_dark(dark);
+        for width in [1200., 800., 520.] {
+            ui.window().set_size(slint::LogicalSize::new(width, 1100.));
+            presentation::conversation(&ui, &view, true);
+            ui.invoke_layout_timeline();
+            for item in i_slint_backend_testing::ElementHandle::find_by_element_type_name(
+                &ui,
+                "TimelineItem",
+            )
+            .filter(|e| e.id().as_deref() != Some("AppWindow::measure-row"))
+            {
+                let bubble = child(&item, "MessageBubble::bubble");
+                if let Some(card) = item
+                    .query_descendants()
+                    .match_type_name("SharedContactCard")
+                    .find_first()
+                {
+                    contains(&bubble, &card);
+                    if let Some(message) = card
+                        .query_descendants()
+                        .match_id("SharedContactCard::message-button")
+                        .find_first()
+                    {
+                        let view = child(&card, "SharedContactCard::view-button");
+                        assert!(
+                            message.absolute_position().x + message.size().width
+                                <= view.absolute_position().x + 0.5
+                        );
+                    }
+                    card.query_descendants()
+                        .match_type_name("ContentTarget")
+                        .find_first()
+                        .unwrap()
+                        .invoke_accessible_default_action();
+                    assert!(ui.get_shared_contacts_open());
+                    let dialog =
+                        ElementHandle::find_by_element_type_name(&ui, "SharedContactsDialog")
+                            .next()
+                            .unwrap();
+                    let panel = child(&dialog, "SharedContactsDialog::panel");
+                    contains(&dialog, &panel);
+                    let header = child(&panel, "SharedContactsDialog::header");
+                    assert!(
+                        (header.absolute_position().y - panel.absolute_position().y).abs() < 0.5
+                    );
+                    ui.set_shared_contacts_open(false);
+                }
+                if let Some(tile) = item
+                    .query_descendants()
+                    .match_type_name("VideoTile")
+                    .find_first()
+                {
+                    contains(&bubble, &tile);
+                    let circle = child(&tile, "VideoTile::surface");
+                    assert!((circle.size().width - circle.size().height).abs() < 0.5);
+                    assert!(
+                        (circle.absolute_position().y - tile.absolute_position().y).abs() < 0.5
+                    );
+                    contains(&tile, &circle);
+                }
+            }
+        }
+    }
+    let id = view.messages[0].id;
+    crate::presentation_shared_contacts::open(&ui, id, false);
+    ui.invoke_shared_contact_action(0, 2);
+    ui.set_shared_contacts_open(false);
+    ui.set_clipboard_enabled(false);
+    ui.set_draft("".into());
+    ui.invoke_focus_composer();
+    use slint::platform::{Key, WindowEvent};
+    for (text, pressed) in [
+        (Key::Control.into(), true),
+        ("v".into(), true),
+        ("v".into(), false),
+        (Key::Control.into(), false),
+    ] {
+        ui.window().dispatch_event(if pressed {
+            WindowEvent::KeyPressed { text }
+        } else {
+            WindowEvent::KeyReleased { text }
+        });
+    }
+    assert!(ui.get_draft().contains("+1 555 000 0001"));
+    ui.set_demo_mode(false);
+    ui.set_connection_state(5);
+    let phone = Rc::new(std::cell::RefCell::new(String::new()));
+    ui.on_new_chat({
+        let phone = phone.clone();
+        move |number| *phone.borrow_mut() = number.to_string()
+    });
+    ui.invoke_shared_contact_action(0, 1);
+    assert_eq!(phone.borrow().as_str(), "15550000001");
+    assert!(!ui.get_shared_contacts_open());
+    crate::presentation_shared_contacts::open(&ui, id, false);
+    Arc::make_mut(&mut Arc::make_mut(&mut view.messages)[0].content).unavailable = true;
+    presentation::conversation(&ui, &view, false);
+    assert!(!ui.get_shared_contacts_open());
+    ui.hide().unwrap();
 }
 
 fn check_locations() {
@@ -520,4 +643,153 @@ fn check_same_name_participants() {
             );
         }
     }
+}
+
+fn check_live_locations() {
+    let ui = AppWindow::new().unwrap();
+    ui.set_demo_mode(true);
+    ui.set_show_conversation(true);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    crate::presentation_actions::bind(&ui, |_| false);
+    super::bind_actions(&ui, &runtime);
+    let mut demo = fixtures::demo();
+    demo.select(7);
+    let mut view = demo.conversation();
+    view.is_group = true;
+    fixtures::fill_live_locations(Arc::make_mut(&mut view.messages));
+    let images = Arc::new(
+        view.messages
+            .iter()
+            .map(|m| (m.id, Arc::new(fixtures::location_pixels())))
+            .collect(),
+    );
+    let avatars = Arc::new(
+        view.messages
+            .iter()
+            .map(|m| {
+                (
+                    crate::avatars::Target::Participant(m.sender_id.clone()),
+                    Arc::new(
+                        crate::avatars::Thumbnail::from_pixels(vec![160; 128 * 128 * 4]).unwrap(),
+                    ),
+                )
+            })
+            .collect(),
+    );
+    let demand = super::bind_images(&ui);
+    for dark in [false, true] {
+        ui.global::<Theme>().set_dark(dark);
+        for width in [1200., 800., 520., 1200.] {
+            ui.window().set_size(slint::LogicalSize::new(width, 1000.));
+            presentation::conversation(&ui, &view, true);
+            ui.show().unwrap();
+            ui.invoke_layout_timeline();
+            let geometry = (ui.get_timeline_height(), ui.get_timeline_y());
+            super::publish_images(&ui, &images);
+            crate::presentation::timeline::avatars(&ui, &avatars);
+            assert_eq!(
+                geometry,
+                (ui.get_timeline_height(), ui.get_timeline_y()),
+                "map/avatar arrival must not reflow live-location cards"
+            );
+            assert!(!demand.borrow().is_empty());
+            let mut cards = 0;
+            for item in ElementHandle::find_by_element_type_name(&ui, "TimelineItem")
+                .filter(|e| e.id().as_deref() != Some("AppWindow::measure-row"))
+            {
+                let bubble = child(&item, "MessageBubble::bubble");
+                let card = item
+                    .query_descendants()
+                    .match_type_name("LiveLocationCard")
+                    .find_first()
+                    .expect("live location card");
+                contains(&bubble, &card);
+                let stamp = child(&item, "MessageBubble::stamp");
+                contains(&bubble, &stamp);
+                let map = child(&card, "LiveLocationCard::map");
+                let availability = child(&card, "LiveLocationCard::availability");
+                contains(&card, &map);
+                contains(&card, &availability);
+                assert!(
+                    map.absolute_position().y + map.size().height
+                        <= availability.absolute_position().y + 0.5,
+                    "map must end above its availability label"
+                );
+                contains(&map, &child(&card, "LiveLocationCard::avatar-frame"));
+                contains(&map, &child(&card, "LiveLocationCard::attribution"));
+                let body = item
+                    .query_descendants()
+                    .match_id("MessageBubble::body")
+                    .find_first();
+                // A caption follows the availability label and stays above the footer.
+                if let Some(body) = body.filter(|body| body.size().height > 0.) {
+                    contains(&bubble, &body);
+                    assert!(
+                        body.absolute_position().y
+                            >= availability.absolute_position().y
+                                + availability.size().height
+                                + 5.5,
+                        "caption must start below the availability label"
+                    );
+                    assert!(
+                        body.absolute_position().y + body.size().height
+                            <= stamp.absolute_position().y + 0.5
+                    );
+                }
+                for target in [&map, &availability] {
+                    target
+                        .query_descendants()
+                        .match_type_name("ContentTarget")
+                        .find_first()
+                        .unwrap()
+                        .invoke_accessible_default_action();
+                    assert_eq!(ui.get_message_dialog(), 12);
+                    let id = ui.get_action_message();
+                    assert!(view.messages.iter().any(|m| m.id == id));
+                    assert_eq!(
+                        presentation::timeline::action(&ui, id, -20),
+                        Target::Unavailable,
+                        "a live share must not open a fixed-point Maps link"
+                    );
+                    presentation::conversation(&ui, &view, false);
+                    assert_eq!(
+                        ui.get_message_dialog(),
+                        12,
+                        "same-chat refresh retains the popup"
+                    );
+                    let dialog =
+                        ElementHandle::find_by_element_type_name(&ui, "LiveLocationDialog")
+                            .next()
+                            .unwrap();
+                    contains(&dialog, &child(&dialog, "LiveLocationDialog::panel"));
+                    child(&dialog, "LiveLocationDialog::ok").invoke_accessible_default_action();
+                    assert_eq!(ui.get_message_dialog(), 0);
+                }
+                cards += 1;
+            }
+            assert!(cards > 0);
+            assert!(
+                ui.get_timeline_rows()
+                    .iter()
+                    .filter(|r| r.message.location_live)
+                    .all(|r| r.message.sender_avatar.size().width == 128)
+            );
+        }
+    }
+    ui.invoke_activate_message(view.messages[0].id, -26);
+    assert_eq!(ui.get_message_dialog(), 12);
+    let mut removed = view.clone();
+    removed.messages = Arc::from([]);
+    presentation::conversation(&ui, &removed, false);
+    assert_eq!(
+        ui.get_message_dialog(),
+        0,
+        "removed messages close their popup"
+    );
+    ui.invoke_activate_message(view.messages[0].id, -26);
+    assert_eq!(ui.get_message_dialog(), 0, "stale clicks cannot reopen it");
+    ui.hide().unwrap();
 }

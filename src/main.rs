@@ -17,6 +17,7 @@ mod chat_management;
 mod clipboard;
 mod connection;
 mod contact_info;
+mod contact_sending;
 mod diagnostics;
 mod document_previews;
 mod document_thumbnails;
@@ -56,11 +57,13 @@ mod message_navigation;
 mod message_thumbnails;
 mod message_time;
 mod messaging;
+mod own_account;
 mod pdf_preview;
 mod performance;
 mod phone_history;
 mod photo_albums;
 mod photos;
+mod polls;
 mod preferences;
 mod presence;
 mod presentation;
@@ -73,6 +76,7 @@ mod presentation_avatars;
 mod presentation_calling;
 mod presentation_clipboard;
 mod presentation_contact_info;
+mod presentation_contact_sending;
 mod presentation_content;
 mod presentation_downloads;
 mod presentation_emoji;
@@ -84,17 +88,23 @@ mod presentation_hover_tests;
 mod presentation_menu_tests;
 mod presentation_message_controls;
 mod presentation_navigation;
+mod presentation_own_account;
 mod presentation_photos;
+mod presentation_polls;
 mod presentation_preferences;
 mod presentation_presence;
 #[cfg(test)]
 mod presentation_read_tests;
 mod presentation_scroll;
 mod presentation_settings_io;
+mod presentation_shared_contacts;
 mod presentation_storage;
 mod presentation_text;
 mod presentation_video;
 mod presentation_voice;
+mod presentation_window_state;
+#[cfg(target_os = "windows")]
+mod presentation_window_state_windows;
 mod protocol;
 mod protocol_actions;
 mod protocol_audio;
@@ -104,6 +114,7 @@ mod protocol_call_video;
 mod protocol_calling;
 mod protocol_calls;
 mod protocol_chat_management;
+mod protocol_contacts;
 mod protocol_content;
 mod protocol_document_previews;
 mod protocol_downloads;
@@ -113,7 +124,9 @@ mod protocol_locations;
 mod protocol_media;
 mod protocol_messages;
 mod protocol_outbox;
+mod protocol_own_account;
 mod protocol_photos;
+mod protocol_polls;
 mod protocol_presence;
 mod protocol_reads;
 mod protocol_receipts;
@@ -124,6 +137,7 @@ mod protocol_uploads;
 mod protocol_video;
 mod protocol_video_previews;
 mod service;
+mod shared_contacts;
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 mod skia_cpu_tests;
 mod startup;
@@ -133,6 +147,7 @@ mod video;
 mod video_process;
 mod voice;
 mod voice_recorder;
+mod window_state;
 
 use slint::ComponentHandle;
 use std::{path::PathBuf, time::Duration};
@@ -303,7 +318,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn run(options: Options, trace: &startup::Trace) -> Result<(), Box<dyn std::error::Error>> {
-    startup::select_backend(trace, options.software_rendering, options.startup_check)?;
+    let window_state = presentation_window_state::State::new(options.demo);
+    startup::select_backend(
+        trace,
+        options.software_rendering,
+        options.startup_check,
+        window_state.clone(),
+    )?;
     trace.record("runtime_create", "begin");
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -311,7 +332,8 @@ fn run(options: Options, trace: &startup::Trace) -> Result<(), Box<dyn std::erro
     trace.record("runtime_create", "ok");
     let demo = options.demo;
     let worker_trace = trace.clone();
-    let (preferences, wallpaper, storage_status) =
+    let window_path = window_state.path();
+    let (preferences, wallpaper, storage_status, window_saved) =
         runtime.block_on(runtime.spawn_blocking(move || {
             #[cfg(any(target_os = "macos", target_os = "linux"))]
             {
@@ -331,7 +353,21 @@ fn run(options: Options, trace: &startup::Trace) -> Result<(), Box<dyn std::erro
                 "wallpaper_decode",
                 if wallpaper.is_ok() { "ok" } else { "failed" },
             );
-            (preferences, wallpaper, (!demo).then(storage::status))
+            let window_saved = window_path
+                .and_then(|p| match window_state::load(&p) {
+                    Ok(s) => Some(s),
+                    Err(_) => {
+                        eprintln!("Heya: invalid or unavailable window state; using defaults.");
+                        None
+                    }
+                })
+                .unwrap_or_default();
+            (
+                preferences,
+                wallpaper,
+                (!demo).then(storage::status),
+                window_saved,
+            )
         }))?;
     let (mut preferences, preferences_path, preferences_status) = preferences;
     let wallpaper = wallpaper?;
@@ -360,6 +396,7 @@ fn run(options: Options, trace: &startup::Trace) -> Result<(), Box<dyn std::erro
             ),
         ));
     drop(wallpaper);
+    window_state.attach(&ui, window_saved, options.size.is_some());
     if let Some((width, height)) = options.size {
         ui.window()
             .set_size(slint::LogicalSize::new(width as f32, height as f32));
@@ -422,6 +459,7 @@ fn run(options: Options, trace: &startup::Trace) -> Result<(), Box<dyn std::erro
     startup::gui_step(trace, "window_show", options.software_rendering, || {
         ui.show()
     })?;
+    window_state.shown(&ui);
     startup::observe_window(&ui, trace);
 
     let capture_error = std::rc::Rc::new(std::cell::RefCell::new(None));
@@ -474,9 +512,17 @@ fn run(options: Options, trace: &startup::Trace) -> Result<(), Box<dyn std::erro
         .as_ref()
         .is_some_and(|benchmark| benchmark.failed());
     drop(benchmark);
+    let window_save = window_state
+        .finish()
+        .map(|(path, saved)| runtime.spawn_blocking(move || window_state::save(&path, &saved)));
     let hidden = ui.hide();
     drop(ui); // Releases all command senders before joining the service.
     runtime.block_on(async {
+        if let Some(save) = window_save
+            && !matches!(tokio::time::timeout(Duration::from_secs(5), save).await, Ok(Ok(Ok(()))))
+        {
+            eprintln!("Heya: window state could not be saved.");
+        }
         let _ = storage_task.await;
         let mut settings_operations=settings_operations;
         if tokio::time::timeout(Duration::from_secs(5), &mut settings_operations).await.is_err(){settings_operations.abort();let _=settings_operations.await;}

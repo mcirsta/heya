@@ -46,9 +46,6 @@ pub fn publish(ui: &AppWindow, status: &Status) {
     if status.phase == 0 || status.phase == 4 {
         ui.set_video_expanded(false);
     }
-    if let Some(error) = status.error {
-        ui.set_notice(error.label().into());
-    }
 }
 
 pub(crate) fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>) {
@@ -73,6 +70,8 @@ pub(crate) fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>) {
                     return;
                 }
                 let hidden = ui.get_settings_open()
+                    || ui.get_shared_contacts_open()
+                    || ui.get_send_contact_phase() > 0
                     || ui.get_new_chat_open()
                     || ui.get_account_dialog() != 0
                     || ui.window().is_minimized()
@@ -114,7 +113,7 @@ pub(crate) fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>) {
                 }
                 permit.send(command);
             }
-            Err(_) => ui.set_notice("Video is busy. Please try again.".into()),
+            Err(_) => ui.invoke_show_error("Video is busy. Please try again.".into()),
         }
     });
 }

@@ -54,6 +54,22 @@
           "vendored_path": "vendor/whatsapp-rust",
           "status": "local, not submitted",
           "reason": "Public Client::send_call_log writes the call_log app-state mutation with WA Web's [call_log, creator, callId, fromMe] index, which the literal-only registry schema cannot express"
+        },
+        {
+          "path": "patches/ptv-view-once.patch",
+          "crate": "wacore",
+          "reason": "MessageExt::is_view_once misses the inline PTV video flag",
+          "status": "local; not submitted",
+          "sha256": "22756ff33f3d392b6ad2a4624a80fcb040e35f6f6f14a144c270e4c85161ba21",
+          "vendored_path": "vendor/wacore"
+        },
+        {
+          "path": "patches/poll-creation-options.patch",
+          "sha256": "5af4b2af2b52a8436196e265057ba2ffc5dfb309f8c6df3df74f9a1152df2a6e",
+          "crate": "whatsapp-rust",
+          "vendored_path": "vendor/whatsapp-rust",
+          "status": "local, not submitted",
+          "reason": "Public creation send accepting caller-owned SendOptions while returning the actual PN/LID sender required for poll vote encryption"
         }
       ],
       "video_preview_reference": {
@@ -77,10 +93,11 @@
         ]
       },
       "location_reference": {
-        "reviewed_on": "2026-11-04",
+        "reviewed_on": "2026-11-05",
         "modules": [
           "WAWebParseLocationMessageProto",
           "WAWebMessageLocation.react",
+          "WAWebMessageLiveLocation.react",
           "WAWebMapUtils",
           "WAWebFormatLocationMsgText"
         ],
@@ -125,6 +142,69 @@
           }
         ],
         "implementation": "Independent Heya event mapping and archive repair; encrypted edits use the existing public SDK cryptography API. No proprietary implementation copied."
+      },
+      "contact_video_reference": {
+        "reviewed_on": "2026-11-05",
+        "modules": [
+          "WAWebParseVcardMessageProto",
+          "WAWebParseMultiVcardMessageProto",
+          "WAWebVcardParsingUtils",
+          "WAWebMessageVcard.react",
+          "WAWebMessageMultiVcard.react",
+          "WAWebPtvParsePtvMessageProto",
+          "WAWebPtvMessageComponent"
+        ],
+        "bundles": [
+          {
+            "url": "https://static.whatsapp.net/rsrc.php/v4izAp4/yG/l/en_US-j/VqAKj5YSriBEJC63gonxl161bdVNXjDXQWccp9_FixzWa3VChRD1-8-BIJJc6KuTipteFGUkYqT7O0zFg8gynLKTIDKAQTM8HsFcgjUKBsGUBJosOX1VeQVx7eJPkgcKFtUlBLyPrSzMppaWLKKR4rG5wkNmhlqGuCvKVqJrL5f2e0Kw5W07gZ4Hvm9PycYmAtRzmhFfV5XC22PJnG7iiY1OU4Ur8Mq49gve1Yd0WtK7V2SdJo.js",
+            "sha256": "f2d55f03f265b6e98a27557551cbe42e52af852fdc9cc808ec48ad2bfbe73b41"
+          },
+          {
+            "url": "https://static.whatsapp.net/rsrc.php/v4iyEZ4/yM/l/en_US-j/Si8LFO-Ol4QhcQSVcY_N5D4rNio554Ksoe00iVVZca3ZFOI7FFcQsjdOPd7jfeaxtjtmjuuH44R_iJMtIVK-mlYVNIDK0L9insxKm1CBjbpD28zUjjP6BerOEghyuADIhRsvwONk3_75vwBpSRVmcUg2bhBEVESlKhA9oipn3W3pZE9PfiVs0UCEUx65dh0Lh_D7Hjc_KGA1Q7TC37P0FGTM3YN3E7RfzEsFUd7PmsoPO1nNAlfUVsY1flszrDj3676SUhU_dVNcJDnmSWZ6lcRvyuRlCZMEE82yjzhN4c9CC1Io-viLTSpNtJ6jYG7kS5cgDH91Af.js",
+            "sha256": "3d422c323f849ea0b1c071b85ac855b1bab73d6d372f575f6fc2518283c59a47"
+          },
+          {
+            "url": "https://static.whatsapp.net/rsrc.php/v4ife54/yv/l/en_US-j/3EjdTRCmQab.js",
+            "sha256": "4f1682fca777074420b40cdcdaa4c349e33781c582cab7630e7a5a4400d3d279"
+          }
+        ],
+        "implementation": "Independent bounded vCard display and export; PTV uses the existing native video service. No proprietary implementation copied."
+      },
+      "poll_reference": {
+        "reviewed_on": "2026-11-05",
+        "modules": [
+          {
+            "name": "WAWebPollsParseWebMsgInfoPollUpdates",
+            "sha256": "02b8d5371cd7efe34670c1885c09f3f29f9a5d5eb779dd9284bab0c2b30b1b04"
+          },
+          {
+            "name": "WAWebPollsParsePollCreationMessageProto",
+            "sha256": "799b71307bd660572591d3d259a33f7e7bb19b67cc04b59f6dff618096912c7b"
+          },
+          {
+            "name": "WAWebPollsOptionRow",
+            "sha256": "9b2044b67d8086f6a1b8eb498edd588076f9904869772b105b8c166f38ad16c2"
+          },
+          {
+            "name": "WAWebPollsMessageComponentView",
+            "sha256": "d856d4fe1eda47897040252387e11936a9cf144802ca5f053375f26764771944"
+          }
+        ],
+        "notes": "Read-only format and visual reference; no application source copied. Public SDK cryptography used unchanged.",
+        "bundles": [
+          {
+            "url": "https://static.whatsapp.net/rsrc.php/v4izAp4/yG/l/en_US-j/VqAKj5YSriBEJC63gonxl161bdVNXjDXQWccp9_FixzWa3VChRD1-8-BIJJc6KuTipteFGUkYqT7O0zFg8gynLKTIDKAQTM8HsFcgjUKBsGUBJosOX1VeQVx7eJPkgcKFtUlBLyPrSzMppaWLKKR4rG5wkNmhlqGuCvKVqJrL5f2e0Kw5W07gZ4Hvm9PycYmAtRzmhFfV5XC22PJnG7iiY1OU4Ur8Mq49gve1Yd0WtK7V2SdJo.js",
+            "sha256": "f2d55f03f265b6e98a27557551cbe42e52af852fdc9cc808ec48ad2bfbe73b41"
+          },
+          {
+            "url": "https://static.whatsapp.net/rsrc.php/v4iyEZ4/yM/l/en_US-j/Si8LFO-Ol4QhcQSVcY_N5D4rNio554Ksoe00iVVZca3ZFOI7FFcQsjdOPd7jfeaxtjtmjuuH44R_iJMtIVK-mlYVNIDK0L9insxKm1CBjbpD28zUjjP6BerOEghyuADIhRsvwONk3_75vwBpSRVmcUg2bhBEVESlKhA9oipn3W3pZE9PfiVs0UCEUx65dh0Lh_D7Hjc_KGA1Q7TC37P0FGTM3YN3E7RfzEsFUd7PmsoPO1nNAlfUVsY1flszrDj3676SUhU_dVNcJDnmSWZ6lcRvyuRlCZMEE82yjzhN4c9CC1Io-viLTSpNtJ6jYG7kS5cgDH91Af.js",
+            "sha256": "3d422c323f849ea0b1c071b85ac855b1bab73d6d372f575f6fc2518283c59a47"
+          },
+          {
+            "url": "https://static.whatsapp.net/rsrc.php/v4ife54/yv/l/en_US-j/3EjdTRCmQab.js",
+            "sha256": "4f1682fca777074420b40cdcdaa4c349e33781c582cab7630e7a5a4400d3d279"
+          }
+        ]
       }
     },
     "zapfast": {
@@ -214,6 +294,23 @@
       "revision": "85888eebc3f512850239a05a59dfffbf5da6b108",
       "role": "Slint winit 0.31 OpenGL integration; exact upstream workspace pin",
       "license": "Apache-2.0"
+    },
+    "winit-x11": {
+      "repository": "https://github.com/rust-windowing/winit",
+      "revision": "7d20408d33210c93bf036335b88ee083ca563a90",
+      "package_version": "0.31.0-beta.3",
+      "registry_archive": "https://static.crates.io/crates/winit-x11/winit-x11-0.31.0-beta.3.crate",
+      "archive_sha256": "bb5746cd907e514b7895491a1c6f7d0cb70077f9e16928cd74ae6f987ffd96aa",
+      "license": "Apache-2.0",
+      "vendored_path": "vendor/winit-x11",
+      "patches": [
+        {
+          "path": "patches/winit-x11-fullscreen.patch",
+          "sha256": "8f6f7fcb2d0ba892f514a47bbc00f05a06a545004e14cbcb9b7b50e2dd4605ff",
+          "status": "local, not submitted",
+          "reason": "X11 Window::fullscreen ignores WM-initiated borderless fullscreen; preserve native size/mode without application geometry heuristics or resize polling"
+        }
+      ]
     }
   },
   "reference_files": {

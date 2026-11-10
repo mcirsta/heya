@@ -7,7 +7,11 @@ use crate::{
     },
     protocol_downloads::tests::attachment,
 };
-use std::{io::Write, sync::atomic::AtomicUsize, time::Duration};
+use std::{
+    io::{Seek, Write},
+    sync::atomic::AtomicUsize,
+    time::Duration,
+};
 use tokio::sync::Notify;
 
 struct Choose {
@@ -63,6 +67,8 @@ impl Source for Network {
         if self.failed.load(Ordering::SeqCst) {
             Err(Error::Integrity)
         } else {
+            // Match the real SDK's successful authenticated-writer contract.
+            sink.rewind().map_err(|_| Error::Storage)?;
             Ok(sink)
         }
     }
@@ -96,6 +102,38 @@ async fn seed(kind: Kind, bytes: &[u8]) -> (tempfile::TempDir, Archive, Request)
         .id;
     let request = archive.download_request(chat, id).await.unwrap().unwrap();
     (dir, archive, request)
+}
+
+#[tokio::test]
+async fn received_contact_saves_as_a_vcard_without_a_connection_or_network_worker() {
+    let bytes=b"BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Sample Contact\r\nTEL;waid=15550000001:+1 555 000 0001\r\nEND:VCARD\r\n";
+    let (dir, archive, request) = seed(Kind::Contact, bytes).await;
+    let destination = dir.path().join("Sample contact.vcf");
+    let picker = Arc::new(Choose {
+        path: Some(destination.clone()),
+        calls: AtomicUsize::new(0),
+        hold: false,
+        opened: Notify::new(),
+    });
+    let (_source, sources) = watch::channel(None);
+    let (updates, status) = watch::channel(Status::default());
+    save(Job {
+        archive: Some(archive),
+        sources,
+        picker,
+        target: Target {
+            chat: request.chat,
+            message: request.id,
+            parent: String::new(),
+            demo: None,
+        },
+        control: Control::default(),
+        updates,
+    })
+    .await
+    .unwrap();
+    assert_eq!(std::fs::read(destination).unwrap(), bytes);
+    assert_eq!(status.borrow().phase, Phase::Saved);
 }
 async fn phase(rx: &mut watch::Receiver<Status>, wanted: i32) -> Status {
     tokio::time::timeout(Duration::from_secs(3), async {
@@ -455,4 +493,48 @@ async fn corrupt_cached_bytes_need_verification_and_can_recover_from_the_network
     clean(files.path());
     drop(tx);
     task.await.unwrap();
+}
+
+#[tokio::test]
+async fn rewound_downloads_with_the_wrong_length_still_preserve_the_destination() {
+    for bytes in [
+        b"short".as_slice(),
+        b"longer than the declared document length".as_slice(),
+    ] {
+        let (dir, archive, request) = seed(Kind::Document, b"expected document bytes").await;
+        let destination = dir.path().join("synthetic.doc");
+        std::fs::write(&destination, b"original user content").unwrap();
+        let picker = Arc::new(Choose {
+            path: Some(destination.clone()),
+            calls: AtomicUsize::new(0),
+            hold: false,
+            opened: Notify::new(),
+        });
+        let (_source, sources) =
+            watch::channel(Some(Arc::new(Network::new(bytes)) as Arc<dyn Source>));
+        let (updates, status) = watch::channel(Status::default());
+        assert_eq!(
+            save(Job {
+                archive: Some(archive),
+                sources,
+                picker,
+                target: Target {
+                    chat: request.chat,
+                    message: request.id,
+                    parent: String::new(),
+                    demo: None
+                },
+                control: Control::default(),
+                updates
+            })
+            .await,
+            Err(Error::Integrity)
+        );
+        assert_ne!(status.borrow().phase, Phase::Saved);
+        assert_eq!(
+            std::fs::read(destination).unwrap(),
+            b"original user content"
+        );
+        clean(dir.path());
+    }
 }

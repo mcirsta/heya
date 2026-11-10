@@ -68,7 +68,7 @@ pub async fn fetch(client: &Client, archive: &Archive, request: &Request) -> Opt
     if message.is_view_once() {
         return None;
     }
-    let video = message.get_base_message().video_message.as_option()?;
+    let video = crate::protocol_video::clip(&message)?;
     if video.view_once == Some(true) {
         return None;
     }

@@ -129,3 +129,38 @@ fn disk_write_failure_leaves_the_destination_untouched() {
     assert_eq!(fs::read(destination).unwrap(), b"original");
     clean(dir.path());
 }
+
+#[test]
+fn sdk_rewind_preserves_length_and_seeking_does_not_bypass_write_limits() {
+    let dir = tempfile::tempdir().unwrap();
+    let destination = dir.path().join("synthetic.doc");
+    let (partial, mut sink, _) = staging(destination.clone());
+    sink.write_all(b"abcdef").unwrap();
+    // The SDK returns successful, authenticated downloads rewound for reading.
+    sink.rewind().unwrap();
+    assert_eq!(
+        sink.bytes, 6,
+        "verified byte length must survive the SDK's rewind"
+    );
+    sink.write_all(b"xy").unwrap();
+    assert_eq!(sink.bytes, 6, "overwriting is not appending");
+    sink.seek(SeekFrom::End(0)).unwrap();
+    sink.write_all(b"g").unwrap();
+    assert_eq!(sink.bytes, 7);
+    sink.truncate(3).unwrap();
+    sink.rewind().unwrap();
+    sink.write_all(b"z").unwrap();
+    assert_eq!(sink.bytes, 3);
+    sink.seek(SeekFrom::Start(MAX_BYTES - 1)).unwrap();
+    assert_eq!(
+        sink.write(b"xx").unwrap_err().kind(),
+        io::ErrorKind::FileTooLarge
+    );
+    assert_eq!(sink.bytes, 3, "a seek alone cannot extend the file");
+    sink.seek(SeekFrom::End(0)).unwrap();
+    sink.write_all(b"!").unwrap();
+    assert_eq!(sink.bytes, 4);
+    partial.publish(sink).unwrap();
+    assert_eq!(fs::read(destination).unwrap(), b"zyc!");
+    clean(dir.path());
+}

@@ -27,6 +27,15 @@ out of the scene; the rounded composer outline exists only while focused.
 Selection uses a bounded ID set and does not alter
 row widths or invalidate measured heights.
 
+Text selection uses Slint's read-only editor. Right-clicking a message with a
+selection adds **Copy selection**, while **Copy message** copies its full text.
+The menu snapshots the selected UTF-8 range before taking focus, scoped to the
+current chat and message. Dragging only updates offsets; it does not repeatedly
+copy the selected substring. Both actions use the existing toolkit clipboard.
+The menu uses Slint's popup focus handling, so the original text selection stays
+highlighted while navigating the menu. Escape and Copy restore text focus;
+clicking elsewhere clears the selection normally.
+
 The separate edit field preserves the composer draft. Saving checks ownership,
 message age, current text and eligible text envelope again on the archive worker.
 Sender deletion checks ownership and age too. Both operations have distinct,

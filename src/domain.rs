@@ -255,6 +255,14 @@ impl Chat {
                 last.filter(|m| m.content.sticker.is_some())
                     .map(|_| "Sticker".into())
             });
+        let notice = notice.or_else(|| {
+            last.filter(|m| !m.content.contacts.is_empty())
+                .map(|m| crate::shared_contacts::summary(&m.content.contacts))
+        });
+        let notice = notice.or_else(|| {
+            last.and_then(|m| m.content.poll.as_ref())
+                .map(|p| format!("Poll: {}", p.question))
+        });
         ChatSummary {
             id: self.id,
             title: self.title.clone(),
@@ -437,6 +445,180 @@ impl DemoState {
         use crate::message_actions::{Command, Destination, OperationReply, ReplyDraft};
         let mut destinations = Vec::new();
         let (request, kind, saved) = match command {
+            Command::CreatePoll {
+                chat,
+                draft,
+                request,
+                ..
+            } => {
+                let prepared = crate::protocol_polls::prepare(&draft, None, "");
+                let saved = if let Ok(mut prepared) = prepared {
+                    if let Some(p) = &mut prepared.content.poll {
+                        p.view.can_vote = true;
+                        p.view.counts = vec![0; p.options.len()];
+                    }
+                    let draft = self
+                        .chats
+                        .iter()
+                        .find(|c| c.id == chat)
+                        .map(|c| c.draft.clone());
+                    if let Some(sent) = self.send(chat, prepared.text) {
+                        if let Some(c) = self.chats.iter_mut().find(|c| c.id == chat) {
+                            if let Some(draft) = draft {
+                                c.draft = draft;
+                            }
+                            let m = c.messages.iter_mut().find(|m| m.id == sent.id).unwrap();
+                            prepared.content.metadata = m.content.metadata.clone();
+                            prepared.content.quote = m.content.quote.clone();
+                            m.content = std::sync::Arc::new(prepared.content);
+                        }
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                (request, 12, saved)
+            }
+            Command::VotePoll {
+                chat,
+                message,
+                option,
+                request,
+            } => {
+                let poll = self
+                    .chats
+                    .iter_mut()
+                    .find(|c| c.id == chat)
+                    .and_then(|c| c.messages.iter_mut().find(|m| m.id == message))
+                    .and_then(|m| std::sync::Arc::make_mut(&mut m.content).poll.as_mut());
+                let saved =
+                    if let Some(p) = poll.filter(|p| option < p.options.len() && p.view.can_vote) {
+                        let old = p.view.selected.clone();
+                        let mut next = old.clone();
+                        if let Some(index) = next.iter().position(|i| *i == option) {
+                            next.remove(index);
+                        } else if p.selectable == 1 {
+                            next = vec![option];
+                        } else {
+                            next.push(option);
+                        }
+                        if next.len() > p.selectable {
+                            false
+                        } else {
+                            for i in &old {
+                                p.view.counts[*i] -= 1;
+                            }
+                            for i in &next {
+                                p.view.counts[*i] += 1;
+                            }
+                            p.view.voters = p.view.voters + usize::from(!next.is_empty())
+                                - usize::from(!old.is_empty());
+                            p.view.selected = next;
+                            true
+                        }
+                    } else {
+                        false
+                    };
+                (request, 13, saved)
+            }
+            Command::PollResults {
+                chat,
+                message,
+                option,
+                limit,
+                request,
+            } => {
+                let poll = self
+                    .chats
+                    .iter()
+                    .find(|c| c.id == chat)
+                    .and_then(|c| c.messages.iter().find(|m| m.id == message))
+                    .and_then(|m| m.content.poll.as_ref());
+                let results = poll.filter(|p| option < p.options.len()).map(|p| {
+                    let count = p.view.counts[option].max(0) as usize;
+                    let voters = (0..count.min(limit))
+                        .map(|i| crate::polls::Voter {
+                            jid: if i == 0 && p.view.selected.contains(&option) {
+                                "#self".into()
+                            } else {
+                                format!("1558{i:07}@s.whatsapp.net")
+                            },
+                            name: if i == 0 && p.view.selected.contains(&option) {
+                                "You".into()
+                            } else {
+                                format!("Sample voter {}", i + 1)
+                            },
+                            detail: String::new(),
+                        })
+                        .collect();
+                    std::sync::Arc::new(crate::polls::Results {
+                        message,
+                        question: p.question.clone(),
+                        options: p.options.clone(),
+                        counts: p.view.counts.clone(),
+                        option,
+                        voters,
+                        more: count > limit,
+                    })
+                });
+                return (
+                    OperationReply {
+                        request,
+                        kind: 14,
+                        saved: results.is_some(),
+                        poll_results: results,
+                        ..Default::default()
+                    },
+                    std::sync::Arc::from([]),
+                );
+            }
+            Command::Contacts { query, request } => {
+                return (
+                    OperationReply {
+                        request,
+                        kind: 10,
+                        saved: true,
+                        contacts: Some(crate::contact_sending::demo(&query)),
+                        ..Default::default()
+                    },
+                    std::sync::Arc::from([]),
+                );
+            }
+            Command::SendContacts {
+                chat,
+                contacts,
+                request,
+                ..
+            } => {
+                let prepared = crate::protocol_contacts::prepare(&contacts, None, "");
+                let saved = if let Ok(prepared) = prepared {
+                    let draft = self
+                        .chats
+                        .iter()
+                        .find(|c| c.id == chat)
+                        .map(|c| c.draft.clone());
+                    if let Some(sent) = self.send(chat, prepared.text) {
+                        if let Some(c) = self.chats.iter_mut().find(|c| c.id == chat) {
+                            if let Some(draft) = draft {
+                                c.draft = draft;
+                            }
+                            let m = c.messages.iter_mut().find(|m| m.id == sent.id).unwrap();
+                            let mut content = prepared.content;
+                            content.metadata = m.content.metadata.clone();
+                            content.quote = m.content.quote.clone();
+                            m.content = std::sync::Arc::new(content);
+                        }
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                (request, 11, saved)
+            }
             Command::Star {
                 chat,
                 message,
@@ -511,6 +693,8 @@ impl DemoState {
                         saved: info.is_some(),
                         info,
                         error: String::new(),
+                        contacts: None,
+                        poll_results: None,
                     },
                     destinations.into(),
                 );
@@ -763,6 +947,8 @@ impl DemoState {
         (
             OperationReply {
                 info: None,
+                contacts: None,
+                poll_results: None,
                 request,
                 kind,
                 saved,

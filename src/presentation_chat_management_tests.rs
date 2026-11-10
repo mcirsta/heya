@@ -132,7 +132,10 @@ pub fn check_ui() {
         "clicking Mute always must submit the captured chat and action"
     );
     assert!(ui.get_chat_management_busy());
-    assert_eq!(ui.get_notice(), "Updating chat…");
+    assert!(
+        ui.get_error_message().is_empty(),
+        "accepted chat changes need no global notice"
+    );
     ui.set_chat_management_busy(false);
     ui.set_draft("Keep while changing folder".into());
     ui.invoke_change_chat_folder(true);
@@ -159,7 +162,7 @@ pub fn check_ui() {
         &ui,
         &messaging::Snapshot {
             revision: ui.get_live_revision(),
-            notice: "Synthetic unconfirmed chat change".into(),
+            error: "Synthetic unconfirmed chat change".into(),
             view: Some(std::sync::Arc::new(crate::archive::View {
                 history_failed: true,
                 ..Default::default()
@@ -168,7 +171,7 @@ pub fn check_ui() {
         },
     );
     assert_eq!(
-        ui.get_notice(),
+        ui.get_error_message(),
         "Synthetic unconfirmed chat change",
         "an old history warning must not hide an action result"
     );

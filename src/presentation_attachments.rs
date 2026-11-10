@@ -65,7 +65,7 @@ fn bind(ui: &AppWindow, tx: mpsc::Sender<Command>) {
             })
             .is_err()
         {
-            ui.set_notice("Attachment selection is busy. Please try again.".into());
+            ui.invoke_show_error("Attachment selection is busy. Please try again.".into());
         }
     });
     let weak = ui.as_weak();

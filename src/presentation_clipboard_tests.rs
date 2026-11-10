@@ -28,7 +28,6 @@ fn capture(ui: &AppWindow) -> Paste {
         draft: ui.get_draft().into(),
         anchor: ui.get_composer_anchor(),
         cursor: ui.get_composer_cursor(),
-        generation: ui.get_paste_generation(),
     }
 }
 fn composer_menu(ui: &AppWindow, action: &str) {
@@ -63,6 +62,48 @@ fn composer_menu(ui: &AppWindow, action: &str) {
     key(ui, Key::Return);
     slint::platform::update_timers_and_animations();
 }
+
+#[test]
+fn paste_after_navigation_uses_current_editor_state() {
+    i_slint_backend_testing::init_no_event_loop();
+    let ui = AppWindow::new().unwrap();
+    ui.set_demo_mode(true);
+    ui.set_show_conversation(true);
+    ui.window().set_size(slint::LogicalSize::new(1000., 700.));
+    let mut demo = crate::fixtures::demo();
+    crate::presentation::conversation(&ui, &demo.conversation(), true);
+    let (tx, mut rx) = mpsc::channel(1);
+    bind(&ui, tx);
+    ui.show().unwrap();
+    slint::platform::update_timers_and_animations();
+
+    // The new conversation is already visible when Paste is accepted. Slint's
+    // deferred changed handlers for that navigation have not run yet.
+    demo.select(2);
+    crate::presentation::conversation(&ui, &demo.conversation(), true);
+    ui.invoke_focus_composer();
+    ui.invoke_set_composer_cursor(0);
+    ui.invoke_paste_composer(ui.get_composer_anchor(), ui.get_composer_cursor());
+    let Command::Paste(paste) = rx.try_recv().unwrap() else {
+        panic!("paste command")
+    };
+    slint::platform::update_timers_and_animations();
+    assert_eq!(ui.get_selected_id(), paste.target.chat);
+    assert_eq!(ui.get_draft().as_str(), paste.draft);
+    assert_eq!(ui.get_composer_anchor(), paste.anchor);
+    assert_eq!(ui.get_composer_cursor(), paste.cursor);
+    assert!(ui.get_composer_focused());
+    ui.set_clipboard_busy(false);
+    insert_text(&ui, paste, "First paste after navigation 🙂");
+    assert_eq!(
+        ui.get_draft(),
+        "First paste after navigation 🙂",
+        "{}",
+        ui.get_error_message()
+    );
+    ui.hide().unwrap();
+}
+
 pub fn check_ui() {
     let ui = AppWindow::new().unwrap();
     ui.set_demo_mode(true);
@@ -75,6 +116,46 @@ pub fn check_ui() {
     let sent = sends.clone();
     ui.on_send_message(move |_, _| sent.set(sent.get() + 1));
     ui.show().unwrap();
+    // Reproduce a newly opened chat: focus is still in the sidebar and the
+    // first interaction with the composer is right-click Paste.
+    let search =
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(&ui, "Search chats")
+            .next()
+            .unwrap();
+    let p = search.absolute_position();
+    let s = search.size();
+    let position = slint::LogicalPosition::new(p.x + s.width / 2., p.y + s.height / 2.);
+    for event in [
+        WindowEvent::PointerPressed {
+            position,
+            button: slint::platform::PointerEventButton::Left,
+        },
+        WindowEvent::PointerReleased {
+            position,
+            button: slint::platform::PointerEventButton::Left,
+        },
+    ] {
+        ui.window().dispatch_event(event);
+    }
+    assert!(!ui.get_composer_focused());
+    composer_menu(&ui, "Paste");
+    let Command::Paste(paste) = rx.try_recv().unwrap() else {
+        panic!("first menu paste")
+    };
+    assert!(
+        ui.get_composer_focused(),
+        "menu closure must retain the paste target's focus"
+    );
+    ui.set_clipboard_busy(false);
+    insert_text(&ui, paste, "First paste 🙂\nSecond line");
+    assert_eq!(
+        ui.get_draft(),
+        "First paste 🙂\nSecond line",
+        "{}",
+        ui.get_error_message()
+    );
+    assert_eq!(sends.get(), 0);
+    ui.set_draft("".into());
     ui.invoke_focus_composer();
     ui.set_draft("A🙂oldZ".into());
     ui.invoke_set_composer_cursor(5);
@@ -137,7 +218,7 @@ pub fn check_ui() {
         ui.get_draft(),
         "A🙂oldZ\nsecond line",
         "{}",
-        ui.get_notice()
+        ui.get_error_message()
     );
     assert_eq!(sends.get(), 0, "menu paste cannot submit a multiline draft");
     let paste = capture(&ui);
@@ -145,10 +226,12 @@ pub fn check_ui() {
     let changed = ui.get_draft();
     insert_text(&ui, paste, "must not overwrite");
     assert_eq!(ui.get_draft(), changed);
+    ui.invoke_close_error();
     let paste = capture(&ui);
     ui.set_selected_id(2);
     insert_text(&ui, paste, "wrong recipient");
     assert_eq!(ui.get_draft(), changed);
+    ui.invoke_close_error();
     // A single-file and multi-file native drop share one captured recipient.
     ui.set_selected_id(1);
     ui.set_draft("Keep my text".into());

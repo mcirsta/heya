@@ -23,6 +23,8 @@ static NEXT: AtomicU64 = AtomicU64::new(1);
 static EMOJI_SUPPORT: OnceLock<HashSet<&'static str>> = OnceLock::new();
 
 unsafe extern "C" {
+    fn heya_window_restore(view: *mut c_void, size: *mut f64) -> u32;
+    fn heya_window_save(view: *mut c_void, normal: u32, flags: u32);
     fn heya_dock_badge(count: u32);
     fn heya_startup_system_info(output: *mut c_char, capacity: usize);
     fn heya_emoji_support(catalogue: *const c_char, supported: *mut u8, count: usize);
@@ -297,4 +299,14 @@ mod tests {
         control.cancel();
         assert_eq!(choose(1, "", None, &control).await, Err(Error::Cancelled));
     }
+}
+
+/// Borrowed NSView from the main-thread winit window; AppKit owns persistence.
+pub fn restore_window(view: std::ptr::NonNull<c_void>) -> ([f64; 2], u32) {
+    let mut size = [0.; 2];
+    let flags = unsafe { heya_window_restore(view.as_ptr(), size.as_mut_ptr()) };
+    (size, flags)
+}
+pub fn save_window(view: std::ptr::NonNull<c_void>, normal: u32, flags: u32) {
+    unsafe { heya_window_save(view.as_ptr(), normal, flags) }
 }

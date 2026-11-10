@@ -1,43 +1,6 @@
 import { Theme } from "theme.slint";
 import { SoftButton } from "settings.slint";
 
-export component ConnectionBanner inherits Rectangle {
-    in property <int> state;
-    in property <bool> waiting-key-store;
-    in property <string> error;
-    in property <bool> blocked;
-    in property <bool> can-relink;
-    callback connect();
-    callback disconnect();
-    callback relink();
-    background: Theme.surface;
-    preferred-height: contents.preferred-height;
-    contents := VerticalLayout {
-        padding: 12px;
-        spacing: 6px;
-        Text {
-            text: root.state == 9 ? root.error : root.state == 1 ? (root.waiting-key-store ? @tr("Waiting for the OS key store…") : @tr("Opening your saved chats…")) : root.state == 2 ? @tr("Connecting… Your saved chats are available.") : root.state == 6 ? @tr("Connection lost. Reconnecting automatically…") : root.state == 7 ? @tr("Saving and disconnecting…") : @tr("Offline. Your saved chats and drafts are available.");
-            color: Theme.secondary;
-            wrap: word-wrap;
-            font-size: 13px;
-            accessible-role: text;
-            accessible-label: self.text;
-        }
-
-        if root.state != 7 && (!root.blocked || root.can-relink): HorizontalLayout {
-            alignment: start;
-            SoftButton {
-                text: root.can-relink ? @tr("Link again") : root.state > 0 && root.state < 7 ? @tr("Cancel connection") : @tr("Connect");
-                activated => {
-                    if root.can-relink { root.relink(); }
-                    else if root.state > 0 && root.state < 7 { root.disconnect(); }
-                    else { root.connect(); }
-                }
-            }
-        }
-    }
-}
-
 export component AccountDialog inherits Rectangle {
     in property <bool> unlink;
     callback close();

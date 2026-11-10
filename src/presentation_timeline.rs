@@ -190,7 +190,11 @@ impl State {
                 super::message_row(message, previous)
             })
             .clone();
-        if self.group && !row.outgoing && row.first_in_run && !row.system_notice {
+        if self.group
+            && !row.outgoing
+            && (row.first_in_run || row.location_live)
+            && !row.system_notice
+        {
             row.sender_avatar = self.avatars.get(&crate::avatars::Target::Participant(
                 message.sender_id.clone(),
             ));
@@ -201,6 +205,14 @@ impl State {
                 .get(&message.id)
                 .map(|(_, image)| image.clone())
                 .unwrap_or_default();
+        }
+        if !row.contact_account.is_empty() {
+            row.contact_avatar = self
+                .avatars
+                .get(&crate::avatars::Target::Participant(format!(
+                    "{}@s.whatsapp.net",
+                    row.contact_account
+                )));
         }
         if (row.has_photo || row.has_sticker)
             && let Some(photo) = self.photos.get(&message.id)
@@ -778,10 +790,29 @@ fn same_row(a: &TimelineRow, b: &TimelineRow) -> bool {
         && am.has_thumbnail == bm.has_thumbnail
         && am.has_attachment == bm.has_attachment
         && am.has_location == bm.has_location
+        && am.location_live == bm.location_live
         && am.location_name == bm.location_name
         && am.location_address == bm.location_address
         && am.location_domain == bm.location_domain
         && am.location_coordinates == bm.location_coordinates
+        && am.contact_count == bm.contact_count
+        && am.has_poll == bm.has_poll
+        && am.poll_question == bm.poll_question
+        && am.poll_hint == bm.poll_hint
+        && am.poll_status == bm.poll_status
+        && am.poll_total == bm.poll_total
+        && am.poll_voters == bm.poll_voters
+        && am.poll_multiple == bm.poll_multiple
+        && am.poll_can_vote == bm.poll_can_vote
+        && am.poll_can_view == bm.poll_can_view
+        && am.poll_busy == bm.poll_busy
+        && am.poll_options.row_count() == bm.poll_options.row_count()
+        && am.poll_options.iter().eq(bm.poll_options.iter())
+        && am.contact_name == bm.contact_name
+        && am.contact_initials == bm.contact_initials
+        && am.contact_number == bm.contact_number
+        && am.contact_account == bm.contact_account
+        && same_image(&am.contact_avatar, &bm.contact_avatar)
         && am.has_document == bm.has_document
         && am.document_name == bm.document_name
         && am.document_type == bm.document_type
@@ -803,6 +834,7 @@ fn same_row(a: &TimelineRow, b: &TimelineRow) -> bool {
         && same_album(&am.album_photos, &bm.album_photos)
         && am.has_video == bm.has_video
         && am.video_duration == bm.video_duration
+        && am.video_round == bm.video_round
         && am.photo_width == bm.photo_width
         && am.photo_height == bm.photo_height
         && am.photo_state == bm.photo_state
@@ -835,20 +867,35 @@ pub(crate) fn avatars(ui: &AppWindow, snapshot: &crate::avatars::Snapshot) {
     with(ui, |model| {
         let mut state = model.state.borrow_mut();
         let changed = state.avatars.update(snapshot, true);
-        if !state.group || changed.is_empty() {
+        if changed.is_empty() {
             return;
         }
+        ui.set_avatar_revision(ui.get_avatar_revision().wrapping_add(1));
         // The avatar occupies a reserved 28px square. Update pixels only;
         // retain measured text, bubble positions and the reader's scroll anchor.
         for i in 0..model.visible.row_count() {
             let mut row = model.visible.row_data(i).unwrap();
             let m = &mut row.message;
-            if m.outgoing || !m.first_in_run || m.system_notice {
-                continue;
+            let mut update = false;
+            if !m.contact_account.is_empty() {
+                let target = crate::avatars::Target::Participant(format!(
+                    "{}@s.whatsapp.net",
+                    m.contact_account
+                ));
+                if changed.contains(&target) {
+                    m.contact_avatar = state.avatars.get(&target);
+                    update = true;
+                }
             }
-            let target = crate::avatars::Target::Participant(m.sender_id.to_string());
-            if changed.contains(&target) {
-                m.sender_avatar = state.avatars.get(&target);
+            if state.group && !m.outgoing && (m.first_in_run || m.location_live) && !m.system_notice
+            {
+                let target = crate::avatars::Target::Participant(m.sender_id.to_string());
+                if changed.contains(&target) {
+                    m.sender_avatar = state.avatars.get(&target);
+                    update = true;
+                }
+            }
+            if update {
                 model.visible.set_row_data(i, row);
             }
         }
@@ -1117,6 +1164,41 @@ pub(crate) fn selected_text(ui: &AppWindow, ids: &std::collections::HashSet<i32>
     result
 }
 
+pub(crate) fn shared_contacts(
+    ui: &AppWindow,
+    id: i32,
+) -> Option<std::sync::Arc<crate::message_content::Content>> {
+    let mut content = None;
+    with(ui, |model| {
+        content = model
+            .state
+            .borrow()
+            .source
+            .iter()
+            .find(|m| m.id == id && !m.content.unavailable && !m.content.contacts.is_empty())
+            .map(|m| m.content.clone());
+    });
+    content
+}
+
+pub(crate) fn participant_avatar(ui: &AppWindow, number: &str) -> slint::Image {
+    let mut image = slint::Image::default();
+    with(ui, |model| {
+        image = model
+            .state
+            .borrow()
+            .avatars
+            .get(&crate::avatars::Target::Participant(
+                if number.contains('@') {
+                    number.into()
+                } else {
+                    format!("{number}@s.whatsapp.net")
+                },
+            ))
+    });
+    image
+}
+
 pub(crate) fn action(ui: &AppWindow, id: i32, index: i32) -> crate::message_content::Target {
     use crate::message_content::Target;
     let mut target = Target::Unavailable;
@@ -1130,6 +1212,7 @@ pub(crate) fn action(ui: &AppWindow, id: i32, index: i32) -> crate::message_cont
                 .content
                 .location
                 .as_ref()
+                .filter(|l| !l.live || index == -25)
                 .map(|location| match index {
                     -20 => Target::Url(location.map_url()),
                     -21 => Target::Copy(location.map_url()),

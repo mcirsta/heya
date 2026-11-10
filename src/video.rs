@@ -147,6 +147,7 @@ pub async fn run(
     let (frames, mut snapshots) = watch::channel(Status::default());
     let mut status = Status::default();
     let mut control = Control::default();
+    let mut played = false;
     let mut sources_open = true;
     let mut archives_open = true;
     loop {
@@ -164,7 +165,7 @@ pub async fn run(
                         if let Some(mut old)=worker.take() {old.stop().await;} frames.send_replace(Status::default());
                         request=None;
                         control=Control::default();
-                        status=Status {id,phase:1,..Default::default()};
+                        status=Status {id,phase:1,..Default::default()};played=false;
                         updates.send_replace(status.clone());
                         loading=Some(Box::pin(load(db.clone(),sources.borrow().clone(),id,demo)));
                     }
@@ -203,8 +204,20 @@ pub async fn run(
             }
             result=snapshots.changed()=>{
                 if result.is_err() {break;}
-                let next=snapshots.borrow_and_update().clone();
-                if worker.is_some() && next.id==status.id {status=next;updates.send_replace(status.clone());}
+                let mut next=snapshots.borrow_and_update().clone();
+                if worker.is_some() && next.id==status.id {
+                    let progress=next.phase==2 && next.position>0. && next.frame_number>0;
+                    if !demo && progress && !played {
+                        played=true;
+                        let enabled=preferences.borrow().send_receipts;
+                        if enabled && let (Some(db),Some(request))=(&db,&request) {
+                            let mut failed=db.queue_video_played_receipt(request).await.is_err();
+                            if !preferences.borrow().send_receipts {failed|=db.discard_receipts().await.is_err();}
+                            if failed {next.error=Some(Error::Archive);}
+                        }
+                    }
+                    status=next;updates.send_replace(status.clone());
+                }
             }
             result=async {worker.as_mut().unwrap().finished().await},if worker.is_some()=>{
                 worker=None;request=None;frames.send_replace(Status::default());

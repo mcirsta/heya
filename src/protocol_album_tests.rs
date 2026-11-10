@@ -491,7 +491,7 @@ async fn album_backfill_reopens_preserves_cache_and_alias_merges_keep_membership
     )
     .await
     .unwrap();
-    db.blocking(|c|{c.execute_batch("DROP INDEX messages_album; ALTER TABLE messages DROP COLUMN album_index; ALTER TABLE messages DROP COLUMN album; DROP INDEX messages_read_wire; ALTER TABLE messages DROP COLUMN read_wire; ALTER TABLE outgoing_reads DROP COLUMN keys; PRAGMA user_version=17;")?;Ok(())}).unwrap();
+    db.blocking(|c|{c.execute_batch("DROP INDEX messages_album; ALTER TABLE messages DROP COLUMN album_index; ALTER TABLE messages DROP COLUMN album; DROP INDEX messages_read_wire; ALTER TABLE messages DROP COLUMN read_wire; ALTER TABLE outgoing_reads DROP COLUMN keys; DROP TABLE IF EXISTS poll_events; PRAGMA user_version=17;")?;Ok(())}).unwrap();
     drop(db);
     let db = Archive::open(files.clone(), KEY).unwrap();
     repair_text(&db).unwrap();

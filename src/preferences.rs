@@ -26,6 +26,7 @@ pub struct Preferences {
     pub theme: String,
     pub font: String,
     pub connect_automatically: bool,
+    pub appear_offline: bool,
     pub enter_sends: bool,
     pub show_shortcut_hint: bool,
     pub show_wallpaper: bool,
@@ -47,6 +48,7 @@ impl Default for Preferences {
             }
             .into(),
             connect_automatically: true,
+            appear_offline: false,
             enter_sends: true,
             show_shortcut_hint: true,
             show_wallpaper: true,
@@ -86,6 +88,7 @@ impl Preferences {
                 self.font = if value == 0 { "System" } else { "Inter" }.into()
             }
             "connect_automatically"
+            | "appear_offline"
             | "enter_sends"
             | "show_shortcut_hint"
             | "show_wallpaper"
@@ -95,6 +98,7 @@ impl Preferences {
             {
                 let field = match key {
                     "connect_automatically" => &mut self.connect_automatically,
+                    "appear_offline" => &mut self.appear_offline,
                     "send_receipts" => &mut self.send_receipts,
                     "auto_download_photos" => &mut self.auto_download_photos,
                     "enter_sends" => &mut self.enter_sends,

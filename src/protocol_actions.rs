@@ -9,6 +9,31 @@ use whatsapp_rust::{
     waproto::{buffa::MessageField, codec},
 };
 
+pub fn quote(message: &mut wa::Message, source: Option<&Source>, owner: &str) -> Result<()> {
+    let Some(source) = source else { return Ok(()) };
+    let original = if source.raw.is_empty() {
+        wa::Message::text(source.body.clone())
+    } else {
+        codec::message_decode(&source.raw).map_err(|_| Error::Invalid)?
+    };
+    if original.is_view_once() {
+        return Err(Error::Invalid);
+    }
+    let mut context = wa::ContextInfo::default();
+    context.stanza_id = Some(source.wire.clone());
+    context.participant = Some(if source.outgoing {
+        owner.into()
+    } else {
+        source.sender.clone()
+    });
+    context.quoted_message =
+        MessageField::from_box(original.get_base_message().prepare_for_quote());
+    message
+        .set_context_info(context)
+        .then_some(())
+        .ok_or(Error::Invalid)
+}
+
 pub fn editable(source: &Source) -> bool {
     if !source.outgoing {
         return false;
@@ -154,7 +179,10 @@ pub fn prepare(source: &Source, operation: Operation, owner: &str, now: i64) -> 
             whatsapp_rust::wacore::proto_helpers::build_reaction_message(key, emoji, now)
         }
         Operation::Forward => {
-            if base.protocol_message.is_set() || base.reaction_message.is_set() {
+            if base.protocol_message.is_set()
+                || base.reaction_message.is_set()
+                || crate::protocol_polls::creation(base).is_some()
+            {
                 return Err(Error::Invalid);
             }
             if crate::protocol_business::text(base).is_some() {
@@ -205,14 +233,26 @@ pub fn decorate(message: &wa::Message, content: &mut message_content::Content) {
                     .map(str::to_owned)
                     .or_else(|| crate::protocol_business::text(quoted))
                     .unwrap_or_else(|| {
-                        if quoted.image_message.is_set() {
+                        if crate::protocol_polls::creation(quoted).is_some() {
+                            "Poll".into()
+                        } else if quoted.image_message.is_set() {
                             "[Photo]".into()
                         } else if quoted.sticker_message.is_set() {
                             "[Sticker]".into()
+                        } else if quoted.live_location_message.is_set()
+                            || quoted.location_message.is_live == Some(true)
+                        {
+                            "[Live location]".into()
                         } else if quoted.location_message.is_set() {
                             "[Location]".into()
                         } else if quoted.audio_message.is_set() {
                             "[Audio message]".into()
+                        } else if quoted.contact_message.is_set()
+                            || quoted.contacts_array_message.is_set()
+                        {
+                            "[Contact]".into()
+                        } else if quoted.ptv_message.is_set() {
+                            "[Video message]".into()
                         } else {
                             "[Message]".into()
                         }

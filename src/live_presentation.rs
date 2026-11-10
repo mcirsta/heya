@@ -126,7 +126,6 @@ pub(crate) fn publish(ui: &AppWindow, snapshot: &Snapshot) {
         eprintln!("Heya storage: {:?}", snapshot.phase);
     }
     ui.set_connection_waiting_key_store(snapshot.phase == Phase::WaitingForKeyStore);
-    ui.set_connection_state(state);
     if state != 5 {
         crate::presentation_presence::clear(ui);
     }
@@ -140,6 +139,7 @@ pub(crate) fn publish(ui: &AppWindow, snapshot: &Snapshot) {
             Failure::Shutdown | Failure::LoggedOut | Failure::Outdated | Failure::ArchiveIdentity
         )
     ));
+    ui.set_connection_state(state);
     if ui.get_archive_ready()
         && (snapshot.phase == Phase::Connected || ui.get_chats().row_count() > 0)
     {
@@ -234,6 +234,9 @@ pub fn attach(
     ui.set_selected_id(0);
     ui.set_chat_title("Select a conversation".into());
     crate::presentation_presence::clear(ui);
+    let (own_account_sources, own_account_rx) = watch::channel(None);
+    let own_account =
+        crate::presentation_own_account::attach(ui, own_account_rx, preferences.clone());
     let (archives, archive_rx) = watch::channel(None);
     let contact_info = crate::presentation_contact_info::attach(ui, archive_rx.clone());
     let (upload_sources, upload_rx) = watch::channel(None);
@@ -355,6 +358,7 @@ pub fn attach(
                 updates,
                 archives,
                 protocol::LiveServices {
+                    own_account_sources,
                     chat_sources,
                     preferences: preferences.clone(),
                     avatar_demand: avatar_demand.clone(),
@@ -412,14 +416,15 @@ pub fn attach(
             presentation,
             message_presentation,
             contact_info,
-            badge
+            badge,
+            own_account
         );
     })
 }
 
 pub(crate) fn enqueue(ui: &AppWindow, commands: &mpsc::Sender<Command>, command: Command) -> bool {
     if commands.try_send(command).is_err() {
-        ui.set_notice("Heya is busy. Your text is still here; please try again.".into());
+        ui.invoke_show_error("Heya is busy. Your text is still here; please try again.".into());
         false
     } else {
         true
@@ -442,7 +447,6 @@ pub(crate) fn bind_messages(ui: &AppWindow, commands: mpsc::Sender<Command>) {
             }
             if enqueue(&ui, &tx, Command::ManageChat { chat, action }) {
                 ui.set_chat_management_busy(true);
-                ui.set_notice("Updating chat…".into());
                 if ui.get_contact_info_open() {
                     ui.set_contact_info_management_status("Updating chat…".into());
                 }
@@ -539,6 +543,7 @@ pub(crate) fn bind_messages(ui: &AppWindow, commands: mpsc::Sender<Command>) {
                 ) {
                     ui.set_live_revision(revision);
                     navigation_requested(revision);
+                    ui.invoke_reveal_chat();
                 }
             }
         }
@@ -681,7 +686,7 @@ pub(crate) fn bind_messages(ui: &AppWindow, commands: mpsc::Sender<Command>) {
 
 pub(crate) fn publish_messages(ui: &AppWindow, snapshot: &messaging::Snapshot) {
     if ui.get_contact_info_open() && ui.get_chat_management_busy() && !snapshot.chat_busy {
-        ui.set_contact_info_management_status(snapshot.notice.as_str().into());
+        ui.set_contact_info_management_status(snapshot.error.as_str().into());
     }
     ui.set_chat_management_busy(snapshot.chat_busy);
     if let Some(reply) = &snapshot.reply
@@ -705,16 +710,18 @@ pub(crate) fn publish_messages(ui: &AppWindow, snapshot: &messaging::Snapshot) {
             }
         }
         if !reply.saved {
-            ui.set_notice("The message could not be saved. Your draft has been kept.".into());
+            ui.invoke_show_error(
+                "The message could not be saved. Your draft has been kept.".into(),
+            );
         }
     }
     // A save reply must not refresh models, reset navigation or trigger layout.
-    if snapshot.view.is_none() && snapshot.notice.is_empty() {
+    if snapshot.view.is_none() && snapshot.error.is_empty() {
         return;
     }
     crate::presentation_actions::publish(ui, snapshot.operation.as_ref(), &snapshot.destinations);
-    if !snapshot.notice.is_empty() {
-        ui.set_notice(snapshot.notice.clone().into());
+    if !snapshot.error.is_empty() {
+        ui.invoke_show_error(snapshot.error.clone().into());
     }
     if snapshot.revision != ui.get_live_revision() {
         return;
@@ -746,12 +753,7 @@ pub(crate) fn publish_messages(ui: &AppWindow, snapshot: &messaging::Snapshot) {
     ui.set_archived_only(view.archived_view);
     ui.set_archived_count(view.archived_count.min(i32::MAX as usize) as i32);
     presentation::sidebar(ui, view.chats.clone());
-    if view.history_failed && snapshot.notice.is_empty() && !snapshot.chat_busy {
-        ui.set_notice(
-            "Some history could not be imported. The encrypted chunks are retained for recovery."
-                .into(),
-        );
-    }
+    ui.set_history_recovery_needed(view.history_failed);
     crate::presentation_navigation::prepare(ui, snapshot);
     if let Some(conversation) = &view.conversation {
         let restore = ui.get_live_shown_revision() != snapshot.revision

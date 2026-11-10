@@ -1,0 +1,86 @@
+import { Theme } from "theme.slint";
+import { Avatar, IconButton } from "components.slint";
+import { ContentTarget } from "message-content.slint";
+import { SoftButton } from "settings.slint";
+import { ListView } from "std-widgets.slint";
+
+export struct SendContactRow {name:string,number:string,initials:string,checked:bool}
+export component SendContactsDialog inherits Rectangle {
+    in-out property <int> phase;
+    in-out property <string> query;
+    in property <string> recipient;
+    in property <[SendContactRow]> choices;
+    in property <[SendContactRow]> selected;
+    in property <bool> busy;
+    in property <bool> available;
+    in property <bool> more;
+    in property <string> error;
+    in property <int> avatar-revision;
+    pure callback avatar(string,int) -> image;
+    callback avatar-range(int,int);
+    callback search(string);
+    callback toggle(string);
+    callback confirm();
+    callback close();
+    private property <[SendContactRow]> shown: root.phase==2 ? root.selected : root.choices;
+    background:#0007;
+    TouchArea {clicked=>{if !(root.phase==2 && root.busy) {root.close();}}}
+    FocusScope {
+        init=>{self.focus();}
+        key-pressed(e)=>{if e.text==Key.Escape {if !(root.phase==2 && root.busy) {root.close();}return accept;}return reject;}
+        panel:=Rectangle {
+            x:(parent.width - self.width)/2;y:(parent.height - self.height)/2;
+            width:min(480px,parent.width - 32px);height:min(640px,parent.height - 32px);
+            background:Theme.panel;border-radius:16px;drop-shadow-blur:24px;drop-shadow-color:Theme.modal-shadow;
+            TouchArea {}
+            VerticalLayout {
+                padding:0px;spacing:0px;
+                header:=Rectangle {height:64px;
+                    if root.phase==2:IconButton {x:12px;y:14px;icon:@image-url("icons/back.svg");label:@tr("Back to contact selection");enabled:!root.busy;activated=>{root.phase=1;}}
+                    Text {x:root.phase==2 ? 56px : 24px;y:0px;width:parent.width - self.x - 58px;height:64px;text:root.phase==2 ? @tr("Review contacts") : @tr("Send contacts");font-size:20px;font-weight:600;color:Theme.text;vertical-alignment:center;}
+                    IconButton {x:parent.width - 48px;y:14px;icon:@image-url("icons/close.svg");label:@tr("Close contact selection");enabled:!(root.phase==2 && root.busy);activated=>{root.close();}}
+                }
+                if root.phase==1:Rectangle {height:60px;
+                    Rectangle {x:24px;y:4px;width:parent.width - 48px;height:38px;background:Theme.surface;border-radius:19px;
+                        border-width:search.has-focus ? 1px : 0px;border-color:Theme.accent.with-alpha(0.5);
+                        Image {x:14px;y:10px;width:18px;height:18px;source:@image-url("icons/search.svg");colorize:Theme.secondary;}
+                        Text {x:44px;y:0px;width:parent.width - 58px;height:parent.height;text:@tr("Search names or numbers");visible:root.query=="";color:Theme.dim;font-size:14px;vertical-alignment:center;}
+                        search:=TextInput {x:44px;y:0px;width:parent.width - 58px;height:parent.height;text<=>root.query;single-line:true;vertical-alignment:center;font-size:14px;color:Theme.text;accessible-label:@tr("Search contacts to send");edited=>{list.content-y=0px;root.search(self.text);}}
+                    }
+                }
+                Text {height:40px;text:root.phase==2 ? @tr("Send to {}",root.recipient) : @tr("Choose contacts to share");color:Theme.secondary;font-size:13px;vertical-alignment:center;horizontal-alignment:center;overflow:elide;}
+                body:=Rectangle {
+                    vertical-stretch:1;
+                    list:=ListView {
+                        x:12px;y:0px;width:parent.width - 24px;height:parent.height;
+                        private property <int> first:max(0,floor(-self.content-y / 72px));
+                        private property <int> count:ceil(self.visible-height / 72px) + 1;
+                        init=>{root.avatar-range(self.first,self.count);}
+                        changed first=>{root.avatar-range(self.first,self.count);}
+                        changed count=>{root.avatar-range(self.first,self.count);}
+                        for person in root.shown:Rectangle {
+                            height:72px;border-radius:8px;background:person.checked ? Theme.accent.with-alpha(0.08) : transparent;
+                            Avatar {x:12px;y:12px;width:48px;height:48px;initials:person.initials;picture:root.avatar(person.number,root.avatar-revision);tint:Theme.accent;}
+                            Text {x:76px;y:12px;width:max(0px,parent.width - 128px);height:24px;text:person.name;color:Theme.text;font-size:16px;overflow:elide;}
+                            Text {x:76px;y:38px;width:max(0px,parent.width - 128px);height:22px;text:"+" + person.number;color:Theme.secondary;font-size:13px;overflow:elide;}
+                            Rectangle {x:parent.width - 36px;y:25px;width:22px;height:22px;border-radius:11px;border-width:person.checked ? 0px : 1.5px;border-color:Theme.secondary;background:person.checked ? Theme.accent : transparent;
+                                if person.checked:Image {x:3px;y:3px;width:16px;height:16px;source:@image-url("icons/check.svg");colorize:Theme.on-accent;}
+                            }
+                            ContentTarget {label:person.name;enabled:!root.busy;activated=>{root.toggle(person.number);}}
+                        }
+                    }
+                    if root.shown.length==0:Text {x:24px;y:0px;width:parent.width - 48px;height:parent.height;text:root.busy ? @tr("Loading contacts…") : root.query!="" ? @tr("No contacts found") : @tr("Contacts synced from your phone will appear here.");wrap:word-wrap;color:Theme.secondary;horizontal-alignment:center;vertical-alignment:center;font-size:14px;}
+                }
+                if root.error!="" || !root.available || (root.more && root.phase==1):Rectangle {
+                    height:status.preferred-height + 20px;
+                    status:=Text {x:24px;y:10px;width:parent.width - 48px;text:root.error!="" ? root.error : !root.available ? @tr("Connect to send.") : @tr("Keep typing to narrow the results.");color:Theme.secondary;font-size:12px;wrap:word-wrap;}
+                }
+                Rectangle {height:1px;background:Theme.outline;}
+                footer:=Rectangle {height:80px;
+                    Text {x:24px;y:0px;width:parent.width - 160px;height:parent.height;text:root.busy && root.phase==2 ? @tr("Saving…") : @tr("{} selected",root.selected.length);color:Theme.secondary;font-size:14px;vertical-alignment:center;}
+                    SoftButton {x:parent.width - 128px;y:22px;width:104px;text:root.phase==2 ? @tr("Send") : @tr("Next");enabled:root.selected.length>0 && !root.busy && (root.phase==1 || root.available);activated=>{root.confirm();}}
+                }
+            }
+        }
+    }
+}

@@ -214,9 +214,107 @@ pub(crate) fn check_ui() {
     presentation::conversation(&ui, &view, true);
     ui.invoke_layout_timeline();
     click(&ui, center(&element(&ui, "MessageBubble::menu-arrow")));
-    click(&ui, center(&label(&ui, "Copy")));
+    click(&ui, center(&label(&ui, "Copy message")));
     assert_eq!(ui.get_transcript(), "Complete caption\nȘtiință 🦀\n第二行");
     assert_eq!(ui.get_message_dialog(), 0);
+    assert!(commands.borrow().is_empty());
+    // Select the last line with the actual read-only TextInput, then use the
+    // same right-click transition as the native window event handler.
+    let body = element(&ui, "MessageBubble::body");
+    let p = body.absolute_position();
+    let hit = slint::LogicalPosition::new(p.x + 8., p.y + body.size().height - 4.);
+    for (reverse, multiline, expected) in [
+        (false, false, "第二行"),
+        (true, false, "第二行"),
+        (true, true, "Știință 🦀\n第二行"),
+    ] {
+        use slint::platform::Key;
+        click(&ui, hit);
+        key(&ui, if reverse { Key::End } else { Key::Home }.into());
+        ui.window().dispatch_event(WindowEvent::KeyPressed {
+            text: Key::Shift.into(),
+        });
+        if multiline {
+            key(&ui, Key::UpArrow.into());
+        }
+        key(&ui, if reverse { Key::Home } else { Key::End }.into());
+        ui.window().dispatch_event(WindowEvent::KeyReleased {
+            text: Key::Shift.into(),
+        });
+        let selected = ui.get_message_text_selection();
+        assert_ne!(selected.anchor, selected.cursor);
+        let mut target = None;
+        assert!(crate::presentation_scroll::context_pointer(
+            &ui,
+            hit,
+            true,
+            &mut target
+        ));
+        assert!(crate::presentation_scroll::context_pointer(
+            &ui,
+            hit,
+            false,
+            &mut target
+        ));
+        slint::platform::update_timers_and_animations();
+        let shown = ui.get_message_text_selection();
+        assert_eq!(
+            (shown.anchor, shown.cursor),
+            (selected.anchor, selected.cursor),
+            "opening the menu must preserve the actual TextInput selection"
+        );
+        assert!(!shown.focused, "keyboard focus belongs to the popup");
+        key(&ui, Key::DownArrow.into());
+        key(&ui, Key::UpArrow.into());
+        key(&ui, Key::Escape.into());
+        let restored = ui.get_message_text_selection();
+        assert!(
+            restored.focused,
+            "Escape returns focus to the selected text"
+        );
+        assert_eq!(
+            (restored.anchor, restored.cursor),
+            (selected.anchor, selected.cursor)
+        );
+        assert_eq!(ui.get_message_dialog(), 0);
+        ui.invoke_message_action(id, 17, hit.x, hit.y);
+        slint::platform::update_timers_and_animations();
+        click(&ui, center(&label(&ui, "Copy selection")));
+        assert_eq!(
+            ui.get_transcript(),
+            expected,
+            "reverse selection: {reverse}"
+        );
+        assert_eq!(ui.get_message_dialog(), 0);
+        let copied = ui.get_message_text_selection();
+        assert!(
+            copied.focused,
+            "Copy returns focus without losing the selection"
+        );
+        assert_eq!(
+            (copied.anchor, copied.cursor),
+            (selected.anchor, selected.cursor)
+        );
+        assert!(commands.borrow().is_empty());
+    }
+    ui.invoke_focus_composer();
+    slint::platform::update_timers_and_animations();
+    let cleared = ui.get_message_text_selection();
+    assert_eq!(
+        cleared.anchor, cleared.cursor,
+        "focusing elsewhere clears the selection"
+    );
+    // A fresh click clears the text selection; reopening the menu must not
+    // retain the earlier substring. Whole-message copy still includes every line.
+    click(&ui, hit);
+    ui.invoke_message_action(id, 17, hit.x, hit.y);
+    assert!(
+        !ui.get_message_menu_entries()
+            .iter()
+            .any(|e| e.label == "Copy selection")
+    );
+    click(&ui, center(&label(&ui, "Copy message")));
+    assert_eq!(ui.get_transcript(), "Complete caption\nȘtiință 🦀\n第二行");
     assert!(commands.borrow().is_empty());
     // Quick reaction uses the captured source and the existing durable command.
     ui.invoke_message_action(id, 3, 790., 650.);
@@ -327,6 +425,6 @@ pub(crate) fn check_ui() {
     ui.invoke_react_message("👍".into());
     assert!(!ui.get_action_pending());
     assert_eq!(ui.get_message_dialog(), 0);
-    assert!(ui.get_notice().contains("busy"));
+    assert!(ui.get_error_message().contains("busy"));
     ui.hide().unwrap();
 }

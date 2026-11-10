@@ -578,3 +578,32 @@ async fn malformed_raw_inputs_fail_before_wire_and_debug_has_negative_controls()
     assert_redacted(&poll, "CreatedPoll");
     assert_redacted(&event, "CreatedEvent");
 }
+
+#[tokio::test]
+async fn creation_with_options_preserves_durable_id_and_actual_sender() {
+    let (client, transport) = crate::test_utils::create_iq_test_client().await;
+    let (peer, _) = seed_dm_wire_namespace_state(&client).await;
+    let created = client
+        .polls()
+        .create(&peer, "Question", &["Yes".into(), "No".into()], 1)
+        .await
+        .unwrap();
+    let (sent, creator) = client
+        .send_creation_with_options(
+            &peer,
+            created.send_result().message.as_ref().clone(),
+            SendOptions::default()
+                .with_message_id(crate::MessageId::new("SYNTHETIC-DURABLE-POLL").unwrap()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(sent.message_id.as_str(), "SYNTHETIC-DURABLE-POLL");
+    assert_eq!(creator, client.pn().unwrap().to_non_ad());
+    let frames = crate::test_utils::decrypt_wire_frames(&transport.sent(), &[0; 32]);
+    assert!(frames.iter().any(|frame| {
+        let bytes = wacore_binary::util::unpack(frame).unwrap().into_owned();
+        let node = wacore_binary::OwnedNodeRef::new(bytes).unwrap();
+        node.get().tag == "message"
+            && node.get().attrs().optional_string("id").as_deref() == Some("SYNTHETIC-DURABLE-POLL")
+    }));
+}

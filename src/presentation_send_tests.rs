@@ -77,7 +77,10 @@ pub fn check_ui() {
                 .next()
                 .is_some()
         );
-        assert!(ui.get_notice().is_empty(), "saving must not open a banner");
+        assert!(
+            ui.get_error_message().is_empty(),
+            "saving must not open a banner"
+        );
         assert_eq!(
             ElementHandle::find_by_element_type_name(&ui, "Composer")
                 .next()
@@ -174,7 +177,7 @@ pub fn check_ui() {
         );
         assert!(ui.get_draft().is_empty());
         assert!(!ui.get_send_pending());
-        assert!(ui.get_notice().is_empty());
+        assert!(ui.get_error_message().is_empty());
     }
     ui.set_draft("Preserve the failed draft".into());
     key(&ui, Key::Return);
@@ -202,9 +205,9 @@ pub fn check_ui() {
     );
     assert!(!ui.get_send_pending());
     assert_eq!(ui.get_draft(), "Preserve the failed draft");
-    assert!(ui.get_notice().contains("could not be saved"));
+    assert!(ui.get_error_message().contains("could not be saved"));
     ui.set_connection_state(6);
-    ui.set_notice("".into());
+    ui.invoke_close_error();
     key(&ui, Key::Return);
     assert!(rx.try_recv().is_err());
     assert!(!ui.get_send_pending());
@@ -218,9 +221,11 @@ pub fn check_ui() {
         !ui.get_send_pending(),
         "a full queue cannot leave a phantom pending send"
     );
-    assert!(ui.get_notice().contains("busy"));
+    assert!(ui.get_error_message().contains("busy"));
     assert_eq!(ui.get_draft(), "Preserve the failed draft");
     while rx.try_recv().is_ok() {}
+    key(&ui, Key::Escape);
+    assert!(ui.get_error_message().is_empty());
     key(&ui, Key::Return);
     let messaging::Command::Send {
         chat,

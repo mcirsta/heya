@@ -4,7 +4,18 @@ use crate::{
     video::{self, Error, Source},
 };
 use std::sync::Arc;
-use whatsapp_rust::{Client, prelude::MessageExt, waproto::codec};
+use whatsapp_rust::{
+    Client,
+    prelude::{MessageExt, wa},
+    waproto::codec,
+};
+
+pub fn clip(message: &wa::Message) -> Option<&wa::message::VideoMessage> {
+    let base = message.get_base_message();
+    base.video_message
+        .as_option()
+        .or(base.ptv_message.as_option())
+}
 
 pub struct Video(pub Arc<Client>);
 #[async_trait::async_trait]
@@ -14,11 +25,7 @@ impl Source for Video {
         if message.is_view_once() {
             return Err(Error::Unavailable);
         }
-        let clip = message
-            .get_base_message()
-            .video_message
-            .as_option()
-            .ok_or(Error::Unavailable)?;
+        let clip = clip(&message).ok_or(Error::Unavailable)?;
         if clip.view_once == Some(true) {
             return Err(Error::Unavailable);
         }

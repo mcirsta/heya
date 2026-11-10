@@ -45,7 +45,7 @@ async fn old_delete_keys_recover_only_unique_pairs_and_keep_pending_reads_immuta
         }
         let files = db.0._files.clone();
         db.blocking(|c| {
-            c.execute_batch("DROP INDEX messages_read_wire; ALTER TABLE messages DROP COLUMN read_wire; ALTER TABLE outgoing_reads DROP COLUMN keys; PRAGMA user_version=19;")?;
+            c.execute_batch("DROP INDEX messages_read_wire; ALTER TABLE messages DROP COLUMN read_wire; ALTER TABLE outgoing_reads DROP COLUMN keys; DROP TABLE IF EXISTS poll_events; PRAGMA user_version=19;")?;
             Ok(())
         })
         .unwrap();
@@ -99,7 +99,7 @@ async fn migration_never_treats_an_expired_edit_as_a_revoke() {
         // An older expiry retained its last edit revision in mutations.
         c.execute_batch("UPDATE messages SET deleted=1,expires=1,body='[Disappearing message expired]' WHERE wire_id='expired-original';
             INSERT INTO mutations(chat_id,sender,wire_id,body,version,deleted) SELECT chat_id,sender,wire_id,NULL,1700000100000,1 FROM messages WHERE wire_id='expired-original';
-            DROP INDEX messages_read_wire; ALTER TABLE messages DROP COLUMN read_wire; ALTER TABLE outgoing_reads DROP COLUMN keys; PRAGMA user_version=19;")?;
+            DROP INDEX messages_read_wire; ALTER TABLE messages DROP COLUMN read_wire; ALTER TABLE outgoing_reads DROP COLUMN keys; DROP TABLE IF EXISTS poll_events; PRAGMA user_version=19;")?;
         Ok(())
     }).unwrap();
     drop(db);

@@ -515,6 +515,15 @@ pub(crate) fn check_ui() {
     // The keyboard traversal above can activate call controls as well as focus them.
     while requests.try_recv().is_ok() {}
     publish(&ui, &Status::default());
+    assert_eq!(ui.get_error_message().as_str(), "");
+    assert!(!ui.get_own_editor_open());
+    assert!(!ui.get_microphone_dialog());
+    assert!(!ui.get_settings_open(), "call traversal opened settings");
+    assert!(
+        !ui.get_contact_info_open(),
+        "call traversal opened contact info"
+    );
+    assert!(!ui.get_new_chat_open(), "call traversal opened new chat");
     workflow_tests::click_button(&ui, "Start a video call");
     assert!(matches!(
         requests.try_recv().unwrap(),

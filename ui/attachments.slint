@@ -10,21 +10,21 @@ export component AttachmentMenu inherits Rectangle {
     private property <int> selection;
     FocusScope {
         init=>{self.focus();}
-        key-pressed(event)=>{if event.text==Key.Escape {root.close();return accept;}if event.text==Key.DownArrow || event.text==Key.UpArrow {root.selection=1 - root.selection;return accept;}if event.text==Key.Return {root.choose(root.selection);return accept;}return reject;}
+        key-pressed(event)=>{if event.text==Key.Escape {root.close();return accept;}if event.text==Key.DownArrow {root.selection=mod(root.selection+1,4);return accept;}if event.text==Key.UpArrow {root.selection=mod(root.selection+3,4);return accept;}if event.text==Key.Return {root.choose(root.selection);return accept;}return reject;}
         TouchArea {clicked=>{root.close();}}
         Rectangle {
             x:clamp(root.anchor-x,8px,max(8px,root.width - self.width - 8px));
             y:clamp(root.anchor-y - self.height - 8px,8px,max(8px,root.height - self.height - 8px));
-            width:min(250px,parent.width - 16px);height:100px;
+            width:min(250px,parent.width - 16px);height:180px;
             background:Theme.overlay;border-radius:18px;
             drop-shadow-offset-y:4px;drop-shadow-blur:14px;drop-shadow-color:Theme.modal-shadow;
             TouchArea {}
-            for label[index] in [@tr("Photos"),@tr("Documents")]:Rectangle {
+            for label[index] in [@tr("Photos"),@tr("Documents"),@tr("Contact"),@tr("Poll")]:Rectangle {
                 x:10px;y:10px + index * 40px;width:parent.width - 20px;height:40px;border-radius:8px;
                 background:hit.has-hover || root.selection==index ? Theme.hover : transparent;
                 accessible-role:button;accessible-label:label;
                 accessible-action-default=>{root.choose(index);}
-                Image{x:10px;y:12px;width:18px;height:18px;source:index==0 ? @image-url("icons/photo.svg") : @image-url("icons/document.svg");colorize:index==0 ? #007bfc : #7f66ff;}
+                Image{x:10px;y:12px;width:18px;height:18px;source:index==0 ? @image-url("icons/photo.svg") : index==1 ? @image-url("icons/document.svg") : index==2 ? @image-url("icons/contact.svg") : @image-url("icons/poll.svg");colorize:index==0 ? #007bfc : index==1 ? #7f66ff : Theme.accent;}
                 Text{x:42px;width:parent.width - 50px;height:parent.height;text:label;color:Theme.text;font-size:15px;vertical-alignment:center;}
                 FocusScope {key-pressed(event)=>{if event.text==Key.Return||event.text==" " {root.choose(index);return accept;}return reject;}}
                 hit:=TouchArea{mouse-cursor:pointer;clicked=>{root.choose(index);}}

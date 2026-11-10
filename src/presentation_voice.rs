@@ -63,7 +63,7 @@ pub(crate) fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>) {
                 }
                 permit.send(command);
             }
-            Err(_) => ui.set_notice("Voice recording is busy. Please try again.".into()),
+            Err(_) => ui.invoke_show_error("Voice recording is busy. Please try again.".into()),
         }
     });
 }
@@ -98,7 +98,7 @@ pub fn publish(ui: &AppWindow, s: &Status) {
         if s.failure == Some(crate::voice_recorder::Error::NoInput) {
             ui.set_microphone_dialog(true);
         } else if !s.error.is_empty() {
-            ui.set_notice(s.error.as_str().into());
+            ui.invoke_show_error(s.error.as_str().into());
         }
         if before > 0 {
             ui.invoke_focus_composer();
@@ -152,7 +152,7 @@ pub(crate) fn check_ui() {
     );
     assert_eq!(ui.get_voice_phase(), 0);
     assert!(ui.get_microphone_dialog());
-    assert!(ui.get_notice().is_empty());
+    assert!(ui.get_error_message().is_empty());
     let model = ui.get_timeline_rows();
     let key = |text: slint::SharedString| {
         ui.window()

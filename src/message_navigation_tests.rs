@@ -146,7 +146,7 @@ async fn search_refreshes_and_navigation_retains_drafts_without_marking_hidden_l
         .unwrap();
     let s = until(&mut views, |s| s.jump.request == 3).await;
     assert_eq!(s.jump.message, 0);
-    assert!(!s.notice.is_empty());
+    assert!(!s.error.is_empty());
     commands
         .send(Command::Navigation(Nav::Search {
             chat: 1,

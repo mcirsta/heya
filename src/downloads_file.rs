@@ -14,7 +14,9 @@ use tokio::sync::watch;
 
 pub struct Sink {
     file: File,
+    /// Logical output length; a verified SDK download is returned rewound.
     pub bytes: u64,
+    position: u64,
     control: Control,
     progress: watch::Sender<Progress>,
     last: Instant,
@@ -55,6 +57,7 @@ impl Partial {
             Sink {
                 file,
                 bytes: 0,
+                position: 0,
                 control,
                 progress,
                 last: Instant::now(),
@@ -137,14 +140,15 @@ impl Sink {
 impl Write for Sink {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         self.check()?;
-        if self.bytes.saturating_add(bytes.len() as u64) > MAX_BYTES {
+        if self.position.saturating_add(bytes.len() as u64) > MAX_BYTES {
             return Err(io::Error::new(
                 io::ErrorKind::FileTooLarge,
                 "download limit",
             ));
         }
         let written = self.file.write(bytes)?;
-        self.bytes += written as u64;
+        self.position += written as u64;
+        self.bytes = self.bytes.max(self.position);
         if self.last.elapsed() >= std::time::Duration::from_millis(100) {
             self.last = Instant::now();
             self.progress.send_replace(Progress { bytes: self.bytes });
@@ -157,7 +161,7 @@ impl Write for Sink {
 }
 impl Seek for Sink {
     fn seek(&mut self, position: SeekFrom) -> io::Result<u64> {
-        self.bytes = self.file.seek(position)?;
-        Ok(self.bytes)
+        self.position = self.file.seek(position)?;
+        Ok(self.position)
     }
 }

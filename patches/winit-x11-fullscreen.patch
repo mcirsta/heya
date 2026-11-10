@@ -1,0 +1,58 @@
+--- a/src/window.rs
++++ b/src/window.rs
+@@ -1165,6 +1165,31 @@
+         shared_state.desired_fullscreen.clone().unwrap_or_else(|| shared_state.fullscreen.clone())
+     }
+ 
++    // The WM can change borderless fullscreen without set_fullscreen() being
++    // called (for example through its keyboard shortcut or window menu).
++    pub(crate) fn sync_wm_fullscreen(&self) -> bool {
++        let atoms = self.xconn.atoms();
++        let Ok(state) = self.xconn.get_property::<xproto::Atom>(
++            self.xwindow,
++            atoms[_NET_WM_STATE],
++            xproto::AtomEnum::ATOM.into(),
++        ) else {
++            return false;
++        };
++        let fullscreen = state.contains(&atoms[_NET_WM_STATE_FULLSCREEN]);
++        let mut shared = self.shared_state_lock();
++        // Exclusive mode also owns a display mode; leave that lifecycle with
++        // set_fullscreen_inner rather than discarding its restoration data.
++        if matches!(shared.fullscreen, Some(Fullscreen::Exclusive(..)))
++            || shared.desired_fullscreen.is_some()
++            || fullscreen == shared.fullscreen.is_some()
++        {
++            return false;
++        }
++        shared.fullscreen = fullscreen.then_some(Fullscreen::Borderless(None));
++        true
++    }
++
+     #[inline]
+     pub(crate) fn set_fullscreen(&self, fullscreen: Option<Fullscreen>) {
+         if let Some(flusher) =
+--- a/src/event_processor.rs
++++ b/src/event_processor.rs
+@@ -911,6 +911,21 @@
+     fn property_notify(&mut self, xev: &XPropertyEvent, app: &mut dyn ApplicationHandler) {
+         let atoms = self.target.x_connection().atoms();
+         let atom = xev.atom as xproto::Atom;
++
++        if atom == atoms[_NET_WM_STATE] {
++            let xwindow = xev.window as xproto::Window;
++            if let Some(window) = self.with_window(xwindow, Arc::clone)
++                && window.sync_wm_fullscreen()
++            {
++                // Notify even when a fullscreen transition leaves the size
++                // unchanged. Consumers use resize to sample native window state.
++                app.window_event(
++                    &self.target,
++                    mkwid(xwindow),
++                    WindowEvent::SurfaceResized(window.surface_size()),
++                );
++            }
++        }
+ 
+         if atom == xproto::Atom::from(xproto::AtomEnum::RESOURCE_MANAGER)
+             || atom == atoms[_XSETTINGS_SETTINGS]

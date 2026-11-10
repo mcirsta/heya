@@ -5,6 +5,8 @@ import { Theme, Metrics } from "theme.slint";
 import { PhotoTile, PhotoGrid, AlbumPhotoRow } from "photo.slint";
 export { AlbumPhotoRow }
 import { LocationCard } from "location.slint";
+import { SharedContactCard } from "shared-contact.slint";
+import { PollCard, PollOptionRow } from "poll.slint";
 import { DocumentCard } from "document.slint";
 import { Avatar } from "components.slint";
 import { PreviewCard, MessageAction, MessageActionRow, ContentTarget } from "message-content.slint";
@@ -53,6 +55,24 @@ export struct MessageRow {
     has-audio: bool,
     has-document: bool,
     has-location: bool,
+    location-live: bool,
+    contact-count: int,
+    contact-name: string,
+    contact-initials: string,
+    contact-number: string,
+    contact-account: string,
+    contact-avatar: image,
+    has-poll:bool,
+    poll-question:string,
+    poll-hint:string,
+    poll-status:string,
+    poll-total:string,
+    poll-voters:int,
+    poll-multiple:bool,
+    poll-can-vote:bool,
+    poll-can-view:bool,
+    poll-busy:bool,
+    poll-options:[PollOptionRow],
     location-name: string,
     location-address: string,
     location-domain: string,
@@ -65,6 +85,7 @@ export struct MessageRow {
     has-photo: bool,
     has-sticker: bool,
     has-video: bool,
+    video-round: bool,
     video-duration: string,
     photo-width: float,
     photo-height: float,
@@ -75,6 +96,14 @@ export struct MessageRow {
     album-more: int,
 }
 
+export struct MessageTextSelection {
+    message: int,
+    text: string,
+    anchor: int,
+    cursor: int,
+    focused: bool,
+}
+
 export component MessageBubble inherits Rectangle {
     in property <MessageRow> message;
     in property <bool> group;
@@ -83,6 +112,13 @@ export component MessageBubble inherits Rectangle {
     callback audio-control(int,float);
     callback video-control(int,float);
     callback message-action(int,length,length);
+    callback text-selection-changed(MessageTextSelection);
+    private property <MessageTextSelection> text-selection: {
+        message: root.message.id, text: body.text,
+        anchor: body.anchor-position-byte-offset, cursor: body.cursor-position-byte-offset,
+        focused: body.has-focus && body.visible,
+    };
+    changed text-selection => { root.text-selection-changed(root.text-selection); }
     callback photo-activate(int);
     callback photo-action(int,int,length,length);
     private property <int> active-photo: root.owner-id;
@@ -95,6 +131,7 @@ export component MessageBubble inherits Rectangle {
     private property <bool> album: root.message.album-photos.length>1;
     in property <bool> actions-enabled;
     in property <bool> auto-download-photos: true;
+    in property <image> location-avatar;
     in property <bool> menu-open;
     in property <bool> can-reply: true;
     in property <length> viewport-top;
@@ -113,11 +150,11 @@ export component MessageBubble inherits Rectangle {
     private property <length> footer-width: stamp.preferred-width;
     // Single-line messages share a baseline with the footer. Wrapped text keeps
     // a separate footer until the text renderer exposes last-line metrics.
-    private property <bool> inline-time: (root.message.has-audio && root.footer-width + 100px <= root.max-bubble) || (!root.message.long-text && !root.message.has-audio && !root.message.has-photo && !root.message.has-sticker && !root.message.has-video && !root.message.has-document && !root.message.has-location && natural.preferred-width + root.footer-width + 28px <= root.max-bubble && natural.preferred-height <= line-probe.preferred-height + 1px);
-    private property <length> photo-cap: max(1px,min(root.message.has-sticker ? 176px : root.album ? 420px : 320px,root.max-bubble - 12px));
+    private property <bool> inline-time: (root.message.has-audio && root.footer-width + 100px <= root.max-bubble) || (!root.message.long-text && !root.message.has-audio && !root.message.has-photo && !root.message.has-sticker && !root.message.has-video && !root.message.has-document && !root.message.has-location && !root.message.has-poll && root.message.contact-count==0 && natural.preferred-width + root.footer-width + 28px <= root.max-bubble && natural.preferred-height <= line-probe.preferred-height + 1px);
+    private property <length> photo-cap: max(1px,min(root.message.video-round ? 220px : root.message.has-sticker ? 176px : root.album ? 420px : 320px,root.max-bubble - 12px));
     private property <float> photo-scale: min(1,min(root.photo-cap / 1px / max(1,root.message.photo-width), (root.message.has-sticker ? 176 : 440) / max(1,root.message.photo-height)));
-    private property <length> photo-width: root.album ? root.photo-cap : max(min(120px,root.photo-cap),root.message.photo-width * root.photo-scale * 1px);
-    private property <length> photo-height: root.album ? (root.message.album-photos.length==2 ? (root.photo-width - 4px)/2 : root.photo-width) : min(root.message.has-sticker ? 176px : 440px,max(90px,root.message.photo-height * root.photo-scale * 1px));
+    private property <length> photo-width: root.message.video-round ? root.photo-cap : root.album ? root.photo-cap : max(min(120px,root.photo-cap),root.message.photo-width * root.photo-scale * 1px);
+    private property <length> photo-height: root.message.video-round ? root.photo-width + 42px : root.album ? (root.message.album-photos.length==2 ? (root.photo-width - 4px)/2 : root.photo-width) : min(root.message.has-sticker ? 176px : 440px,max(90px,root.message.photo-height * root.photo-scale * 1px));
     private property <bool> visual-media: root.message.has-photo || root.message.has-video || root.message.has-sticker;
     private property <bool> sticker-only: root.message.has-sticker && root.message.text == "";
     private property <bool> photo-only: root.message.has-photo && root.message.text == "";
@@ -126,8 +163,11 @@ export component MessageBubble inherits Rectangle {
     private property <bool> document-only: root.message.has-document && root.message.text == "";
     private property <length> document-preview-height: root.message.has-thumbnail ? min(140px,max(80px,(bubble.width - 12px) * 0.4)) : 0px;
     private property <length> document-space: root.message.has-document ? root.document-preview-height + 84px + (root.document-only ? 0px : 6px) : 0px;
-    private property <length> location-space: root.message.has-location ? Metrics.location-height(root.message.location-name!="",root.message.location-address!="",root.message.location-domain!="") : 0px;
-    private property <color> fill: root.message.has-sticker ? transparent : root.message.outgoing ? Theme.outgoing : Theme.incoming;
+    private property <bool> location-only: root.message.has-location && (!root.message.location-live || root.message.text=="");
+    private property <length> location-space: root.message.has-location ? (root.message.location-live ? 186px + (root.location-only ? 0px : 6px) : Metrics.location-height(root.message.location-name!="",root.message.location-address!="",root.message.location-domain!="")) : 0px;
+    private property <length> poll-space: root.message.has-poll ? poll-card.height : 0px;
+    private property <length> contact-space: root.message.contact-count>0 ? 112px : 0px;
+    private property <color> fill: (root.message.has-sticker || root.message.video-round) ? transparent : root.message.outgoing ? Theme.outgoing : Theme.incoming;
     height: bubble.height + 3px + (root.message.reactions!="" || root.message.reaction-status!="" ? 22px : 0px);
     hover := TouchArea {
     x: 0px; y: 0px; width: root.width; height: root.height;
@@ -143,16 +183,16 @@ export component MessageBubble inherits Rectangle {
     bubble := Rectangle {
         x: root.message.outgoing ? parent.width - self.width - Metrics.gutter : Metrics.gutter + root.avatar-space;
         y: 0px;
-        width: root.message.has-location ? min(root.max-bubble,282px) : root.message.has-document ? min(root.max-bubble,352px) : root.message.has-audio ? min(root.max-bubble,340px) : root.visual-media ? min(root.max-bubble,root.album ? root.photo-width + 12px : max(root.photo-width + 12px,root.footer-width + 20px)) : root.message.long-text ? root.max-bubble : min(root.max-bubble, max(root.has-preview || root.has-actions || root.quote-height > 0px ? 320px : 0px, max(root.footer-width, max(root.show-sender ? sender.preferred-width : 0px, natural.preferred-width + (root.inline-time ? root.footer-width + 8px : 0px))) + 20px));
+        width: root.message.has-poll ? min(root.max-bubble,360px) : root.message.contact-count>0 ? min(root.max-bubble,320px) : root.message.has-location ? min(root.max-bubble,282px) : root.message.has-document ? min(root.max-bubble,352px) : root.message.has-audio ? min(root.max-bubble,340px) : root.visual-media ? min(root.max-bubble,root.album ? root.photo-width + 12px : max(root.photo-width + 12px,root.footer-width + 20px)) : root.message.long-text ? root.max-bubble : min(root.max-bubble, max(root.has-preview || root.has-actions || root.quote-height > 0px ? 320px : 0px, max(root.footer-width, max(root.show-sender ? sender.preferred-width : 0px, natural.preferred-width + (root.inline-time ? root.footer-width + 8px : 0px))) + 20px));
         // Compact macOS fonts must still contain the 26px menu target with 2px margins.
-        height: max(Theme.macos ? 30px : 0px, (root.message.has-audio ? 48px : root.photo-only || root.video-only || root.sticker-only || root.document-only || root.message.has-location ? 0px : body.preferred-height) + root.sender-height + root.metadata-height + root.preview-height + root.photo-space + root.document-space + root.location-space + 11px + (root.inline-time || root.photo-only || root.album ? 0px : stamp.height + 4px) + actions.height);
+        height: max(Theme.macos ? 30px : 0px, (root.message.has-audio ? 48px : root.photo-only || root.video-only || root.sticker-only || root.document-only || root.location-only || root.message.has-poll || root.message.contact-count>0 ? 0px : body.preferred-height) + root.sender-height + root.metadata-height + root.preview-height + root.photo-space + root.document-space + root.location-space + root.contact-space + root.poll-space + 11px + (root.inline-time || root.photo-only || root.album ? 0px : stamp.height + 4px) + actions.height);
         background: root.fill;
         border-radius: 10px;
         border-top-left-radius: root.message.first-in-run && !root.message.outgoing ? 0px : 10px;
         border-top-right-radius: root.message.first-in-run && root.message.outgoing ? 0px : 10px;
         drop-shadow-offset-y: 2px;
-        drop-shadow-blur: root.message.has-sticker ? 0px : 6px;
-        drop-shadow-color: root.message.has-sticker ? transparent : Theme.shadow;
+        drop-shadow-blur: root.message.has-sticker || root.message.video-round ? 0px : 6px;
+        drop-shadow-color: (root.message.has-sticker || root.message.video-round) ? transparent : Theme.shadow;
         Rectangle {
             x: 0px;
             y: -1px;
@@ -161,10 +201,10 @@ export component MessageBubble inherits Rectangle {
             border-radius: 10px;
             border-top-left-radius: root.message.first-in-run && !root.message.outgoing ? 0px : 10px;
             border-top-right-radius: root.message.first-in-run && root.message.outgoing ? 0px : 10px;
-            background: root.message.has-sticker ? transparent : Theme.raised-edge(root.fill);
+            background: (root.message.has-sticker || root.message.video-round) ? transparent : Theme.raised-edge(root.fill);
         }
 
-        if root.message.first-in-run && !root.message.has-sticker: Path {
+        if root.message.first-in-run && !root.message.has-sticker && !root.message.video-round: Path {
             x: root.message.outgoing ? parent.width - 3px : -8px;
             y: -1px;
             width: 11px;
@@ -183,7 +223,7 @@ export component MessageBubble inherits Rectangle {
             background: root.fill;
         }
 
-        if root.message.first-in-run && !root.message.has-sticker: tail := Path {
+        if root.message.first-in-run && !root.message.has-sticker && !root.message.video-round: tail := Path {
             x: root.message.outgoing ? parent.width - 3px : -8px;
             y: 0px;
             width: 11px;
@@ -263,7 +303,7 @@ export component MessageBubble inherits Rectangle {
         if root.message.has-video: video := VideoTile {
             x:6px;y:6px+root.sender-height+root.metadata-height;
             width:parent.width - 12px;height:root.photo-height;
-            message-id:root.message.id;poster:root.message.thumbnail;duration:root.message.video-duration;
+            message-id:root.message.id;round:root.message.video-round;poster:root.message.thumbnail;duration:root.message.video-duration;
             control(action,value)=>{root.video-control(action,value);}
         }
         if root.message.has-audio: audio := AudioPlayer {
@@ -278,16 +318,36 @@ export component MessageBubble inherits Rectangle {
             preview-height: root.document-preview-height;
         }
         if root.message.has-location: location := LocationCard {
+            live:root.message.location-live;picture:root.location-avatar;
+            initials:root.message.sender-initials;tint:root.tint;
             x:6px;y:6px+root.sender-height+root.metadata-height;width:parent.width - 12px;
             name:root.message.location-name;address:root.message.location-address;
             domain:root.message.location-domain;coordinates:root.message.location-coordinates;
             thumbnail:root.message.thumbnail;
             activate(index)=>{root.activate(index);}
         }
+        if root.message.contact-count>0: SharedContactCard {
+            x:6px;y:6px+root.sender-height+root.metadata-height;width:parent.width - 12px;
+            count:root.message.contact-count;name:root.message.contact-name;initials:root.message.contact-initials;
+            number:root.message.contact-number;picture:root.message.contact-avatar;
+            can-message:root.message.contact-account!="";
+            activate(index)=>{root.activate(index);}
+        }
+        poll-card:=PollCard {
+            visible:root.message.has-poll;
+            height:root.message.has-poll ? self.preferred-height : 0px;
+            x:6px;y:6px+root.sender-height+root.metadata-height;width:parent.width - 12px;
+            question:root.message.poll-question;hint:root.message.poll-hint;status:root.message.poll-status;
+            total:root.message.poll-total;voters:root.message.poll-voters;options:root.message.poll-options;
+            multiple:root.message.poll-multiple;busy:root.message.poll-busy;
+            can-vote:root.message.poll-can-vote && root.actions-enabled;
+            can-view:root.message.poll-can-view && root.actions-enabled;
+            vote(index)=>{root.activate(-100-index);}results=>{root.activate(-44);}
+        }
         body := TextInput {
-            visible: root.message.body-url == "" && !root.photo-only && !root.video-only && !root.sticker-only && !root.document-only && !root.message.has-audio && !root.message.has-location;
+            visible: root.message.body-url == "" && !root.photo-only && !root.video-only && !root.sticker-only && !root.document-only && !root.message.has-audio && !root.location-only && !root.message.has-poll && root.message.contact-count==0;
             x: 10px;
-            y: 6px + root.sender-height + root.metadata-height + root.preview-height + root.photo-space + root.document-space;
+            y: 6px + root.sender-height + root.metadata-height + root.preview-height + root.photo-space + root.document-space + root.location-space;
             width: parent.width - 20px - (root.inline-time ? root.footer-width + 8px : 0px);
             height: self.preferred-height;
             text: root.message.text;
@@ -320,7 +380,7 @@ export component MessageBubble inherits Rectangle {
             x: stamp.x - 4px; y: stamp.y - 2px; width: stamp.width + 8px; height: stamp.height + 4px;
             background: #0008; border-radius: 4px;
         }
-        if root.message.has-sticker: Rectangle {
+        if root.message.has-sticker || root.message.video-round: Rectangle {
             x:stamp.x - 4px;y:stamp.y - 2px;width:stamp.width + 8px;height:stamp.height + 4px;
             background:Theme.overlay.with-alpha(0.9);border-radius:5px;
         }
@@ -364,6 +424,7 @@ export component MessageBubble inherits Rectangle {
         viewport-top: root.viewport-top; viewport-bottom: root.viewport-bottom;
         outgoing: root.message.outgoing; sender: root.message.sender;
         enabled: root.actions-enabled && root.message.actionable; can-reply: root.can-reply;
+        can-forward:!root.message.has-poll;
         hovered: hover.has-hover; pointer-x: hover.mouse-x; pointer-y: hover.mouse-y;
         activated(action,x,y) => {if root.album {root.photo-action(root.active-photo,action,x,y);} else {root.message-action(action,x,y);}}
     }

@@ -72,7 +72,7 @@ async fn empty_new_chat_allows_explicit_fetch_and_timeout_does_not_exhaust_its_h
     let chat = conversation.chat.id;
     assert!(conversation.messages.is_empty());
     assert!(view.phone_more);
-    assert!(empty.notice.is_empty());
+    assert!(empty.error.is_empty());
     assert!(requests.try_recv().is_err());
     commands
         .send(Command::FetchPhone { chat, revision: 1 })
@@ -82,7 +82,7 @@ async fn empty_new_chat_allows_explicit_fetch_and_timeout_does_not_exhaust_its_h
     assert_eq!(anchor.chat, chat);
     assert!(anchor.wire.is_empty());
     assert_eq!(anchor.known, 0);
-    until(&mut views, |s| s.notice == Failure::Timeout.message()).await;
+    until(&mut views, |s| s.error == Failure::Timeout.message()).await;
     assert!(
         db.view(chat, 100, String::new(), false, false)
             .await
@@ -224,7 +224,7 @@ async fn phone_requests_coalesce_without_blocking_drafts_navigation_or_shutdown(
         })
         .await
         .unwrap();
-    until(&mut views, |s| !s.notice.is_empty()).await;
+    until(&mut views, |s| !s.error.is_empty()).await;
     assert!(starts.try_recv().is_err());
     drop(commands);
     tokio::time::timeout(std::time::Duration::from_secs(2), worker)

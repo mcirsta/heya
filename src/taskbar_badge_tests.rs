@@ -112,7 +112,7 @@ async fn launcher_count_coalesces_preserves_reply_only_views_and_clears_on_close
     updates.send_replace(Snapshot::empty());
     unchanged(&mut signals).await;
     updates.send_replace(Snapshot {
-        notice: "Synthetic failure".into(),
+        error: "Synthetic failure".into(),
         ..Snapshot::empty()
     });
     unchanged(&mut signals).await;

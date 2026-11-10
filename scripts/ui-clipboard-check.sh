@@ -10,30 +10,104 @@ trap 'if [[ -n "$heya_pid" ]]; then kill "$heya_pid" 2>/dev/null || true; wait "
 cp "$heya_root/tests/fixtures/preview-strip.png" "$heya_fixture/Sample 你好.png"
 printf 'Synthetic document\n' > "$heya_fixture/Notes.txt"
 cc -O2 -Wall -Wextra "$heya_root/scripts/ui-drop-source.c" -lX11 -o "$heya_fixture/drop-source"
-"$heya_binary" --demo --demo-chat 9 --size 1200x900 > "$heya_fixture/app.log" 2>&1 &
+"$heya_binary" --demo --demo-chat 1 --size 1200x900 > "$heya_fixture/app.log" 2>&1 &
 heya_pid=$!
 heya_window=$(timeout 15s xdotool search --sync --onlyvisible --name '^Heya' | head -n1)
 sleep 2
+# Select inside the synthetic multiline message, then right-click and copy the
+# selection into a different process. The menu must survive the editor losing focus.
+xdotool windowfocus "$heya_window"
+heya_check_selection_highlight() {
+    # The left edge of the selected last line stays outside the popup. Inspect
+    # actual pixels, not the saved substring used by the Copy action.
+    magick "$1" -crop 48x18+348+244 +repage -depth 8 rgb:- | python3 -c '
+import sys
+pixels = sys.stdin.buffer.read()
+highlight = sum(g > r + 30 and g > b for r, g, b in zip(pixels[0::3], pixels[1::3], pixels[2::3]))
+assert (highlight > 80) == (sys.argv[1] == "shown"), f"Selection highlight: {highlight} pixels; expected {sys.argv[1]}"
+' "$2"
+}
+for heya_reverse in 0 1; do
+    printf 'Clipboard sentinel: selection copy did not run' | xclip -selection clipboard -in
+    xdotool mousemove --window "$heya_window" 400 252 click 1
+    sleep 0.5
+    if [[ "$heya_reverse" == 0 ]]; then
+        xdotool key Home shift+End
+        printf 'Salut, lume. · こんにちは世界' > "$heya_fixture/expected-selection.txt"
+    else
+        xdotool key End keydown Shift key Up Home keyup Shift
+        printf 'Hello, world. 👋\nSalut, lume. · こんにちは世界' > "$heya_fixture/expected-selection.txt"
+    fi
+    sleep 0.5
+    xdotool click 3
+    sleep 1
+    import -window "$heya_window" "${heya_output}-selection-${heya_reverse}.png"
+    heya_check_selection_highlight "${heya_output}-selection-${heya_reverse}.png" shown
+    xdotool key Down Up Escape
+    sleep 0.2
+    import -window "$heya_window" "${heya_output}-selection-escape-${heya_reverse}.png"
+    heya_check_selection_highlight "${heya_output}-selection-escape-${heya_reverse}.png" shown
+    xdotool click 3
+    sleep 0.2
+    xdotool key Return # Copy selection is the first menu action.
+    sleep 0.2
+    timeout 3s xclip -selection clipboard -out > "$heya_fixture/actual-selection.txt"
+    if ! cmp "$heya_fixture/expected-selection.txt" "$heya_fixture/actual-selection.txt"; then
+        cp "$heya_fixture/actual-selection.txt" "${heya_output}-actual-selection.txt"
+        cp "$heya_fixture/app.log" "${heya_output}-app.log"
+        exit 1
+    fi
+    import -window "$heya_window" "${heya_output}-selection-copy-${heya_reverse}.png"
+    heya_check_selection_highlight "${heya_output}-selection-copy-${heya_reverse}.png" shown
+    xdotool click 3
+    sleep 0.2
+    xdotool mousemove --window "$heya_window" 700 842 click 1
+    sleep 0.2
+    import -window "$heya_window" "${heya_output}-selection-cleared-${heya_reverse}.png"
+    heya_check_selection_highlight "${heya_output}-selection-cleared-${heya_reverse}.png" cleared
+done
+echo "Native message menu: selection stays highlighted through navigation, Escape and Copy; clicking elsewhere clears it"
+echo "Native message menu: forward and reverse multiline Unicode selection copied exactly"
 heya_editor_menu() {
     xdotool mousemove --window "$heya_window" 700 842 click 3
     sleep 0.1
-    xdotool key --repeat "$1" --repeat-delay 20 Down
-    xdotool key Return
+    if [[ "${2:-}" == pointer ]]; then
+        import -window "$heya_window" "${heya_output}-first-menu.png"
+        xdotool mousemove --window "$heya_window" 750 846 click 1
+    else
+        xdotool key --repeat "$1" --repeat-delay 20 Down
+        xdotool key Return
+    fi
     sleep 0.2
 }
 printf 'Menu paste 🙂\nSecond line' > "$heya_fixture/expected.txt"
 xclip -selection clipboard -in "$heya_fixture/expected.txt"
-xdotool windowfocus "$heya_window" mousemove --window "$heya_window" 700 842 click 1 click 3
-sleep 0.2
-import -window "$heya_window" "${heya_output}-menu.png"
-xdotool key Escape
-heya_editor_menu 5 # Paste through the same worker as Ctrl+V.
+# Open Received photos from the sidebar and immediately paste into its empty
+# composer, without a left click in the editor or an earlier menu action.
+xdotool windowfocus "$heya_window" mousemove --window "$heya_window" 180 724 click 1
+heya_editor_menu 5 pointer # Choose Paste with the mouse, as in ordinary use.
+# Let the finite clipboard worker consume the source before replacing its offer.
+sleep 1
+# Replace the source offer before copying back. Otherwise an empty editor with
+# disabled Copy would leave the original offer intact and falsely pass cmp.
+printf 'Synthetic clipboard sentinel: Copy did not run' > "$heya_fixture/sentinel.txt"
+xclip -selection clipboard -in "$heya_fixture/sentinel.txt"
 heya_editor_menu 6 # Select All.
 heya_editor_menu 4 # Copy into another process's clipboard read.
 timeout 3s xclip -selection clipboard -out > "$heya_fixture/actual.txt"
-cmp "$heya_fixture/expected.txt" "$heya_fixture/actual.txt"
+if ! cmp "$heya_fixture/expected.txt" "$heya_fixture/actual.txt"; then
+    import -window "$heya_window" "${heya_output}-failed.png"
+    cp "$heya_fixture/actual.txt" "${heya_output}-actual.txt"
+    cp "$heya_fixture/app.log" "${heya_output}-app.log"
+    exit 1
+fi
+xdotool mousemove --window "$heya_window" 700 842 click 3
+sleep 0.2
+import -window "$heya_window" "${heya_output}-menu.png"
+xdotool key Escape
 heya_editor_menu 3 # Cut, then native undo and redo.
 heya_editor_menu 1
+xclip -selection clipboard -in "$heya_fixture/sentinel.txt"
 heya_editor_menu 6
 heya_editor_menu 4
 timeout 3s xclip -selection clipboard -out > "$heya_fixture/actual.txt"

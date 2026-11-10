@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 fn video_record(id: &str) -> crate::archive::Record {
     let mut row = record(id);
     row.content.video = Some(crate::message_content::Video {
+        round: false,
         width: 1280,
         height: 720,
         seconds: Some(4),
@@ -18,6 +19,72 @@ fn video_record(id: &str) -> crate::archive::Record {
     row
 }
 struct Bytes(AtomicUsize);
+
+#[tokio::test]
+#[ignore = "run with scripts/ui-offscreen.sh --video-check and a synthetic MP4"]
+async fn round_video_receipts_follow_real_progress_privacy_and_clean_shutdown() {
+    let bytes = std::fs::read(std::env::var("HEYA_TEST_VIDEO_FILE").unwrap()).unwrap();
+    let (_temp, db) = fixture();
+    let mut row = video_record("round-receipt");
+    row.content.video.as_mut().unwrap().round = true;
+    db.ingest(Batch {
+        messages: vec![row],
+        live: true,
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    let id = db
+        .blocking(|c| Ok(c.query_row("SELECT id FROM messages", [], |r| r.get::<_, i32>(0))?))
+        .unwrap();
+    let request = db.video_request(id).await.unwrap().unwrap();
+    db.save_video(&request, bytes).await.unwrap();
+    let (_archives, archives) = watch::channel(Some(db.clone()));
+    let (_sources, sources) = watch::channel(None);
+    let (commands, rx) = mpsc::channel(8);
+    let (updates, mut states) = watch::channel(Status::default());
+    let settings = crate::preferences::Preferences {
+        send_receipts: false,
+        ..Default::default()
+    };
+    let (preferences, prx) = watch::channel(settings);
+    let task = tokio::spawn(run(archives, sources, rx, updates, false, prx));
+    commands.send(Command::Toggle(id)).await.unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(12),
+        states.wait_for(|s| s.phase == 2 && s.position > 0.15),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(db.next_receipt().await.unwrap().is_none());
+    commands.send(Command::Stop).await.unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(4),
+        states.wait_for(|s| s.phase == 0),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    preferences.send_modify(|p| p.send_receipts = true);
+    commands.send(Command::Toggle(id)).await.unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(12),
+        states.wait_for(|s| s.phase == 2 && s.position > 0.15),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let receipt = db.next_receipt().await.unwrap().unwrap();
+    assert!(receipt.kind == crate::archive::ReceiptKind::Played);
+    assert_eq!(receipt.messages.len(), 1);
+    commands.send(Command::Stop).await.unwrap();
+    drop(commands);
+    tokio::time::timeout(std::time::Duration::from_secs(4), task)
+        .await
+        .unwrap()
+        .unwrap();
+}
 #[async_trait::async_trait]
 impl Source for Bytes {
     async fn fetch(&self, _: &[u8]) -> Result<Vec<u8>, Error> {

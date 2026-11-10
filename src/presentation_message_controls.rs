@@ -42,7 +42,7 @@ pub fn bind(ui: &AppWindow, submit: Rc<impl Fn(Command) -> bool + 'static>) -> R
         let mut ids = selected.ids.borrow_mut();
         if !ids.remove(&id) {
             if ids.len() >= MAX_SELECTION {
-                ui.set_notice(format!("Select up to {MAX_SELECTION} messages.").into());
+                ui.invoke_show_error(format!("Select up to {MAX_SELECTION} messages.").into());
                 return;
             }
             ids.insert(id);
@@ -94,7 +94,7 @@ pub fn bind(ui: &AppWindow, submit: Rc<impl Fn(Command) -> bool + 'static>) -> R
             }
             2 => {
                 if !ui.get_demo_mode() && ui.get_connection_state() != 5 {
-                    ui.set_notice("Connect to forward messages.".into());
+                    ui.invoke_show_error("Connect to forward messages.".into());
                     return;
                 }
                 ui.set_action_summary(format!("{} selected messages", ids.len()).into());
@@ -194,7 +194,15 @@ pub fn bind(ui: &AppWindow, submit: Rc<impl Fn(Command) -> bool + 'static>) -> R
             _ => {}
         }
     });
+    let weak = ui.as_weak();
     ui.on_close_message_info(move || {
+        // Closing a read-only query cancels its UI gate even if the worker
+        // consumes CloseInfo before it publishes the query result.
+        if let Some(ui) = weak.upgrade()
+            && matches!(ui.get_message_dialog(), 8 | 11)
+        {
+            ui.set_action_pending(false);
+        }
         let _ = submit(Command::CloseInfo);
     });
     state

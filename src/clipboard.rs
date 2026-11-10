@@ -17,10 +17,11 @@ pub fn read() -> Result<Content, Error> {
     {
         return Ok(Content::Attachments(paths_input(paths)?));
     }
-    match clipboard.get_image() {
-        Ok(image) => return Ok(Content::Attachments(Input::Png(encode(image)?))),
-        Err(arboard::Error::ContentNotAvailable) => {}
-        Err(_) => return Err(Error::Clipboard),
+    // Some text owners (including xclip) answer an unsupported image request
+    // with a different type rather than ContentNotAvailable. A failed image
+    // read must not prevent trying the owner's valid text representation.
+    if let Ok(image) = clipboard.get_image() {
+        return Ok(Content::Attachments(Input::Png(encode(image)?)));
     }
     let text = clipboard.get_text().map_err(|_| Error::Clipboard)?;
     Ok(Content::Text(text))
@@ -169,6 +170,25 @@ mod tests {
         assert!(
             matches!(read().unwrap(),Content::Attachments(Input::Paths(value,None)) if value==vec![PathBuf::from("/tmp/space name.png"),PathBuf::from("/tmp/second.txt")])
         );
+        if !wayland {
+            // xclip's unsupported image reply is a type mismatch, rather than
+            // ContentNotAvailable. Reading text must still succeed.
+            let mut external = std::process::Command::new("xclip")
+                .args(["-selection", "clipboard", "-in"])
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap();
+            external
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(text.as_bytes())
+                .unwrap();
+            assert!(external.wait().unwrap().success());
+            assert!(matches!(read().unwrap(),Content::Text(value) if value==text));
+        }
         let rgba = [24, 80, 160, 93].repeat(1234 * 650);
         let expected = rgba.clone();
         drop(owner);

@@ -17,6 +17,50 @@ impl Contact {
 }
 
 impl Archive {
+    /// Bounded output; Unicode matching and database reads stay off the UI loop.
+    pub async fn contact_choices(&self, query: String) -> Result<crate::contact_sending::Page> {
+        self.call(move |db| {
+            let query=query.chars().take(128).collect::<String>();
+            let mut q=db.prepare("SELECT c.jid,trim(c.saved_name) FROM contacts c WHERE nullif(trim(c.saved_name),'') IS NOT NULL AND c.jid LIKE '%@s.whatsapp.net' AND NOT EXISTS(SELECT 1 FROM chat_settings s WHERE s.jid=c.jid AND s.kind=2 AND s.value=1) ORDER BY c.saved_name COLLATE NOCASE,c.jid")?;
+            let mut choices=Vec::new();let mut more=false;
+            for row in q.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))? {
+                let (jid,name)=row?;
+                let choice=crate::contact_sending::Choice{name,number:jid.trim_end_matches("@s.whatsapp.net").into()};
+                if !choice.valid() || !choice.matches(&query) {continue;}
+                if choices.len()==crate::contact_sending::PAGE_SIZE {more=true;break;}
+                choices.push(choice);
+            }
+            Ok(crate::contact_sending::Page{choices:choices.into(),more})
+        }).await
+    }
+    pub async fn queue_contacts(
+        &self,
+        chat: i32,
+        id: String,
+        contacts: Vec<crate::contact_sending::Choice>,
+        reply: i32,
+    ) -> Result<()> {
+        let prepared = self
+            .call(move |db| {
+                let chat = local_chat(db, chat)?;
+                chat_settings::unlocked(db, chat)?;
+                let source = if reply > 0 {
+                    Some(actions::source(db, chat, reply)?)
+                } else {
+                    None
+                };
+                let owner = db
+                    .query_row("SELECT value FROM metadata WHERE key='identity'", [], |r| {
+                        r.get::<_, String>(0)
+                    })
+                    .optional()?
+                    .unwrap_or_default();
+                crate::protocol_contacts::prepare(&contacts, source.as_ref(), &owner)
+            })
+            .await?;
+        self.queue_media(chat, id, prepared, (reply > 0).then_some(reply), None)
+            .await
+    }
     /// Mark before starting the SDK. An unclean exit requires a snapshot because
     /// the SDK may have committed its app-state cursor before our contact write.
     pub async fn begin_contacts(&self) -> Result<bool> {

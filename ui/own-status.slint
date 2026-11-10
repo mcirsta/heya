@@ -1,0 +1,150 @@
+import { Theme } from "theme.slint";
+import { IconButton } from "components.slint";
+import { SoftButton } from "settings.slint";
+import { MenuControl } from "message-menu.slint";
+import { LineEdit, ScrollView } from "std-widgets.slint";
+
+export component OwnStatusButton inherits Rectangle {
+    in property <bool> enabled: true;
+    changed enabled=>{if !root.enabled {popup.close();}}
+    in property <int> connection;
+    in property <int> visibility: -1;
+    in property <bool> busy;
+    in property <bool> demo;
+    in property <bool> blocked;
+    in property <bool> waiting-key-store;
+    in property <string> error;
+    in property <string> warning;
+    callback choose(int);
+    callback edit();
+    private property <bool> connected: root.demo || root.connection == 5;
+    private property <bool> working: (root.busy && root.visibility<0) || (!root.demo && ((root.connection>=1 && root.connection<=4) || root.connection==6 || root.connection==7));
+    private property <bool> failed: root.connection==9 || root.warning!="";
+    private property <int> selected: 0;
+    private property <string> title: root.demo ? @tr("Demo status") : root.connection==9 ? @tr("Connection needs attention") : root.connection==1 ? (root.waiting-key-store ? @tr("Waiting for key store") : @tr("Opening saved chats")) : root.connection==2 ? @tr("Connecting…") : root.connection==3 ? @tr("Waiting for QR code") : root.connection==4 ? @tr("Pairing…") : root.connection==6 ? @tr("Reconnecting…") : root.connection==7 ? @tr("Disconnecting…") : !root.connected ? @tr("Offline") : root.visibility==1 ? @tr("Invisible") : root.visibility==0 ? @tr("Online") : @tr("Connected");
+    private property <color> badge: root.failed ? (Theme.is-dark ? #e5ab42 : #ad6806) : root.working || (root.connected && root.visibility==0) ? Theme.accent : root.connected ? (Theme.is-dark ? #9caab2 : #65747c) : (Theme.is-dark ? #81909b : #7a858c);
+    private property <image> icon: root.failed ? @image-url("icons/status-attention.svg") : root.working ? @image-url("icons/status-connecting.svg") : root.connected && root.visibility==1 ? @image-url("icons/status-hidden.svg") : root.connected ? @image-url("icons/status-check.svg") : @image-url("icons/status-minus.svg");
+    width:34px;height:34px;border-radius:17px;
+    background: hit.has-hover && root.enabled ? root.badge.mix(Theme.text,0.1) : root.badge;
+    border-width: focus.has-focus ? 2px : 0px;border-color:Theme.text;
+    accessible-role:button;accessible-label:root.title + @tr(". Change status");accessible-enabled:root.enabled;
+    accessible-action-default=>{root.open();}
+    public function open() {if root.enabled {root.selected=root.connected && root.visibility>=0 ? root.visibility : 2;popup.show();}}
+    Image {x:7px;y:7px;width:20px;height:20px;source:root.icon;colorize:Theme.on-accent;}
+    focus:=FocusScope {
+        enabled:root.enabled;
+        key-pressed(event)=>{if event.text==Key.Return || event.text==" " || event.text==Key.DownArrow {root.open();return accept;}return reject;}
+    }
+    hit:=TouchArea {enabled:root.enabled;mouse-cursor:pointer;clicked=>{focus.focus();root.open();}}
+    Tooltip {text:@markdown("\{root.title}");}
+    popup:=PopupWindow {
+        x:0px;y:root.height+8px;width:288px;height:contents.preferred-height+16px;
+        Rectangle {
+            background:Theme.overlay;border-radius:12px;border-width:1px;border-color:Theme.outline;
+            drop-shadow-offset-y:6px;drop-shadow-blur:22px;drop-shadow-color:Theme.modal-shadow;
+            FocusScope {
+                key-pressed(event)=>{
+                    if event.text==Key.Escape {popup.close();focus.focus();return accept;}
+                    if event.text==Key.DownArrow {root.selected=min(3,root.selected+1);return accept;}
+                    if event.text==Key.UpArrow {root.selected=max(0,root.selected - 1);return accept;}
+                    return reject;
+                }
+                contents:=VerticalLayout {
+                    padding:8px;spacing:0px;
+                    Rectangle {
+                        height:heading.preferred-height+16px;
+                        heading:=Text {x:12px;y:8px;width:parent.width - 24px;text:root.title;color:Theme.text;font-size:14px;font-weight:600;wrap:word-wrap;}
+                    }
+                    if root.error!="" || root.warning!="":Text {
+                        text:root.error!="" ? root.error : root.warning;color:Theme.secondary;font-size:12px;wrap:word-wrap;
+                    }
+                    for entry[index] in [@tr("Online"),@tr("Invisible"),@tr("Offline")]:MenuControl {
+                        height:40px;label:entry;selected:root.selected==index;
+                        enabled:index==2 ? !root.demo && root.connection>=1 && root.connection<=6 : !root.busy && !root.blocked && (root.connected || root.connection==0 || root.connection==8 || root.connection==9);
+                        focused=>{root.selected=index;}
+                        activated=>{popup.close();focus.focus();root.choose(index);}
+                        Image {x:10px;y:11px;width:18px;height:18px;source:index==0 ? @image-url("icons/status-online.svg") : index==1 ? @image-url("icons/eye-off.svg") : @image-url("icons/status-offline.svg");colorize:index==0 ? Theme.accent : Theme.secondary;}
+                        Text {x:40px;width:parent.width - 70px;height:parent.height;text:entry;color:parent.enabled ? Theme.text : Theme.dim;vertical-alignment:center;font-size:14px;}
+                        if (root.connected && root.visibility==index) || (!root.connected && index==2):Image {x:parent.width - 28px;y:12px;width:16px;height:16px;source:@image-url("icons/check.svg");colorize:Theme.accent;}
+                    }
+                    Rectangle {height:1px;background:Theme.outline;}
+                    MenuControl {
+                        height:42px;label:@tr("Edit status message…");selected:root.selected==3;enabled:root.connected && !root.busy;
+                        focused=>{root.selected=3;}
+                        activated=>{popup.close();root.edit();}
+                        Image {x:10px;y:12px;width:18px;height:18px;source:@image-url("icons/square-pen.svg");colorize:Theme.secondary;}
+                        Text {x:40px;width:parent.width - 48px;height:parent.height;text:@tr("Edit status message…");color:parent.enabled ? Theme.text : Theme.dim;vertical-alignment:center;font-size:14px;}
+                    }
+                    Text {
+                        text:root.demo ? @tr("Demo changes stay in this window.") : root.blocked ? @tr("Open Settings → Account to reconnect.") : @tr("Invisible keeps Heya connected. Other devices can still show you online.");
+                        color:Theme.secondary;font-size:11px;wrap:word-wrap;
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component StatusMessageDialog inherits Rectangle {
+    in-out property <string> text;
+    in property <bool> busy;
+    in property <bool> connected;
+    in property <bool> can-save;
+    in property <string> error;
+    callback edited();
+    callback save();
+    callback close();
+    in property <bool> obscured;
+    changed obscured=>{if !root.obscured {field.focus();}}
+    background:#0005;
+    TouchArea {}
+    FocusScope {
+        key-pressed(event)=>{if event.text==Key.Escape {root.close();return accept;}return reject;}
+        panel:=Rectangle {
+            x:(root.width - self.width) / 2;y:(root.height - self.height) / 2;
+            width:min(440px,root.width - 32px);height:content.preferred-height;
+            background:Theme.panel;border-radius:16px;drop-shadow-offset-y:8px;drop-shadow-blur:32px;drop-shadow-color:Theme.modal-shadow;
+            TouchArea {}
+            content:=VerticalLayout {
+                padding:24px;spacing:16px;
+                Text {text:@tr("Status message");font-size:20px;font-weight:600;color:Theme.text;}
+                Text {text:@tr("Your WhatsApp About text, shown on your profile.");font-size:13px;color:Theme.secondary;wrap:word-wrap;}
+                field:=LineEdit {text<=>root.text;placeholder-text:@tr("Write a status message");edited=>{root.edited();} accepted=>{if root.connected && !root.busy && root.can-save {root.save();}}}
+                init=>{field.focus();}
+                if root.error!="":Text {text:root.error;color:Theme.secondary;font-size:13px;wrap:word-wrap;}
+                HorizontalLayout {
+                    alignment:end;spacing:10px;
+                    SoftButton {text:root.busy ? @tr("Close") : @tr("Cancel");activated=>{root.close();}}
+                    SoftButton {text:root.busy ? @tr("Please wait…") : @tr("Save");enabled:root.connected && !root.busy && root.can-save;activated=>{root.save();}}
+                }
+            }
+        }
+    }
+}
+
+export component ActionErrorDialog inherits Rectangle {
+    in property <string> message;
+    callback close();
+    background:#0005;
+    TouchArea {}
+    FocusScope {
+        key-pressed(event)=>{if event.text==Key.Escape || event.text==Key.Return {root.close();return accept;}return reject;}
+        panel:=Rectangle {
+            x:(root.width - self.width) / 2;y:(root.height - self.height) / 2;
+            width:min(420px,root.width - 32px);height:contents.preferred-height;
+            background:Theme.panel;border-radius:14px;drop-shadow-offset-y:8px;drop-shadow-blur:30px;drop-shadow-color:Theme.modal-shadow;
+            TouchArea {}
+            contents:=VerticalLayout {
+                padding:24px;spacing:20px;
+                ScrollView {
+                    height:min(body.preferred-height,max(48px,root.height - 140px));
+                    content-height:body.preferred-height;content-width:self.width;
+                    horizontal-scrollbar-policy:always-off;
+                    body:=Text {width:parent.width;text:root.message;color:Theme.text;font-size:14px;wrap:word-wrap;}
+                }
+                HorizontalLayout {alignment:end;SoftButton {text:@tr("OK");activated=>{root.close();}}}
+            }
+        }
+        init=>{self.focus();}
+    }
+}

@@ -389,6 +389,9 @@ impl MessageExt for wa::Message {
             base.video_message.as_option().and_then(|m| m.view_once),
             Some(true)
         ) || matches!(
+            base.ptv_message.as_option().and_then(|m| m.view_once),
+            Some(true)
+        ) || matches!(
             base.audio_message.as_option().and_then(|m| m.view_once),
             Some(true)
         ) || matches!(
@@ -2320,6 +2323,15 @@ mod tests {
             proto
         };
         assert!(msg.is_view_once());
+    }
+
+    #[test]
+    fn is_view_once_detects_inline_ptv_flag() {
+        let mut msg = wa::Message::default();
+        msg.ptv_message.get_or_insert_default().view_once = Some(true);
+        assert!(msg.is_view_once());
+        msg.ptv_message.get_or_insert_default().view_once = Some(false);
+        assert!(!msg.is_view_once());
     }
 
     #[test]

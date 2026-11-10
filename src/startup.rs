@@ -260,8 +260,9 @@ pub fn select_backend(
     trace: &Trace,
     software: bool,
     check: bool,
+    window_state: crate::presentation_window_state::State,
 ) -> Result<(), slint::PlatformError> {
-    if !trace.enabled() && !software && !check {
+    if !trace.enabled() && !software && !check && !window_state.enabled() {
         return Ok(());
     }
     gui_step(trace, "backend_select", software, || {
@@ -273,6 +274,7 @@ pub fn select_backend(
         }
         selector
             .with_winit_custom_application_handler(StartupEvents {
+                window_state,
                 trace: Some(trace.clone()),
                 redraw_pending: false,
                 resumed: false,
@@ -310,6 +312,7 @@ fn install_surface_diagnostics(trace: &Trace) {
 }
 
 struct StartupEvents {
+    window_state: crate::presentation_window_state::State,
     trace: Option<Trace>,
     redraw_pending: bool,
     resumed: bool,
@@ -331,11 +334,12 @@ impl CustomApplicationHandler for StartupEvents {
     fn window_event(
         &mut self,
         _: &dyn ActiveEventLoop,
-        _: WindowId,
+        id: WindowId,
         native: Option<&dyn slint::winit_031::winit::window::Window>,
         _: Option<&slint::Window>,
         event: &WindowEvent,
     ) -> EventResult {
+        self.window_state.event(id, event);
         let Some(trace) = &self.trace else {
             return EventResult::Propagate;
         };
@@ -365,6 +369,7 @@ impl CustomApplicationHandler for StartupEvents {
     }
 
     fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) -> EventResult {
+        self.window_state.pending();
         // Winit dispatches RedrawRequested synchronously. Reaching this point
         // without exiting establishes return from Slint's draw/present call,
         // not that the compositor displayed pixels on a physical monitor.

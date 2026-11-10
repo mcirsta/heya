@@ -30,7 +30,7 @@ one bounded feature, its failure paths and validation before starting the next.
 | 5 | Desktop notifications and existing-window activation | A second launch activates the existing window. Notifications honor preview/privacy settings, open the intended conversation and handle unavailable services or denied permissions. Use native platform services. |
 | 6 | Richer message text | Add bold/italic/code formatting, inline links and mentions while preserving original text, copying, selection, Unicode and stable timeline geometry. Validate each text behavior before combining them. |
 | 7 | Chat management | Implement manual read/unread, pin/archive/mute, then favorites and the remaining filters. Persist real state and synchronize supported actions; do not present placeholder filters as working. |
-| 8 | Additional cards and advanced interaction | Polls, contact and live-location cards, cross-message drag selection and remaining advanced message-control variants follow the everyday messaging work above. Scope and validate each separately. |
+| 8 | Additional cards and advanced interaction | Advanced poll variants, cross-message drag selection and remaining advanced message-control variants follow the everyday messaging work above. Scope and validate each separately. |
 
 The first chat-management increment synchronizes mute/archive/lock state and
 adds mute durations, unmute, archive/unarchive and Lock controls. Locked chats
@@ -64,6 +64,10 @@ Linux uses GStreamer; macOS has a native AVFoundation implementation awaiting
 native validation. GIF looping, animated stickers, video notes and video sending
 remain separate increments. See [video playback](video-playback.md) for bounds,
 teardown and reproducible offscreen checks.
+
+Received live-location shares now have Web-style static map cards, sender avatars,
+captions and an unavailable-on-desktop popup. This does not add tracking or
+location sending. See [location behavior](locations.md) for scope and validation.
 
 The photo viewer now uses explicit album associations and inferred consecutive
 photo batches for navigation, counters and
@@ -283,6 +287,14 @@ deleted message. Report ambiguous delivery rather than inventing a success state
 
 ## M3 Complete everyday media and clipboard use
 
+Received contact cards/bundles and round video messages now use the existing
+message, avatar, download and native playback paths. See
+[behavior and validation](shared-contacts.md); live-account and macOS checks
+remain separate acceptance work.
+Contact sending uses **+ → Contact**, a searchable synced-phonebook picker,
+multi-selection/review and the normal durable outbox. Only the selected names
+and phone numbers are shared; sending does not upload a vCard as a document.
+
 In progress: received JPEG/PNG photos use authenticated SDK streaming downloads,
 encrypted original/preview storage, native inline pictures and a conditional
 larger viewer. Download/decode demand follows nearby rows, with size limits,
@@ -415,3 +427,7 @@ Measure text/clipboard correctness before optimizing it away. ZapFast's publishe
 performance numbers are context, not transferable results for a Slint rewrite.
 
 Received fixed-location cards are implemented; see [scope and validation](locations.md). Live-location tracking and location sending remain outside this slice.
+
+Ordinary text polls now have creation, durable sending, voting/removal and live
+results, including legacy/current history add-ons. See [polls](polls.md) for scope
+and validation limits; live account interoperability still needs manual checking.

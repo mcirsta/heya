@@ -3,7 +3,7 @@
 set -euo pipefail
 
 usage() {
-    echo "Usage: $0 {--screenshot|--framebuffer} /tmp/heya.png [--size WIDTHxHEIGHT] [--light|--dark] [--demo-chat ID] [--click XxY (framebuffer only)] [--hover XxY (framebuffer only)] | --ui-benchmark | --call-audio-check | --video-check | --wheel-check | --close-check | --startup-check | --clipboard-check | --wayland-clipboard-check | --wayland-drop-check | --clipboard-ui-check OUTPUT_PREFIX | --storage-check OUTPUT_PREFIX" >&2
+    echo "Usage: $0 {--screenshot|--framebuffer} /tmp/heya.png [--size WIDTHxHEIGHT] [--light|--dark] [--demo-chat ID] [--click XxY (framebuffer only)] [--hover XxY (framebuffer only)] | --ui-benchmark | --call-audio-check | --video-check | --window-state-check | --wayland-window-state-check | --wheel-check | --close-check | --startup-check | --clipboard-check | --wayland-clipboard-check | --wayland-drop-check | --clipboard-ui-check OUTPUT_PREFIX | --storage-check OUTPUT_PREFIX" >&2
     exit 2
 }
 
@@ -46,7 +46,7 @@ case "${1:-}" in
         [[ $# == 2 && -n "$2" ]] || usage
         heya_args+=("$2")
         ;;
-    --call-audio-check|--video-check|--ui-benchmark|--wheel-check|--close-check|--startup-check|--clipboard-check|--wayland-clipboard-check|--wayland-drop-check)
+    --call-audio-check|--video-check|--ui-benchmark|--wheel-check|--close-check|--startup-check|--clipboard-check|--wayland-clipboard-check|--wayland-drop-check|--window-state-check|--wayland-window-state-check)
         [[ $# == 1 ]] || usage
         ;;
     *)
@@ -55,7 +55,11 @@ case "${1:-}" in
 esac
 
 heya_display_tools=(Xvfb xvfb-run xauth)
-if [[ "${heya_args[0]}" == --wayland-drop-check ]]; then
+if [[ "${heya_args[0]}" == --window-state-check ]]; then
+    heya_display_tools=(kwin_wayland Xwayland dbus-run-session qdbus6 python3)
+elif [[ "${heya_args[0]}" == --wayland-window-state-check ]]; then
+    heya_display_tools=(kwin_wayland dbus-run-session qdbus6 python3)
+elif [[ "${heya_args[0]}" == --wayland-drop-check ]]; then
     heya_display_tools=(kwin_wayland dbus-run-session qdbus6 wayland-scanner pkg-config cc c++)
 elif [[ "${heya_args[0]}" == --wayland-clipboard-check ]]; then
     heya_display_tools=(kwin_wayland dbus-run-session wl-copy wl-paste)
@@ -87,7 +91,7 @@ if [[ "${heya_args[0]}" == --video-check ]]; then
     heya_command=(bash "$heya_root/scripts/video-check.sh" "$heya_binary" "$heya_root/target/release/heya")
 fi
 if [[ "${heya_args[0]}" == --clipboard-ui-check ]]; then
-    for program in xclip xdotool import identify cc; do
+    for program in xclip xdotool import identify magick cc; do
         command -v "$program" >/dev/null || { echo "Clipboard UI check needs $program." >&2; exit 1; }
     done
     heya_command=(bash "$heya_root/scripts/ui-clipboard-check.sh" "$heya_binary" "${heya_args[1]}" "$heya_root")
@@ -105,6 +109,9 @@ if [[ "${heya_args[0]}" == --clipboard-check ]]; then
 fi
 if [[ "${heya_args[0]}" == --startup-check ]]; then
     heya_command=(python3 "$heya_root/scripts/check-gui-startup.py" "$heya_binary" --software-only)
+fi
+if [[ "${heya_args[0]}" == --window-state-check ]]; then
+    heya_command=(python3 "$heya_root/scripts/window-state-check.py" "$heya_binary" x11)
 fi
 if [[ "${heya_args[0]}" == --close-check ]]; then
     for program in python3 xdotool; do
@@ -218,7 +225,7 @@ heya_test_dir=$(mktemp -d "${TMPDIR:-/tmp}/heya-offscreen.XXXXXXXX")
 trap 'rm -rf -- "$heya_test_dir"' EXIT
 mkdir -m 700 "$heya_test_dir/runtime" "$heya_test_dir/config" "$heya_test_dir/data" "$heya_test_dir/cache"
 
-if [[ "${heya_args[0]}" == --wayland-clipboard-check || "${heya_args[0]}" == --wayland-drop-check ]]; then
+if [[ "${heya_args[0]}" == --wayland-clipboard-check || "${heya_args[0]}" == --wayland-drop-check || "${heya_args[0]}" == --wayland-window-state-check || "${heya_args[0]}" == --window-state-check ]]; then
     heya_wayland_script=clipboard-wayland-check.sh
     if [[ "${heya_args[0]}" == --wayland-drop-check ]]; then heya_wayland_script=wayland-drop-check.sh; fi
     # No desktop-service autostart: a headless compositor needs neither portals
@@ -232,12 +239,18 @@ if [[ "${heya_args[0]}" == --wayland-clipboard-check || "${heya_args[0]}" == --w
   </policy>
 </busconfig>
 XML
-    timeout --signal=TERM --kill-after=5s 60s env -u DISPLAY -u WAYLAND_DISPLAY -u WAYLAND_SOCKET -u XAUTHORITY \
+    if [[ "${heya_args[0]}" == --wayland-window-state-check ]]; then
+        heya_command=(python3 "$heya_root/scripts/window-state-check.py" "$heya_binary" wayland)
+    fi
+    if [[ "${heya_args[0]}" != --window-state-check && "${heya_args[0]}" != --wayland-window-state-check ]]; then
+        heya_command=(bash "$heya_root/scripts/$heya_wayland_script" "$heya_binary" "$heya_root")
+    fi
+    timeout --signal=TERM --kill-after=5s 90s env -u DISPLAY -u WAYLAND_DISPLAY -u WAYLAND_SOCKET -u XAUTHORITY \
         -u DBUS_SESSION_BUS_ADDRESS -u SESSION_MANAGER -u AT_SPI_BUS_ADDRESS \
         XDG_RUNTIME_DIR="$heya_test_dir/runtime" XDG_CONFIG_HOME="$heya_test_dir/config" \
         XDG_DATA_HOME="$heya_test_dir/data" XDG_CACHE_HOME="$heya_test_dir/cache" \
         dbus-run-session --config-file="$heya_test_dir/bus.conf" -- \
-        bash "$heya_root/scripts/$heya_wayland_script" "$heya_binary" "$heya_root"
+        "${heya_command[@]}"
     exit $?
 fi
 

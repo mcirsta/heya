@@ -212,3 +212,26 @@ int heya_pdf_render(const uint8_t *bytes, size_t length, uint32_t width,
 }
 
 void heya_native_free(void *bytes) { free(bytes); }
+
+// AppKit stores and adjusts the frame (including display topology) in native
+// user defaults. Save only the normal frame so Zoom/Full Screen cannot replace it.
+uint32_t heya_window_restore(void *view, double *size) {
+    NSCAssert(NSThread.isMainThread, @"AppKit requires the main thread");
+    NSWindow *window = [(__bridge NSView *)view window];
+    if (!window) return 0;
+    [window.windowController setShouldCascadeWindows:NO];
+    [window setFrameUsingName:@"HeyaMainWindow"];
+    NSSize content = [window contentRectForFrameRect:window.frame].size;
+    size[0] = content.width; size[1] = content.height;
+    return (uint32_t)[NSUserDefaults.standardUserDefaults integerForKey:@"HeyaMainWindowMode"] & 3;
+}
+void heya_window_save(void *view, uint32_t normal, uint32_t flags) {
+    NSCAssert(NSThread.isMainThread, @"AppKit requires the main thread");
+    NSWindow *window = [(__bridge NSView *)view window];
+    if (!window || window.miniaturized) return;
+    if (normal && !window.zoomed && !(window.styleMask & NSWindowStyleMaskFullScreen))
+        [window saveFrameUsingName:@"HeyaMainWindow"];
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    if ([defaults integerForKey:@"HeyaMainWindowMode"] != flags)
+        [defaults setInteger:flags forKey:@"HeyaMainWindowMode"];
+}

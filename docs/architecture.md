@@ -12,6 +12,17 @@ using public APIs. Targeted library changes are authorized when needed. Document
 the concrete missing capability, keep the patch isolated and pin the resulting
 revision; avoid redesigning Heya around a workaround for a missing public API.
 
+## Own-account status
+
+`own_account.rs` serializes own-device availability and profile About operations
+through a bounded command channel and the existing runtime. `protocol_own_account.rs`
+uses the public SDK presence/profile/contacts APIs; SDK types stay at that boundary.
+`presentation_own_account.rs` publishes only the small status/editor snapshot.
+The SDK's Manual presence policy prevents reconnect/push-name announcements from
+briefly making an Invisible Heya available. The protocol supervisor publishes and
+clears the source alongside the other services, before its ownership-release fence.
+No new OS thread or idle polling timer is used. See [status controls](own-status.md).
+
 ## Module boundaries
 
 The current single crate keeps the offline demo in `domain.rs`, `service.rs`

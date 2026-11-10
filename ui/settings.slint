@@ -268,150 +268,159 @@ component SettingsRow inherits Rectangle {
     }
 }
 
+component SettingsTab inherits Rectangle {
+    in property <string> title;
+    in property <int> index;
+    in property <bool> selected;
+    in property <bool> focused;
+    callback activate();
+    callback focus-tab();
+    callback step(int);
+    height: 42px;
+    border-radius: 8px;
+    background: root.selected ? Theme.accent.with-alpha(0.12) : hit.has-hover ? Theme.hover : transparent;
+    border-width: tab-focus.has-focus ? 1px : 0px;
+    border-color: Theme.accent;
+    accessible-role: tab;
+    accessible-label: root.title;
+    accessible-item-index: root.index;
+    accessible-item-selectable: true;
+    accessible-item-selected: root.selected;
+    accessible-action-default => {tab-focus.focus();root.activate();}
+    if root.selected: Rectangle {x:0px;y:11px;width:3px;height:20px;border-radius:2px;background:Theme.accent;}
+    Text {
+        x:14px;width:parent.width - 28px;height:parent.height;
+        text:root.title;color:root.selected ? Theme.accent : Theme.text;
+        font-size:14px;font-weight:root.selected ? 600 : 400;
+        vertical-alignment:center;overflow:elide;
+    }
+    changed focused=>{if root.focused {tab-focus.focus();}}
+    tab-focus:=FocusScope {
+        changed has-focus=>{if self.has-focus {root.focus-tab();}}
+        key-pressed(event)=>{
+            if event.text==Key.Return || event.text==" " {root.activate();return accept;}
+            if event.text==Key.DownArrow {root.step(1);return accept;}
+            if event.text==Key.UpArrow {root.step(-1);return accept;}
+            return reject;
+        }
+    }
+    hit:=TouchArea {mouse-cursor:pointer;clicked=>{tab-focus.focus();root.activate();}}
+}
+
+component SettingsSectionView inherits VerticalLayout {
+    in property <SettingSection> section;
+    callback changed(string,int);
+    spacing:12px;
+    accessible-role:tab-panel;
+    accessible-label:root.section.title;
+    Text {text:root.section.title;font-size:21px;font-weight:600;color:Theme.text;wrap:word-wrap;}
+    card:=Rectangle {
+        height:rows.preferred-height;
+        background:Theme.panel.mix(Theme.surface,0.5);
+        border-radius:12px;border-width:1px;border-color:Theme.outline;
+        rows:=VerticalLayout {
+            padding:20px;padding-bottom:10px;spacing:4px;
+            for row in root.section.rows:SettingsRow {
+                entry:row;changed(key,value)=>{root.changed(key,value);}
+            }
+        }
+    }
+    if root.section.title=="About":AboutSlint {}
+}
+
 export component SettingsPage inherits Rectangle {
     in property <[SettingSection]> sections;
+    in property <[string]> categories;
+    in-out property <int> selected-tab;
     in property <string> status;
     in-out property <string> query;
     callback search(string);
-    callback changed(string, int);
+    callback changed(string,int);
     callback back();
-    background: Theme.panel;
-    init => { settings-search.focus(); }
-    settings-scroll := ScrollView {
-        content-width: self.visible-width;
-        horizontal-scrollbar-policy: always-off;
-        content-height: column.height + 48px;
-        column := VerticalLayout {
-            x: (settings-scroll.visible-width - self.width) / 2;
-            y: 24px;
-            width: max(0px,min(640px,settings-scroll.visible-width - 64px));
-            height: self.preferred-height;
-            spacing: 0px;
-            HorizontalLayout {
-                height: 34px;
-                spacing: 8px;
-                IconButton {
-                    icon: @image-url("icons/back.svg");
-                    icon-size: 20px;
-                    label: @tr("Back (Esc)");
-                    activated => { root.back(); }
-                }
-
-                Text {
-                    text: @tr("Settings");
-                    font-size: 24px;
-                    font-weight: 700;
-                    color: Theme.text;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                }
-            }
-
-            Rectangle {
-                height: 14px;
-            }
-
-            search-field := Rectangle {
-                height: 34px;
-                background: Theme.surface;
-                border-radius: 17px;
-                Image {
-                    x: 10px;
-                    y: 9px;
-                    width: 16px;
-                    height: 16px;
-                    source: @image-url("icons/search.svg");
-                    colorize: Theme.secondary;
-                }
-
-                Text {
-                    x: 34px;
-                    height: parent.height;
-                    text: @tr("Search settings");
-                    color: Theme.dim;
-                    visible: root.query == "";
-                    vertical-alignment: center;
-                }
-
-                settings-search := TextInput {
-                    x: 34px;
-                    width: parent.width - 64px;
-                    height: parent.height;
-                    text <=> root.query;
-                    color: Theme.text;
-                    single-line: true;
-                    vertical-alignment: center;
-                    accessible-label: @tr("Search settings");
-                    edited => { root.search(self.text); }
-                }
-
-                if root.query != "": IconButton {
-                    x: parent.width - 29px;
-                    y: 5px;
-                    width: 24px;
-                    height: 24px;
-                    icon-size: 15px;
-                    icon: @image-url("icons/close.svg");
-                    label: @tr("Clear settings search");
-                    activated => { root.query = ""; root.search(""); }
-                }
-            }
-
-            Rectangle {
-                height: 6px;
-            }
-
-            if root.status != "": Text {
-                text: root.status;
-                wrap: word-wrap;
-                color: Theme.secondary;
-                font-size: 12.5px;
-            }
-            for section in root.sections: VerticalLayout {
-                spacing: 0px;
-                Rectangle {
-                    height: 12px;
-                }
-
-                Text {
-                    text: section.title;
-                    font-size: 18px;
-                    font-weight: 700;
-                    color: Theme.text;
-                }
-
-                Rectangle {
-                    height: 8px;
-                }
-
-                card := Rectangle {
-                    height: rows.preferred-height;
-                    background: Theme.panel.mix(Theme.surface,0.5);
-                    border-radius: 10px;
-                    border-width: 1px;
-                    border-color: Theme.outline;
-                    rows := VerticalLayout {
-                        padding-left: 20px;
-                        padding-right: 20px;
-                        padding-top: 16px;
-                        padding-bottom: 6px;
-                        spacing: 0px;
-                        for row in section.rows: SettingsRow {
-                            entry: row;
-                            changed(key, value) => { root.changed(key,value); }
-                        }
+    private property <bool> searching: root.query!="";
+    private property <bool> side-tabs: root.width>=600px;
+    private property <length> nav-width: root.side-tabs ? 184px : 0px;
+    private property <length> body-top: !root.side-tabs && !root.searching ? 170px : 124px;
+    private property <int> focused-tab: -1;
+    background:Theme.panel;
+    init=>{settings-search.focus();}
+    changed selected-tab=>{settings-scroll.content-y=0px;}
+    changed query=>{settings-scroll.content-y=0px;}
+    public function choose-tab(index:int) {
+        if index>=0 && index<root.categories.length {
+            root.query="";root.search("");root.selected-tab=index;
+            settings-scroll.content-y=0px;
+        }
+    }
+    header:=HorizontalLayout {
+        x:24px;y:20px;width:root.width - 48px;height:34px;spacing:8px;
+        IconButton {icon:@image-url("icons/back.svg");icon-size:20px;label:@tr("Back (Esc)");activated=>{root.back();}}
+        Text {text:@tr("Settings");font-size:24px;font-weight:700;color:Theme.text;vertical-alignment:center;horizontal-stretch:1;}
+    }
+    search-field:=Rectangle {
+        x:24px;y:68px;width:min(1040px,root.width - 48px);height:36px;
+        background:Theme.surface;border-radius:18px;
+        border-width:settings-search.has-focus ? 1px : 0px;border-color:Theme.accent;
+        Image {x:12px;y:10px;width:16px;height:16px;source:@image-url("icons/search.svg");colorize:Theme.secondary;}
+        Text {x:36px;width:parent.width - 66px;height:parent.height;text:@tr("Search all settings");color:Theme.dim;visible:root.query=="";vertical-alignment:center;overflow:elide;}
+        settings-search:=TextInput {
+            x:36px;width:parent.width - 68px;height:parent.height;
+            text<=>root.query;color:Theme.text;single-line:true;vertical-alignment:center;
+            accessible-label:@tr("Search settings");
+            edited=>{root.search(self.text);}
+        }
+        if root.query!="":IconButton {
+            x:parent.width - 30px;y:6px;width:24px;height:24px;icon-size:15px;
+            icon:@image-url("icons/close.svg");label:@tr("Clear settings search");
+            activated=>{root.query="";root.search("");settings-search.focus();}
+        }
+    }
+    if root.side-tabs: navigation:=Rectangle {
+        x:0px;y:124px;width:root.nav-width;height:parent.height - self.y;
+        Rectangle {x:parent.width - 1px;width:1px;height:parent.height;background:Theme.outline;}
+        nav-scroll:=ScrollView {
+            width:parent.width - 1px;height:parent.height;
+            content-width:self.visible-width;content-height:tabs.preferred-height;
+            horizontal-scrollbar-policy:always-off;
+            tabs:=VerticalLayout {
+                padding-left:16px;padding-right:16px;padding-bottom:16px;spacing:4px;
+                accessible-role:tab-list;accessible-label:@tr("Settings categories");
+                for title[index] in root.categories:SettingsTab {
+                    title:title;index:index;selected:!root.searching && root.selected-tab==index;
+                    focused:root.focused-tab==index;
+                    focus-tab=>{root.focused-tab=index;}
+                    activate=>{root.choose-tab(index);}
+                    step(direction)=>{
+                        let next=clamp(index+direction,0,root.categories.length - 1);
+                        root.focused-tab=next;root.choose-tab(next);
+                        if next*46px+nav-scroll.content-y<0px {nav-scroll.content-y=-next*46px;}
+                        else if next*46px+42px+nav-scroll.content-y>nav-scroll.visible-height {nav-scroll.content-y=nav-scroll.visible-height - next*46px - 42px;}
                     }
                 }
-
-                if section.title == "About": AboutSlint { }
-                Rectangle {
-                    height: 8px;
-                }
             }
-            if root.sections.length == 0: Text {
-                text: @tr("No settings match your search.");
-                color: Theme.secondary;
-                wrap: word-wrap;
+        }
+    }
+    if !root.side-tabs && !root.searching:Choice {
+        x:24px;y:122px;width:parent.width - 48px;
+        label:@tr("Settings category");options:root.categories;selected:root.selected-tab;
+        chosen(index)=>{root.choose-tab(index);}
+    }
+    settings-scroll:=ScrollView {
+        x:root.nav-width;y:root.body-top;width:root.width - self.x;height:max(0px,root.height - self.y);
+        content-width:self.visible-width;content-height:column.preferred-height+24px;
+        horizontal-scrollbar-policy:always-off;
+        column:=VerticalLayout {
+            x:24px;y:0px;width:max(0px,min(856px,settings-scroll.visible-width - 48px));
+            height:self.preferred-height;spacing:20px;
+            if root.status!="":Text {text:root.status;wrap:word-wrap;color:Theme.secondary;font-size:12.5px;}
+            if root.searching:VerticalLayout {
+                spacing:24px;
+                Text {text:@tr("Search results · All settings");font-size:14px;font-weight:600;color:Theme.secondary;wrap:word-wrap;}
+                for section in root.sections:SettingsSectionView {section:section;changed(key,value)=>{root.changed(key,value);}}
+                if root.sections.length==0:Text {text:@tr("No settings match your search.");color:Theme.secondary;wrap:word-wrap;}
+            }
+            if !root.searching && root.selected-tab<root.sections.length:SettingsSectionView {
+                section:root.sections[root.selected-tab];changed(key,value)=>{root.changed(key,value);}
             }
         }
     }

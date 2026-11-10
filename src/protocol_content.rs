@@ -49,12 +49,16 @@ pub fn extract(message: &wa::Message) -> (Option<String>, Content, Vec<u8>) {
     if !message.is_view_once() && content.notice.is_none() {
         crate::protocol_actions::decorate(message, &mut content);
         let base = message.get_base_message();
-        content.has_attachment = base.document_message.is_set()
+        content.has_attachment |= base.document_message.is_set()
             || base
                 .video_message
                 .as_option()
                 .is_some_and(|v| v.view_once != Some(true))
             || base.sticker_message.is_set();
+        content.has_attachment |= base
+            .ptv_message
+            .as_option()
+            .is_some_and(|v| v.view_once != Some(true));
     }
     (text, content, thumbnail)
 }
@@ -86,6 +90,12 @@ fn extract_body(message: &wa::Message) -> (Option<String>, Content, Vec<u8>) {
         return (Some(text), content, Vec::new());
     }
     let base = message.get_base_message();
+    if let Some((text, content)) = crate::protocol_polls::extract(message) {
+        return (Some(text), content, Vec::new());
+    }
+    if let Some((text, content)) = crate::protocol_contacts::extract(base) {
+        return (Some(text), content, Vec::new());
+    }
     if let Some((text, content)) = crate::protocol_system::content(base) {
         return (Some(text), content, Vec::new());
     }
@@ -131,7 +141,7 @@ fn extract_body(message: &wa::Message) -> (Option<String>, Content, Vec<u8>) {
             Vec::new(),
         );
     }
-    if let Some(video) = base.video_message.as_option() {
+    if let Some(video) = crate::protocol_video::clip(base) {
         if video.view_once == Some(true) {
             return (None, Content::default(), Vec::new());
         }
@@ -150,6 +160,7 @@ fn extract_body(message: &wa::Message) -> (Option<String>, Content, Vec<u8>) {
             Content {
                 body: Some(video.caption.clone().unwrap_or_default()),
                 video: Some(message_content::Video {
+                    round: base.ptv_message.is_set(),
                     width,
                     height,
                     seconds: video.seconds,

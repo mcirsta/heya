@@ -56,7 +56,7 @@ async fn a_connection_published_before_the_click_is_not_a_disconnect() {
     fake.release.notify_one();
     assert_eq!(
         request(db.clone(), receiver, chat, Action::MuteAlways).await,
-        Ok("Chat muted.")
+        Ok(())
     );
     let view = db.view(0, 100, String::new(), false, false).await.unwrap();
     assert!(view.chats[0].muted);

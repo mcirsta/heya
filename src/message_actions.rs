@@ -115,8 +115,39 @@ pub struct OperationReply {
     pub saved: bool,
     pub error: String,
     pub info: Option<Info>,
+    pub contacts: Option<crate::contact_sending::Page>,
+    pub poll_results: Option<std::sync::Arc<crate::polls::Results>>,
 }
 pub enum Command {
+    CreatePoll {
+        chat: i32,
+        draft: crate::polls::Draft,
+        reply: i32,
+        request: i32,
+    },
+    VotePoll {
+        chat: i32,
+        message: i32,
+        option: usize,
+        request: i32,
+    },
+    PollResults {
+        chat: i32,
+        message: i32,
+        option: usize,
+        limit: usize,
+        request: i32,
+    },
+    Contacts {
+        query: String,
+        request: i32,
+    },
+    SendContacts {
+        chat: i32,
+        contacts: Vec<crate::contact_sending::Choice>,
+        reply: i32,
+        request: i32,
+    },
     Star {
         chat: i32,
         message: i32,

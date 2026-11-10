@@ -12,6 +12,8 @@ use tokio::sync::watch;
 
 #[path = "archive_contacts.rs"]
 mod contacts;
+#[path = "archive_polls.rs"]
+mod polls;
 pub use contacts::Contact;
 #[path = "archive_avatars.rs"]
 mod avatars;
@@ -183,7 +185,7 @@ impl Archive {
         db.busy_timeout(Duration::from_secs(5))?;
         db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA secure_delete=ON; PRAGMA temp_store=MEMORY;")?;
         let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if version > 21 {
+        if version > 22 {
             return Err(Error::Database);
         }
         if version == 0 {
@@ -314,6 +316,12 @@ impl Archive {
             let tx = db.transaction()?;
             tx.execute_batch(include_str!("archive_location_maps.sql"))?;
             tx.pragma_update(None, "user_version", 21)?;
+            tx.commit()?;
+        }
+        if version < 22 {
+            let tx = db.transaction()?;
+            tx.execute_batch(include_str!("archive_polls.sql"))?;
+            tx.pragma_update(None, "user_version", 22)?;
             tx.commit()?;
         }
         // Never resend something that may have reached the network before a crash.
@@ -909,6 +917,7 @@ fn insert_record(tx: &Transaction<'_>, mut r: Record, live: bool) -> Result<()> 
         edits::read_key(tx, chat, &sender, change, &r.id)?;
     }
     controls::hide_if_needed(tx, chat, &sender, &r.id)?;
+    polls::capture(tx, chat, &sender, &r)?;
     Ok(())
 }
 fn encode_content(content: &crate::message_content::Content) -> Result<String> {
@@ -949,14 +958,17 @@ fn apply_mutations(db: &Connection, chat: i32) -> Result<()> {
 }
 fn expire(db: &Connection) -> Result<()> {
     db.execute("UPDATE message_marks SET pinned_until=0 WHERE pinned_until>0 AND pinned_until<=unixepoch()",[])?;
-    expire_messages(db)
+    if expire_messages(db)? > 0 {
+        polls::cleanup(db)?;
+    }
+    Ok(())
 }
 // Also used while upgrading pre-marker schemas; later tables do not exist yet.
-fn expire_messages(db: &Connection) -> Result<()> {
-    db.execute("UPDATE messages SET content='',thumbnail=X'',body='[Disappearing message expired]',raw=X'',deleted=1,delivery='' WHERE expires IS NOT NULL AND expires<=?1 AND deleted=0", [chrono::Utc::now().timestamp()])?;
+fn expire_messages(db: &Connection) -> Result<usize> {
+    let expired=db.execute("UPDATE messages SET content='',thumbnail=X'',body='[Disappearing message expired]',raw=X'',deleted=1,delivery='' WHERE expires IS NOT NULL AND expires<=?1 AND deleted=0", [chrono::Utc::now().timestamp()])?;
     db.execute("UPDATE mutations SET body=NULL,raw=X'',deleted=1 WHERE EXISTS(SELECT 1 FROM messages m WHERE m.chat_id=mutations.chat_id AND m.sender=mutations.sender AND m.wire_id=mutations.wire_id AND m.deleted=1)", [])?;
     db.execute("UPDATE message_controls SET text='' WHERE kind='edit' AND CASE WHEN text<>'' THEN event_wire IN (SELECT wire_id FROM messages WHERE deleted=1 AND expires IS NOT NULL AND expires<=unixepoch()) ELSE 0 END",[])?;
-    Ok(())
+    Ok(expired)
 }
 
 fn merge_alias(tx: &Transaction<'_>, lid: &str, pn: &str) -> Result<()> {
@@ -1043,6 +1055,7 @@ fn merge_alias(tx: &Transaction<'_>, lid: &str, pn: &str) -> Result<()> {
     }
     // Sender aliases also affect group edits that arrived before their base.
     edits::apply(tx, None)?;
+    polls::aliases_changed(tx, lid, pn)?;
     Ok(())
 }
 
@@ -1122,6 +1135,7 @@ fn move_records(
         JOIN outgoing_receipts r ON r.message_id=loser.id WHERE loser.{column}=?1 AND winner.id<>loser.id
         ON CONFLICT(message_id,kind) DO UPDATE SET state=min(outgoing_receipts.state,excluded.state)"),[from,to])?;
     tx.execute(&format!("UPDATE reply_drafts SET message_id=(SELECT winner.id FROM messages loser JOIN messages winner ON winner.chat_id={target_chat} AND winner.sender={target_sender} AND winner.wire_id=loser.wire_id WHERE loser.id=reply_drafts.message_id AND loser.{column}=?1) WHERE message_id IN (SELECT id FROM messages WHERE {column}=?1)"),[from,to])?;
+    polls::merge_events(tx, column, from, to)?;
     tx.execute(&format!("DELETE FROM messages WHERE {column}=?1"), [from])?;
     tx.execute(
         &format!("UPDATE OR IGNORE mutations SET {column}=?2 WHERE {column}=?1"),

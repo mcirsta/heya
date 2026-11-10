@@ -16,6 +16,7 @@ ffmpeg -nostdin -hide_banner -loglevel error -i "$heya_video_dir/clip.mp4" -c:v 
 ffmpeg -nostdin -hide_banner -loglevel error -f lavfi -i 'testsrc2=size=720x1280:rate=30' \
     -t 4 -c:v libx264 -preset ultrafast -pix_fmt yuv420p -movflags +faststart "$heya_video_dir/portrait.mp4"
 ffmpeg -nostdin -hide_banner -loglevel error -display_rotation:v:0 90 -i "$heya_video_dir/clip.mp4" -c copy "$heya_video_dir/rotated.mp4"
+HEYA_TEST_VIDEO_FILE="$heya_video_dir/clip.mp4" "$heya_test_binary" --ignored --exact video::tests::round_video_receipts_follow_real_progress_privacy_and_clean_shutdown --nocapture
 for heya_clip in clip silent portrait rotated; do
     echo "Checking synthetic H.264 video: $heya_clip"
     heya_aspect=1.77777778

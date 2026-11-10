@@ -281,7 +281,7 @@ async fn archived_cards_upgrade_repair_alias_merge_and_mutations_keep_privacy() 
                           DROP TABLE message_photos;
                           ALTER TABLE messages DROP COLUMN content;
                           ALTER TABLE messages DROP COLUMN thumbnail;
-                          DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; ALTER TABLE mutations DROP COLUMN raw; DROP TABLE outgoing_receipts; DROP TABLE chat_settings; DROP INDEX messages_album; ALTER TABLE messages DROP COLUMN album_index; ALTER TABLE messages DROP COLUMN album; DROP INDEX messages_read_wire; ALTER TABLE messages DROP COLUMN read_wire; PRAGMA user_version=4;",
+                          DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; ALTER TABLE mutations DROP COLUMN raw; DROP TABLE outgoing_receipts; DROP TABLE chat_settings; DROP INDEX messages_album; ALTER TABLE messages DROP COLUMN album_index; ALTER TABLE messages DROP COLUMN album; DROP INDEX messages_read_wire; ALTER TABLE messages DROP COLUMN read_wire; DROP TABLE IF EXISTS poll_events; PRAGMA user_version=4;",
             )?;
             Ok(())
         })

@@ -1,9 +1,12 @@
-//! Received fixed locations. Coordinate strings retain the wire precision and
+//! Received location cards. Coordinate strings retain the wire precision and
 //! keep the archive's equality-based snapshots free of non-finite floats.
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Location {
+    /// A static live-location preview; linked devices cannot follow the sender.
+    #[serde(default)]
+    pub live: bool,
     pub latitude: String,
     pub longitude: String,
     pub name: String,
@@ -32,7 +35,9 @@ impl Location {
         format!("https://maps.google.com/maps?q={lat},{lon}&z=17")
     }
     pub fn summary(&self) -> &str {
-        if !self.name.is_empty() {
+        if self.live {
+            "Live location"
+        } else if !self.name.is_empty() {
             &self.name
         } else if !self.address.is_empty() {
             &self.address
@@ -41,6 +46,9 @@ impl Location {
         }
     }
     pub fn transcript(&self) -> String {
+        if self.live {
+            return "Live location".into();
+        }
         let mut parts = vec!["Location".to_owned()];
         parts.extend(
             [&self.name, &self.address]

@@ -1,15 +1,59 @@
 import { Theme, Metrics } from "theme.slint";
 import { ContentTarget } from "message-content.slint";
+import { Avatar } from "components.slint";
+import { SessionButton } from "session.slint";
+
+// WhatsApp Web presents a static preview, not desktop live tracking.
+export component LiveLocationCard inherits Rectangle {
+    in property <image> thumbnail;
+    in property <image> picture;
+    in property <string> initials;
+    in property <color> tint;
+    callback activate(int);
+    height:186px;
+    map := Rectangle {
+        x:0px;y:0px;width:parent.width;height:150px;
+        background:Theme.surface;border-radius:6px;clip:true;
+        Image {width:100%;height:100%;source:root.thumbnail;image-fit:cover;opacity:0.7;}
+        if root.thumbnail.width>0: avatar-frame := Rectangle {
+            x:(parent.width - 44px)/2;y:(parent.height - 44px)/2;
+            width:44px;height:44px;border-radius:22px;background:white;
+            drop-shadow-offset-y:1px;drop-shadow-blur:5px;drop-shadow-color:#0004;
+            Avatar {x:2px;y:2px;width:40px;height:40px;picture:root.picture;initials:root.initials;tint:root.tint;}
+        }
+        ContentTarget {label:@tr("Live location not available");activated=>{root.activate(-26);}}
+        if root.thumbnail.width>0: attribution := Rectangle {
+            x:parent.width - self.width;y:parent.height - self.height;
+            width:min(parent.width,credit.preferred-width+8px);height:credit.preferred-height+4px;background:#ffffffe8;
+            credit:=Text {x:4px;y:2px;width:parent.width - 8px;height:self.preferred-height;text:"© OpenStreetMap contributors";font-size:9px;color:#333;wrap:word-wrap;}
+            ContentTarget {label:"© OpenStreetMap contributors";activated=>{root.activate(-25);}}
+        }
+    }
+    availability := Rectangle {
+        y:150px;width:parent.width;height:36px;
+        Text {x:6px;width:parent.width - 12px;height:parent.height;text:@tr("Live location not available");color:Theme.secondary;font-size:13px;vertical-alignment:center;overflow:elide;}
+        ContentTarget {label:@tr("Live location not available");activated=>{root.activate(-26);}}
+    }
+}
 
 export component LocationCard inherits Rectangle {
+    in property <bool> live;
+    in property <image> picture;
+    in property <string> initials;
+    in property <color> tint;
     in property <string> name;
     in property <string> address;
     in property <string> domain;
     in property <string> coordinates;
     in property <image> thumbnail;
     callback activate(int);
-    height: Metrics.location-height(root.name!="",root.address!="",root.domain!="");
-    ContextMenuArea {
+    height: root.live ? 186px : Metrics.location-height(root.name!="",root.address!="",root.domain!="");
+    if root.live: LiveLocationCard {
+        x:0px;y:0px;width:parent.width;
+        thumbnail:root.thumbnail;picture:root.picture;initials:root.initials;tint:root.tint;
+        activate(index)=>{root.activate(index);}
+    }
+    if !root.live: ContextMenuArea {
         Menu {
             MenuItem { title:@tr("Open in Maps"); activated=>{root.activate(-20);} }
             MenuItem { title:@tr("Copy location link"); activated=>{root.activate(-21);} }
@@ -50,6 +94,34 @@ export component LocationCard inherits Rectangle {
         if root.domain!="":Text {
             x:6px;y:parent.height - 20px;width:parent.width - 12px;height:18px;
             text:root.domain;font-size:11px;color:Theme.dim;overflow:elide;
+        }
+    }
+}
+
+export component LiveLocationDialog inherits Rectangle {
+    callback close();
+    background:#0005;
+    TouchArea {clicked=>{root.close();}}
+    FocusScope {
+        init=>{self.focus();}
+        key-pressed(event)=>{
+            if event.text==Key.Escape || event.text==Key.Return || event.text==" " {root.close();}
+            return accept;
+        }
+        panel:=Rectangle {
+            x:(root.width - self.width)/2;y:(root.height - self.height)/2;
+            width:min(420px,root.width - 48px);height:content.preferred-height;
+            background:Theme.panel;border-radius:14px;
+            drop-shadow-offset-y:8px;drop-shadow-blur:32px;drop-shadow-color:Theme.modal-shadow;
+            TouchArea {}
+            content:=VerticalLayout {
+                padding:24px;spacing:24px;
+                Text {text:@tr("Live location is not available on this device. View location on your phone.");font-size:14px;color:Theme.text;wrap:word-wrap;accessible-role:text;accessible-label:self.text;}
+                HorizontalLayout {
+                    alignment:end;
+                    ok:=SessionButton {width:80px;height:40px;label:@tr("OK");activated=>{root.close();}}
+                }
+            }
         }
     }
 }

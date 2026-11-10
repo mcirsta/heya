@@ -36,7 +36,10 @@ pub fn text(message: &wa::Message) -> Option<String> {
 /// can omit unchanged transfer fields. Preserve those fields and the old quote.
 pub fn apply(original: &[u8], edited: &[u8], legacy: &str) -> Option<Applied> {
     let original = codec::message_decode(original).ok();
-    if original.as_ref().is_some_and(MessageExt::is_view_once) {
+    if original
+        .as_ref()
+        .is_some_and(|m| m.is_view_once() || crate::protocol_polls::creation(m).is_some())
+    {
         return None;
     }
     let old = original.as_ref().map(MessageExt::get_base_message);
@@ -106,7 +109,13 @@ pub fn apply(original: &[u8], edited: &[u8], legacy: &str) -> Option<Applied> {
     } else {
         // A text edit cannot replace a different attachment kind.
         if old.is_some_and(|m| {
-            m.audio_message.is_set() || m.sticker_message.is_set() || m.protocol_message.is_set()
+            m.audio_message.is_set()
+                || m.sticker_message.is_set()
+                || m.protocol_message.is_set()
+                || m.ptv_message.is_set()
+                || m.contact_message.is_set()
+                || m.contacts_array_message.is_set()
+                || m.location_message.is_set()
         }) || new.is_some_and(|m| {
             m.image_message.is_set() || m.document_message.is_set() || m.video_message.is_set()
         }) {

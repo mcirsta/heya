@@ -69,6 +69,7 @@ pub enum Kind {
     Document,
     Video,
     Sticker,
+    Contact,
 }
 pub struct Info {
     pub name: String,
@@ -433,6 +434,7 @@ fn demo_file(kind: Kind) -> Result<(Info, Vec<u8>), Error> {
             ("Heya-demo-photo.png", bytes)
         }
         Kind::Audio => ("Heya-demo-audio.wav", crate::fixtures::audio_bytes()),
+        Kind::Contact => ("Heya-demo-contact.vcf", b"BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Heya Demo Contact\r\nTEL:+1 555 000 0001\r\nEND:VCARD\r\n".to_vec()),
         _ => (
             "Heya-demo-attachment.txt",
             b"Heya synthetic demonstration attachment.\nNo account data was used.\n".to_vec(),

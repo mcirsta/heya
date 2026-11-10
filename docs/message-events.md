@@ -21,7 +21,8 @@ message history. Missing metadata does not invent a visible notification.
 
 `MASK_LINKED_DEVICES` is an intentional primary-device restriction. Heya shows
 “One-time code. Open WhatsApp on your phone to view it.” Other phone-only
-business messages and live-location shares have explicit explanations. Heya
+business messages have explicit explanations. Live-location shares have static
+unavailable cards with captions and phone guidance; see [locations](locations.md). Heya
 does not attempt to retrieve the restricted code or present a live share as a
 fixed location. The current WhatsApp Web live-location renderer also directs
 users to their phone.

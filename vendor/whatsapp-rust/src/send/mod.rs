@@ -1523,6 +1523,19 @@ impl Client {
         to: &Jid,
         message: wa::Message,
     ) -> Result<(SendResult, Jid), SendError> {
+        self.send_creation_with_options(to, message, SendOptions::default())
+            .await
+    }
+
+    /// Send an E2E creation with a caller-owned durable ID and capture its
+    /// actual sender namespace for subsequent poll/event add-on cryptography.
+    /// The caller must retain the creation's secret; do not log the result body.
+    pub async fn send_creation_with_options(
+        &self,
+        to: &Jid,
+        message: wa::Message,
+        options: SendOptions,
+    ) -> Result<(SendResult, Jid), SendError> {
         // These references address E2E creations. Raw newsletter publication
         // remains available through send_message and the newsletter facade.
         if to.is_newsletter() || to.is_broadcast_list() || to.is_status_broadcast() {
@@ -1534,7 +1547,7 @@ impl Client {
         let result = Box::pin(self.send_message_with_options_inner(
             to.clone(),
             std::sync::Arc::new(message),
-            SendOptions::default(),
+            options,
             Some(&mut creator),
         ))
         .await?;

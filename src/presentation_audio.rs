@@ -54,9 +54,6 @@ pub fn publish(ui: &AppWindow, status: &Status) {
     global.set_time(duration(status.position).into());
     global.set_speed(format!("{}×", status.speed.max(1.)).into());
     global.set_error(status.error.map_or("", |e| e.label()).into());
-    if let Some(error) = status.error {
-        ui.set_notice(error.label().into());
-    }
 }
 
 pub(crate) fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>) {
@@ -90,7 +87,7 @@ pub(crate) fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>) {
                 }
                 permit.send(command);
             }
-            Err(_) => ui.set_notice("Audio is busy. Please try again.".into()),
+            Err(_) => ui.invoke_show_error("Audio is busy. Please try again.".into()),
         }
     });
 }

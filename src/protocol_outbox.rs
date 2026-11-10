@@ -20,7 +20,7 @@ trait Transport: Send + Sync {
     async fn ready(&self) -> bool;
     async fn send(&self, job: Outgoing) -> Attempt;
 }
-struct WhatsApp(Arc<Client>);
+struct WhatsApp(Arc<Client>, Archive);
 #[async_trait::async_trait]
 impl Transport for WhatsApp {
     async fn ready(&self) -> bool {
@@ -51,8 +51,37 @@ impl Transport for WhatsApp {
             };
             message
         };
-        let request = SendRequest::new(&jid, message).with_options(options);
-        submitted(self.0.send(request).await)
+        if crate::protocol_polls::creation(&message).is_some() {
+            match self
+                .0
+                .send_creation_with_options(&jid, message, options)
+                .await
+            {
+                Ok((_, creator)) => {
+                    if self
+                        .1
+                        .poll_creator(
+                            job.chat,
+                            job.id,
+                            crate::protocol_messages::address(&creator),
+                        )
+                        .await
+                        .is_err()
+                    {
+                        Attempt::Unconfirmed
+                    } else {
+                        Attempt::Submitted
+                    }
+                }
+                Err(error) => submitted(Err(error)),
+            }
+        } else {
+            submitted(
+                self.0
+                    .send(SendRequest::new(&jid, message).with_options(options))
+                    .await,
+            )
+        }
     }
 }
 
@@ -62,14 +91,8 @@ pub async fn run(
     online: watch::Receiver<bool>,
     stop: watch::Receiver<bool>,
 ) -> archive::Result<()> {
-    worker(
-        archive,
-        WhatsApp(client),
-        online,
-        stop,
-        Duration::from_secs(45),
-    )
-    .await
+    let transport = WhatsApp(client, archive.clone());
+    worker(archive, transport, online, stop, Duration::from_secs(45)).await
 }
 
 async fn worker(

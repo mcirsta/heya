@@ -81,7 +81,7 @@ pub(super) fn install(db: &Connection) -> Result<()> {
             // a newly arrived message unread must not defeat the append path.
             let trigger = format!("heya_timeline_{table}_{event}");
             let event = if table == "messages" && event == "UPDATE" {
-                "UPDATE OF id,chat_id,sender,wire_id,stamp,outgoing,sender_name,body,raw,visible,deleted,expires,delivery,content,album,album_index"
+                "UPDATE OF id,chat_id,sender,wire_id,stamp,outgoing,sender_name,body,raw,visible,deleted,expires,delivery,content,album,album_index,source_sender,source_chat"
             } else {
                 event
             };
@@ -96,6 +96,9 @@ pub(super) fn install(db: &Connection) -> Result<()> {
             ))?;
         }
     }
+    db.execute_batch("CREATE TEMP TRIGGER heya_poll_insert AFTER INSERT ON main.poll_events BEGIN DELETE FROM heya_timeline_cache WHERE chat_id=(SELECT chat_id FROM messages WHERE id=NEW.poll_id); END;
+        CREATE TEMP TRIGGER heya_poll_update AFTER UPDATE ON main.poll_events BEGIN DELETE FROM heya_timeline_cache WHERE chat_id IN (SELECT chat_id FROM messages WHERE id IN (OLD.poll_id,NEW.poll_id)); END;
+        CREATE TEMP TRIGGER heya_poll_delete AFTER DELETE ON main.poll_events BEGIN DELETE FROM heya_timeline_cache WHERE chat_id=(SELECT chat_id FROM messages WHERE id=OLD.poll_id); END;")?;
     Ok(())
 }
 
@@ -181,6 +184,7 @@ impl Cache {
             .as_ref()
             .map_or(limit, |(_, count)| limit.min(*count));
         let mut projections = actions::Projection::load(db, chat, projection_limit, boundary)?;
+        let poll_projection = super::polls::Projection::load(db, chat, projection_limit, boundary)?;
         // Read the timeline index backwards and reverse the row vector.
         // Avoid materializing SELECT * (including envelopes/thumbnails) and a
         // second SQL sort just to restore chronological display order.
@@ -235,6 +239,7 @@ impl Cache {
                     && (!outgoing
                         || !matches!(status.as_str(), "accepted" | "delivered" | "read")));
             if !r.get::<_, bool>(9)? {
+                poll_projection.apply(r.get(0)?, &mut content);
                 projections
                     .apply(db, &r.get::<_, String>(8)?, &mut content)
                     .map_err(|_| rusqlite::Error::InvalidQuery)?;

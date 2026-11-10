@@ -34,6 +34,9 @@ export component Composer inherits Rectangle {
     callback cancel-reply();
     public function focus-editor() {editor.focus();}
     function paste-clipboard() {
+        // Closing a menu restores the previous focus. Finish that restoration
+        // before focusing/capturing the editor for the asynchronous paste.
+        field.close();
         editor.focus();
         if editor.preedit-text == "" {
             // Undo/redo can retain offsets past the new text. Let TextInput

@@ -4,8 +4,12 @@ Common received video messages have a sender-supplied poster, duration and full
 caption. Play starts one decoder; the controls pause/resume, seek, mute and
 expand it. Expanded and inline views share that decoder. Playing audio or
 recording a voice message stops video. Playback is explicit, including videos
-marked as GIFs; GIF looping, animated stickers, video notes and sending videos
+marked as GIFs; GIF looping, animated stickers and sending videos
 remain separate work. View-once videos are excluded.
+
+Received round video notes share this player and its lifecycle, with circular
+inline tiles and progress-based played receipts. See
+[received contacts and round videos](shared-contacts.md).
 
 Before playback, nearby cards now prefer a cached or supplied high-resolution
 poster. When unavailable, ordinary videos generate one from their cached original

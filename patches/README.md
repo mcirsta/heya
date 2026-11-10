@@ -5,6 +5,7 @@ Runtime SDK base: `oxidezap/whatsapp-rust` at
 
 | Patch | API gap | Scope | Upstream status |
 | --- | --- | --- | --- |
+| [ptv-view-once.patch](ptv-view-once.patch) | `MessageExt::is_view_once` omits the inline `ptvMessage.viewOnce` flag. | Recognize round-video privacy flags alongside ordinary videos, with a synthetic regression. | Local; not submitted. |
 | [album-child.patch](album-child.patch) | Album children use `associatedChildMessage`, but public message/media helpers leave it wrapped and miss nested view-once. | Add this wrapper to borrowed/consuming base-message helpers and privacy detection, with synthetic regressions. | Local; not submitted. |
 | [document-thumbnail.patch](document-thumbnail.patch) | `DocumentMessage` has a separate thumbnail path and hashes, but `MediaType` cannot represent its HKDF context. | Adds `DocumentThumbnail`, its crypto/MMS/path mappings, and synthetic tests in `wacore/src/download.rs`. | Local; not submitted. Live interoperability still to verify. |
 | [video-preview-core.patch](video-preview-core.patch) | Video posters have their own thumbnail crypto type; prefix decoding isn't a full authenticated download. | Adds `VideoThumbnail`, explicitly preview-only block decoding and crypto regressions to `wacore`. | Local; not submitted. |
@@ -160,3 +161,50 @@ The adaptation for current master is submitted as
 backdrop-blur behavior. Remove the local backport when Heya's pinned upstream
 revision includes the fix. The draft awaits Slint's contributor agreement and
 review.
+
+## Poll creation send options
+
+`poll-creation-options.patch` exposes the existing SDK E2E creation-send path
+as `Client::send_creation_with_options`. The normal poll facade allocates its
+own message ID, while Heya's durable outbox must retain its already-saved ID.
+The new method accepts the existing `SendOptions` and returns the actual PN/LID
+creator identity captured by the send implementation, needed for subsequent
+poll vote encryption. Existing convenience APIs delegate with default options.
+The patch includes a synthetic transport test checking the caller's ID in the
+actual wire envelope and the returned sender namespace. Base revision, hash,
+status and reproduction are tracked in `prep/upstreams.json` and
+`scripts/vendor-video-preview.py`. No change to the poll cipher is needed.
+
+## X11 window-manager fullscreen state
+
+[winit-x11-fullscreen.patch](winit-x11-fullscreen.patch) patches only the
+`winit-x11` 0.31.0-beta.3 backend, from registry archive SHA-256
+`bb5746cd907e514b7895491a1c6f7d0cb70077f9e16928cd74ae6f987ffd96aa`
+(upstream `7d20408d33210c93bf036335b88ee083ca563a90`). Apache-2.0 notices are
+retained in `vendor/winit-x11/LICENSE`. Status: local, not submitted.
+
+The unpatched backend only changes its fullscreen cache when the application
+calls `set_fullscreen`; a window-manager shortcut/menu can enter fullscreen while
+`Window::fullscreen()` still returns `None`. Slint then reports a normal resize,
+so saving window state can replace the normal dimensions with fullscreen bounds.
+
+The patch reads native `_NET_WM_STATE` only when that property changes, updates
+borderless fullscreen's existing cache, and notifies consumers through the
+existing resize event. It does not poll, query on ordinary resize/render, or
+change exclusive video-mode ownership. Heya uses borderless fullscreen. The real
+Xwayland restart regression in `scripts/window-state-check.py` reproduces the
+incorrect stored normal bounds before this patch; Wayland uses its unchanged
+native backend.
+
+Reproduce from the pinned registry archive (URL/checksums also in
+`prep/upstreams.json`):
+
+```sh
+python3 scripts/vendor-winit-x11.py --archive /path/to/winit-x11-0.31.0-beta.3.crate
+cargo build --release --locked
+HEYA_TEST_RENDERER=winit-skia-opengl scripts/ui-offscreen.sh --window-state-check
+```
+
+The source snapshot contains only the normalized manifest, source, README and
+license. No build outputs or registry cache metadata are vendored. This small
+backend fix is kept separate from Heya's persistence logic for upstream review.

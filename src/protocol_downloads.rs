@@ -48,7 +48,7 @@ fn payload(raw: &[u8]) -> Result<(DownloadParams, Info), Error> {
                 None,
                 v.mimetype.as_deref().unwrap_or("audio/ogg"),
             )
-        } else if let Some(v) = base.video_message.as_option() {
+        } else if let Some(v) = crate::protocol_video::clip(base) {
             if v.view_once == Some(true) {
                 return Err(Error::Unavailable);
             }
@@ -101,6 +101,15 @@ fn payload(raw: &[u8]) -> Result<(DownloadParams, Info), Error> {
     ))
 }
 pub fn info(raw: &[u8]) -> Result<Info, Error> {
+    if let Some(bytes) = crate::protocol_contacts::file(raw) {
+        use sha2::{Digest, Sha256};
+        return Ok(Info {
+            name: "Contacts.vcf".into(),
+            size: Some(bytes.len() as u64),
+            sha256: Sha256::digest(bytes).into(),
+            kind: Kind::Contact,
+        });
+    }
     payload(raw).map(|(_, info)| info)
 }
 
@@ -111,6 +120,7 @@ fn filename(name: Option<&str>, mime: &str, kind: Kind) -> String {
         Kind::Document => "Document",
         Kind::Video => "Video",
         Kind::Sticker => "Sticker",
+        Kind::Contact => "Contact",
     };
     let mut name=name.unwrap_or("").rsplit(['/', '\\']).next().unwrap_or("").chars()
         .filter(|c|!c.is_control()&&!matches!(c,'<'|'>'|':'|'"'|'|'|'?'|'*'|'\u{202a}'..='\u{202e}'|'\u{2066}'..='\u{2069}'))

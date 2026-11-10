@@ -467,7 +467,7 @@ mod tests {
             .unwrap();
         let files = db.0._files.clone();
         db.blocking(|c| {
-            c.execute_batch("DROP TABLE outgoing_reads; DROP INDEX messages_read_wire; ALTER TABLE messages DROP COLUMN read_wire; DROP TRIGGER discard_changed_document_preview; DROP TABLE document_previews; DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; ALTER TABLE mutations DROP COLUMN raw; DROP TABLE outgoing_receipts; DROP TABLE chat_settings; DROP INDEX messages_album; ALTER TABLE messages DROP COLUMN album_index; ALTER TABLE messages DROP COLUMN album; PRAGMA user_version=8;")?;
+            c.execute_batch("DROP TABLE outgoing_reads; DROP INDEX messages_read_wire; ALTER TABLE messages DROP COLUMN read_wire; DROP TRIGGER discard_changed_document_preview; DROP TABLE document_previews; DROP TABLE history_pages; DROP TABLE history_requests; ALTER TABLE messages DROP COLUMN edit_version; ALTER TABLE mutations DROP COLUMN raw; DROP TABLE outgoing_receipts; DROP TABLE chat_settings; DROP INDEX messages_album; ALTER TABLE messages DROP COLUMN album_index; ALTER TABLE messages DROP COLUMN album; DROP TABLE IF EXISTS poll_events; PRAGMA user_version=8;")?;
             Ok(())
         })
         .unwrap();

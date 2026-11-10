@@ -40,6 +40,12 @@ pub struct Content {
     pub document: Option<Document>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub location: Option<crate::locations::Location>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub contacts: Vec<crate::shared_contacts::Contact>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub poll: Option<crate::polls::Poll>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ballot: Option<crate::polls::Ballot>,
     /// Attachments without a dedicated photo/audio projection. Never inferred
     /// from body text. Omit false to preserve existing media cache fingerprints.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -187,6 +193,8 @@ pub struct Photo {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Video {
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub round: bool,
     pub width: u32,
     pub height: u32,
     pub seconds: Option<u32>,

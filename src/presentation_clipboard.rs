@@ -23,7 +23,6 @@ struct Paste {
     draft: String,
     anchor: i32,
     cursor: i32,
-    generation: i32,
 }
 enum Command {
     Paste(Paste),
@@ -38,13 +37,13 @@ fn target(ui: &AppWindow) -> Target {
 }
 fn send(ui: &AppWindow, tx: &mpsc::Sender<Command>, command: Command) {
     if ui.get_clipboard_busy() {
-        ui.set_notice("The clipboard is busy. Please try again.".into());
+        ui.invoke_show_error("The clipboard is busy. Please try again.".into());
         return;
     }
     if tx.try_send(command).is_ok() {
         ui.set_clipboard_busy(true);
     } else {
-        ui.set_notice("Clipboard actions are unavailable. Please try again.".into());
+        ui.invoke_show_error("Clipboard actions are unavailable. Please try again.".into());
     }
 }
 fn bind(ui: &AppWindow, tx: mpsc::Sender<Command>) {
@@ -61,7 +60,6 @@ fn bind(ui: &AppWindow, tx: mpsc::Sender<Command>) {
                 draft: ui.get_draft().into(),
                 anchor,
                 cursor,
-                generation: ui.get_paste_generation(),
             }),
         );
     });
@@ -196,19 +194,19 @@ pub fn attach(
                         // Navigation may have changed; review keeps the captured recipient.
                         // Don't overwrite another selection or a voice recording.
                         if ui.get_attachment_phase()!=0 || ui.get_voice_phase()!=0 {
-                            ui.set_notice("Finish the current attachment or recording, then paste or drop again.".into());
+                            ui.invoke_show_error("Finish the current attachment or recording, then paste or drop again.".into());
                         } else {
                             let title=destination.title.clone();
                             if uploads.try_send(Upload::Import{destination,input}).is_ok() {
                                 ui.set_attachment_title(title.into());
                                 ui.set_attachment_phase(2); ui.set_attachment_review_open(true);
                             } else {
-                                ui.set_notice("Attachment selection is unavailable. Please try again.".into());
+                                ui.invoke_show_error("Attachment selection is unavailable. Please try again.".into());
                             }
                         }
                     }
-                    Ok(None) => ui.set_notice("Image copied".into()),
-                    Err(error) => ui.set_notice(error.label().into()),
+                    Ok(None) => {},
+                    Err(error) => ui.invoke_show_error(error.label().into()),
                 }
             });
         }
@@ -219,14 +217,17 @@ enum PasteResult {
     Import(Destination, attachments::Input),
 }
 fn insert_text(ui: &AppWindow, paste: Paste, text: &str) {
+    // Compare the actual target. Deferred UI change notifications can still
+    // describe navigation/draft changes that happened before Paste was chosen.
     if ui.get_selected_id() != paste.target.chat
-        || ui.get_paste_generation() != paste.generation
         || ui.get_draft().as_str() != paste.draft
         || !ui.get_composer_focused()
         || ui.get_composer_anchor() != paste.anchor
         || ui.get_composer_cursor() != paste.cursor
     {
-        ui.set_notice("The editor changed while reading the clipboard. Please paste again.".into());
+        ui.invoke_show_error(
+            "The editor changed while reading the clipboard. Please paste again.".into(),
+        );
         return;
     }
     let (a, b) = (
@@ -238,7 +239,7 @@ fn insert_text(ui: &AppWindow, paste: Paste, text: &str) {
         || !paste.draft.is_char_boundary(b)
         || paste.draft.len() - (b - a) + text.len() > 64 * 1024
     {
-        ui.set_notice("The pasted text exceeds the message size limit.".into());
+        ui.invoke_show_error("The pasted text exceeds the message size limit.".into());
         return;
     }
     // Slint has no public insert-text operation. A composition commit uses

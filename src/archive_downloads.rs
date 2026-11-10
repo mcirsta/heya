@@ -25,6 +25,13 @@ impl Archive {
         .await
     }
     pub async fn download_cached(&self, request: &Request, kind: Kind) -> Result<Option<Vec<u8>>> {
+        if kind == Kind::Contact {
+            let request = request.clone();
+            return self.call(move|db| {
+                let valid=db.query_row(&format!("SELECT EXISTS(SELECT 1 FROM messages m WHERE m.id=?1 AND m.chat_id=?2 AND m.raw=?3 AND {ELIGIBLE})"),params![request.id,request.chat,request.raw],|r|r.get::<_,bool>(0))?;
+                Ok(valid.then(||crate::protocol_contacts::file(&request.raw)).flatten())
+            }).await;
+        }
         let table = match kind {
             Kind::Photo | Kind::Sticker => "message_photos",
             Kind::Audio => "message_audio",

@@ -1,5 +1,6 @@
 use super::*;
 use std::{fs::File, io::Write};
+use whatsapp_rust::prelude::{MessageBuilderExt, MessageExt};
 pub(crate) fn text(value: &str) -> Vec<u8> {
     codec::message_to_vec(&wa::Message::text(value))
 }

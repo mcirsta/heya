@@ -149,6 +149,116 @@ pub(crate) fn message_row(
         first_in_run,
         has_document: message.content.document.is_some(),
         has_location: message.content.location.is_some(),
+        location_live: message.content.location.as_ref().is_some_and(|l| l.live),
+        contact_count: message.content.contacts.len() as i32,
+        has_poll: message.content.poll.is_some(),
+        poll_question: message
+            .content
+            .poll
+            .as_ref()
+            .map_or("", |p| p.question.as_str())
+            .into(),
+        poll_hint: message
+            .content
+            .poll
+            .as_ref()
+            .map(|p| {
+                if p.selectable == 1 {
+                    "Select one".into()
+                } else if p.selectable == p.options.len() {
+                    "Select one or more".into()
+                } else {
+                    format!("Select up to {}", p.selectable)
+                }
+            })
+            .unwrap_or_default()
+            .into(),
+        poll_status: message
+            .content
+            .poll
+            .as_ref()
+            .map_or("", |p| p.view.status.as_str())
+            .into(),
+        poll_total: message
+            .content
+            .poll
+            .as_ref()
+            .map(|p| {
+                format!(
+                    "{} voter{}",
+                    p.view.voters,
+                    if p.view.voters == 1 { "" } else { "s" }
+                )
+            })
+            .unwrap_or_default()
+            .into(),
+        poll_voters: message
+            .content
+            .poll
+            .as_ref()
+            .map_or(0, |p| p.view.voters as i32),
+        poll_multiple: message
+            .content
+            .poll
+            .as_ref()
+            .is_some_and(|p| p.selectable > 1),
+        poll_can_vote: message
+            .content
+            .poll
+            .as_ref()
+            .is_some_and(|p| p.view.can_vote),
+        poll_can_view: message
+            .content
+            .poll
+            .as_ref()
+            .is_some_and(|p| p.restriction.is_empty())
+            && !message.content.unavailable,
+        poll_busy: message.content.poll.as_ref().is_some_and(|p| p.view.busy),
+        poll_options: slint::ModelRc::new(slint::VecModel::from(
+            message
+                .content
+                .poll
+                .as_ref()
+                .map(|p| {
+                    p.options
+                        .iter()
+                        .enumerate()
+                        .map(|(i, s)| crate::ui::PollOptionRow {
+                            label: s.as_str().into(),
+                            count: p.view.counts.get(i).copied().unwrap_or(0),
+                            selected: p.view.selected.contains(&i),
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default(),
+        )),
+        contact_name: message
+            .content
+            .contacts
+            .first()
+            .map_or("", |c| c.name.as_str())
+            .into(),
+        contact_initials: message
+            .content
+            .contacts
+            .first()
+            .map(|c| domain::initials(&c.name))
+            .unwrap_or_default()
+            .into(),
+        contact_number: message
+            .content
+            .contacts
+            .first()
+            .and_then(|c| c.phones.first())
+            .map_or("", |p| p.number.as_str())
+            .into(),
+        contact_account: message
+            .content
+            .contacts
+            .first()
+            .map_or("", |c| c.account())
+            .into(),
+        contact_avatar: Default::default(),
         location_name: message
             .content
             .location
@@ -218,6 +328,7 @@ pub(crate) fn message_row(
         album_photos: Default::default(),
         album_more: 0,
         has_video: message.content.video.is_some(),
+        video_round: message.content.video.as_ref().is_some_and(|v| v.round),
         video_duration: message
             .content
             .video
@@ -302,7 +413,11 @@ pub(crate) fn message_row(
                 .as_ref()
                 .is_some_and(|d| d.has_thumbnail)
             || message.content.video.is_some()
-            || message.content.location.is_some(),
+            || message
+                .content
+                .location
+                .as_ref()
+                .is_some_and(|l| l.coordinates().is_some()),
         thumbnail: Default::default(),
         actions: if message.content.actions.is_empty() {
             Default::default()
@@ -373,6 +488,7 @@ pub(crate) fn conversation(
     ui.set_chat_is_group(view.is_group);
     ui.set_older_count(view.older_count as i32);
     let changed = timeline::update(ui, view, restore_draft);
+    crate::presentation_shared_contacts::refresh(ui);
     if ui.get_demo_mode()
         && ui.get_photo_viewer_id() > 0
         && let Some(message) = view
@@ -390,15 +506,22 @@ pub(crate) fn conversation(
             .is_some_and(|row| row.actionable),
     );
     crate::presentation_actions::refresh_menu(ui);
-    if ui.get_message_dialog() != 0
-        && (ui.get_action_chat() != view.chat.id
-            || (ui.get_message_dialog() != 4
+    let dialog = ui.get_message_dialog();
+    // Poll creation belongs to the conversation, not an existing message.
+    let dialog_chat = if dialog == 10 {
+        ui.get_poll_create_chat()
+    } else {
+        ui.get_action_chat()
+    };
+    if dialog != 0
+        && (dialog_chat != view.chat.id
+            || (!matches!(dialog, 4 | 10)
                 && !ui.get_selection_active()
                 && !crate::presentation_actions::source_row(ui, ui.get_action_message())
                     .is_some_and(|row| {
                         row.actionable
                             || (ui.get_action_context_menu()
-                                && matches!(ui.get_message_dialog(), 3 | 7 | 8)
+                                && matches!(dialog, 3 | 7 | 8)
                                 && !row.system_notice)
                     })))
     {
@@ -439,7 +562,9 @@ fn publish(ui: &AppWindow, update: Update) {
             conversation(ui, &view, false);
             crate::presentation_navigation::publish(ui, &snapshot);
             if jump.message == 0 && !jump.returning {
-                ui.set_notice("The original message is not available in saved history.".into());
+                ui.invoke_show_error(
+                    "The original message is not available in saved history.".into(),
+                );
             }
         }
         Update::Action {
@@ -472,7 +597,7 @@ fn publish(ui: &AppWindow, update: Update) {
 
 fn enqueue(ui: &AppWindow, tx: &mpsc::Sender<Command>, command: Command) -> bool {
     if tx.try_send(command).is_err() {
-        ui.set_notice("The demo is busy. Your text is still here; please try again.".into());
+        ui.invoke_show_error("The demo is busy. Your text is still here; please try again.".into());
         false
     } else {
         true
@@ -485,6 +610,7 @@ pub fn attach(
     preferences: tokio::sync::watch::Receiver<crate::preferences::Preferences>,
 ) -> JoinHandle<()> {
     let state = fixtures::demo();
+    let own_account = crate::presentation_own_account::demo(ui, preferences.clone());
     let contact_info = crate::presentation_contact_info::attach_demo(ui);
     // Static, synthetic UI capture only; never attaches an account or a device.
     if let Some(phase) = std::env::var("HEYA_TEST_CALL_STATE")
@@ -550,8 +676,8 @@ pub fn attach(
         let weak = ui.as_weak();
         let tx = tx.clone();
         move |id| {
-            if let Some(ui) = weak.upgrade() {
-                enqueue(
+            if let Some(ui) = weak.upgrade()
+                && enqueue(
                     &ui,
                     &tx,
                     Command::Select {
@@ -559,7 +685,9 @@ pub fn attach(
                         previous: ui.get_selected_id(),
                         draft: ui.get_draft().to_string(),
                     },
-                );
+                )
+            {
+                ui.invoke_reveal_chat();
             }
         }
     });
@@ -658,6 +786,7 @@ pub fn attach(
             uploads,
             voice,
             contact_info,
+            own_account,
             service::run(state, rx, move |update| weak
                 .upgrade_in_event_loop(move |ui| publish(&ui, update))
                 .is_ok()),
@@ -785,14 +914,6 @@ mod tests {
             crate::live_presentation::publish(
                 &ui,
                 &crate::connection::Snapshot::new(crate::connection::Phase::Reconnecting),
-            );
-            ui.set_notice(
-                if live {
-                    "Synthetic connection notice"
-                } else {
-                    ""
-                }
-                .into(),
             );
             for dark in [false, true] {
                 ui.global::<crate::Theme>().set_dark(dark);
@@ -993,7 +1114,8 @@ mod tests {
             );
             assert!(sidebar.absolute_position().y.abs() < 0.5);
             assert!((sidebar.size().width - conversation.absolute_position().x).abs() < 0.5);
-            if (ui.get_demo_mode() || ui.get_connection_state() == 5) && ui.get_notice().is_empty()
+            if (ui.get_demo_mode() || ui.get_connection_state() == 5)
+                && ui.get_error_message().is_empty()
             {
                 assert!(
                     (sidebar_header.absolute_position().y - header.absolute_position().y).abs()
@@ -1167,7 +1289,7 @@ mod tests {
             destinations: Arc::from([]),
             revision: 0,
             reply: None,
-            notice: String::new(),
+            error: String::new(),
             view: Some(std::sync::Arc::new(View {
                 unread_chats: 0,
                 archived_count: 0,
@@ -1251,7 +1373,13 @@ mod tests {
         );
         assert_eq!(ui.get_draft(), "Newer text");
         assert!(!ui.get_send_pending());
+        ui.set_settings_open(true);
         ui.invoke_select_chat(2);
+        assert!(
+            !ui.get_settings_open(),
+            "accepted chat navigation must reveal the chat"
+        );
+        assert!(ui.get_show_conversation());
         assert!(matches!(
             commands.try_recv().unwrap(),
             messaging::Command::Select {
@@ -1276,7 +1404,7 @@ mod tests {
                 phone: Default::default(),
                 chat_busy: false,
                 reply: None,
-                notice: "Synthetic archive write failure".into(),
+                error: "Synthetic archive write failure".into(),
             },
         );
         assert_eq!(ui.get_live_revision(), ui.get_live_shown_revision());
@@ -1288,17 +1416,20 @@ mod tests {
         assert!(ui.get_live_chat_view(), "cached chats stay visible offline");
         for (width, height) in [(1200., 800.), (620., 480.), (520., 480.)] {
             ui.window().set_size(slint::LogicalSize::new(width, height));
-            let banner = element(&ui, "AppWindow::connection-banner");
-            let notice = element(&ui, "AppWindow::notice-bar");
             let content = element(&ui, "AppWindow::conversation-content");
-            assert!(banner.size().height > 0.);
             assert!(
-                notice.absolute_position().y
-                    >= banner.absolute_position().y + banner.size().height - 0.5
+                ElementHandle::find_by_element_id(&ui, "AppWindow::notice-bar")
+                    .next()
+                    .is_none()
             );
             assert!(
-                content.absolute_position().y
-                    >= notice.absolute_position().y + notice.size().height - 0.5
+                ElementHandle::find_by_element_id(&ui, "AppWindow::connection-banner")
+                    .next()
+                    .is_none()
+            );
+            assert!(
+                content.absolute_position().y.abs() < 0.5,
+                "connection changes must not move the chat header"
             );
             check_element_positions(&ui, true);
         }
@@ -1308,6 +1439,31 @@ mod tests {
         assert!(!ui.get_new_chat_error().is_empty());
         assert!(commands.try_recv().is_err());
         ui.set_new_chat_open(false);
+        // Re-selecting the current chat must also leave Settings. A refused
+        // selection must leave it open and preserve the current draft.
+        let gate = AppWindow::new().unwrap();
+        gate.set_selected_id(77);
+        gate.set_draft("Retained draft · 你好".into());
+        let (tx, mut queue) = mpsc::channel(1);
+        live_presentation::bind_messages(&gate, tx);
+        gate.set_settings_open(true);
+        gate.invoke_select_chat(77);
+        assert!(!gate.get_settings_open());
+        assert!(gate.get_show_conversation());
+        gate.set_settings_open(true);
+        gate.invoke_select_chat(88);
+        assert!(
+            gate.get_settings_open(),
+            "queue rejection cannot claim navigation started"
+        );
+        assert!(!gate.get_error_message().is_empty());
+        assert_eq!(gate.get_selected_id(), 77);
+        assert_eq!(gate.get_draft(), "Retained draft · 你好");
+        assert!(matches!(
+            queue.try_recv().unwrap(),
+            messaging::Command::Select { id: 77, .. }
+        ));
+        assert!(queue.try_recv().is_err());
         ui
     }
 
@@ -1324,6 +1480,8 @@ mod tests {
         crate::presentation_preferences::check_ui(&runtime);
         crate::presentation_storage::check_ui();
         crate::presentation_content::check_ui();
+        crate::presentation_contact_sending::tests::check_ui();
+        crate::presentation_polls::tests::check_ui();
         super::notice_tests::check_ui();
         super::call_tests::check_ui();
         crate::presentation_photos::check_ui();
@@ -1348,6 +1506,7 @@ mod tests {
         crate::presentation_read_tests::check_ui();
         crate::presentation_navigation::check_ui();
         crate::presentation_presence::tests::check_ui();
+        crate::presentation_own_account::tests::check_ui();
         check_wallpaper_coverage();
         let ui = AppWindow::new().unwrap();
         check_live_pairing_view(&ui);
@@ -1390,7 +1549,12 @@ mod tests {
             ui.get_chats().row_data(0).unwrap().preview,
             original_preview
         );
+        ui.set_settings_open(true);
         ui.invoke_select_chat(2);
+        assert!(
+            !ui.get_settings_open(),
+            "demo and live selection share the display rule"
+        );
         let phase = Rc::new(std::cell::Cell::new(0));
         let weak = ui.as_weak();
         let timer = slint::Timer::default();

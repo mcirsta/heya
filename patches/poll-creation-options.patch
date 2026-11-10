@@ -1,0 +1,66 @@
+--- a/src/send/mod.rs
++++ b/src/send/mod.rs
+@@ -1523,6 +1523,19 @@
+         to: &Jid,
+         message: wa::Message,
+     ) -> Result<(SendResult, Jid), SendError> {
++        self.send_creation_with_options(to, message, SendOptions::default())
++            .await
++    }
++
++    /// Send an E2E creation with a caller-owned durable ID and capture its
++    /// actual sender namespace for subsequent poll/event add-on cryptography.
++    /// The caller must retain the creation's secret; do not log the result body.
++    pub async fn send_creation_with_options(
++        &self,
++        to: &Jid,
++        message: wa::Message,
++        options: SendOptions,
++    ) -> Result<(SendResult, Jid), SendError> {
+         // These references address E2E creations. Raw newsletter publication
+         // remains available through send_message and the newsletter facade.
+         if to.is_newsletter() || to.is_broadcast_list() || to.is_status_broadcast() {
+@@ -1534,7 +1547,7 @@
+         let result = Box::pin(self.send_message_with_options_inner(
+             to.clone(),
+             std::sync::Arc::new(message),
+-            SendOptions::default(),
++            options,
+             Some(&mut creator),
+         ))
+         .await?;
+--- a/src/send/tests/creation_tests.rs
++++ b/src/send/tests/creation_tests.rs
+@@ -578,3 +578,32 @@
+     assert_redacted(&poll, "CreatedPoll");
+     assert_redacted(&event, "CreatedEvent");
+ }
++
++#[tokio::test]
++async fn creation_with_options_preserves_durable_id_and_actual_sender() {
++    let (client, transport) = crate::test_utils::create_iq_test_client().await;
++    let (peer, _) = seed_dm_wire_namespace_state(&client).await;
++    let created = client
++        .polls()
++        .create(&peer, "Question", &["Yes".into(), "No".into()], 1)
++        .await
++        .unwrap();
++    let (sent, creator) = client
++        .send_creation_with_options(
++            &peer,
++            created.send_result().message.as_ref().clone(),
++            SendOptions::default()
++                .with_message_id(crate::MessageId::new("SYNTHETIC-DURABLE-POLL").unwrap()),
++        )
++        .await
++        .unwrap();
++    assert_eq!(sent.message_id.as_str(), "SYNTHETIC-DURABLE-POLL");
++    assert_eq!(creator, client.pn().unwrap().to_non_ad());
++    let frames = crate::test_utils::decrypt_wire_frames(&transport.sent(), &[0; 32]);
++    assert!(frames.iter().any(|frame| {
++        let bytes = wacore_binary::util::unpack(frame).unwrap().into_owned();
++        let node = wacore_binary::OwnedNodeRef::new(bytes).unwrap();
++        node.get().tag == "message"
++            && node.get().attrs().optional_string("id").as_deref() == Some("SYNTHETIC-DURABLE-POLL")
++    }));
++}

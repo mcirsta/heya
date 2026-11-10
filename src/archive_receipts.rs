@@ -52,15 +52,20 @@ pub(super) fn visible(
 
 impl Archive {
     pub async fn queue_played_receipt(&self, request: &crate::audio::Request) -> Result<()> {
-        let request = request.clone();
+        self.played(request.id, request.raw.clone(), false).await
+    }
+    pub async fn queue_video_played_receipt(&self, request: &crate::video::Request) -> Result<()> {
+        self.played(request.id, request.raw.clone(), true).await
+    }
+    async fn played(&self, id: i32, raw: Vec<u8>, round_video: bool) -> Result<()> {
         let changed = self
             .call(move |db| {
                 Ok(db.execute(
                     "INSERT OR IGNORE INTO outgoing_receipts(message_id,kind)
              SELECT id,1 FROM messages WHERE id=?1 AND raw=?2 AND outgoing=0
              AND visible=1 AND CASE WHEN json_valid(content) THEN json_type(content,'$.notice.call') IS NULL ELSE 1 END AND deleted=0 AND (expires IS NULL OR expires>unixepoch())
-             AND json_extract(nullif(content,''),'$.audio.voice')=1",
-                    params![request.id, request.raw],
+             AND CASE WHEN ?3 THEN json_extract(nullif(content,''),'$.video.round')=1 ELSE json_extract(nullif(content,''),'$.audio.voice')=1 END",
+                    params![id,raw,round_video],
                 )? > 0)
             })
             .await?;

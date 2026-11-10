@@ -78,6 +78,11 @@ pub enum Command {
         revision: i32,
     },
 }
+#[derive(Clone, Copy)]
+enum Details {
+    Message(i32, i32, i32),
+    Poll(i32, i32, usize, usize, i32),
+}
 
 impl Command {
     // Fixed names for slow-work reports; never the payload.
@@ -143,10 +148,10 @@ pub struct Snapshot {
     pub operation: Option<crate::message_actions::OperationReply>,
     pub destinations: Arc<[crate::message_actions::Destination]>,
     pub revision: i32,
-    // None with an empty notice carries only a save reply; preserve the UI view.
+    // None with an empty error carries only a save reply; preserve the UI view.
     pub view: Option<Arc<View>>,
     pub reply: Option<SendReply>,
-    pub notice: String,
+    pub error: String,
 }
 impl Snapshot {
     pub fn empty() -> Self {
@@ -161,7 +166,7 @@ impl Snapshot {
             revision: 0,
             view: None,
             reply: None,
-            notice: String::new(),
+            error: String::new(),
         }
     }
 }
@@ -235,7 +240,7 @@ pub async fn run_with_chat_sources(
     let mut return_limit = 100;
     let mut history_boundary: Option<(i32, bool, bool)> = None;
     let mut phone_pending: Option<crate::phone_history::Pending> = None;
-    let mut phone_context: Option<(i32, i32, i32)> = None;
+    let mut phone_context: Option<(i32, i32, bool)> = None;
     let mut phone_cooldowns = std::collections::HashMap::<i32, tokio::time::Instant>::new();
     let mut phone_sources_open = true;
     let mut archives_open = true;
@@ -243,20 +248,20 @@ pub async fn run_with_chat_sources(
     let mut pending_command = None;
     let mut expiry = tokio::time::interval(std::time::Duration::from_secs(30));
     loop {
-        let mut notice = String::new();
+        let mut error_message = String::new();
         let mut page = None;
         let mut work: Option<(&'static str, std::time::Instant)> = None;
         tokio::select! {
             result=async {match &mut chat_pending {Some(pending)=>pending.await,None=>std::future::pending().await}}=>{
                 chat_pending=None;
-                notice=match result {Ok(text)=>text.into(),Err(error)=>error.message().into()};
+                error_message=match result {Ok(())=>String::new(),Err(error)=>error.message().into()};
             }
             event=preferences.changed(), if preferences_open => {
                 preferences_open=event.is_ok();
                 let enabled=preferences.borrow_and_update().send_receipts;
                 if !enabled && let Some(db)=&archive
-                    && let Err(error)=db.discard_receipts().await {notice=error.to_string();}
-                if notice.is_empty(){continue;}
+                    && let Err(error)=db.discard_receipts().await {error_message=error.to_string();}
+                if error_message.is_empty(){continue;}
             }
             _ = expiry.tick(), if archive.is_some() => {},
             event = archives.changed(), if archives_open => {
@@ -268,7 +273,7 @@ pub async fn run_with_chat_sources(
                 changed = archive.as_ref().map(Archive::subscribe);
                 let enabled=preferences.borrow().send_receipts;
                 if !enabled && let Some(db)=&archive
-                    && let Err(error)=db.discard_receipts().await {notice=error.to_string();}
+                    && let Err(error)=db.discard_receipts().await {error_message=error.to_string();}
             }
             _ = async { match &mut changed {Some(changed)=>{let _=changed.changed().await;},None=>std::future::pending().await} } => {
                 work=Some(("archive change",std::time::Instant::now()));
@@ -283,7 +288,7 @@ pub async fn run_with_chat_sources(
             }
             outcome=async {match &mut phone_pending {Some(pending)=>pending.await,None=>std::future::pending().await}} => {
                 phone_pending=None;
-                phone_context=None;
+                let explicit = phone_context.take().is_some_and(|(_,_,explicit)| explicit);
                 if outcome.revision!=revision {continue;}
                 let same_chat=outcome.chat==selected || if let Some(db)=&archive {
                     db.phone_history_anchor(outcome.chat).await.ok().flatten().is_some_and(|a|a.chat==selected)
@@ -294,7 +299,7 @@ pub async fn run_with_chat_sources(
                     result=>{
                         history=Some(crate::domain::HistoryReply{chat:selected,request:outcome.request,success:false});
                         phone_cooldowns.insert(selected,tokio::time::Instant::now()+crate::phone_history::COOLDOWN);
-                        notice=match result {Err(error)=>error.message().into(),_=>"Your phone sent no older messages for this conversation.".into()};
+                        if explicit {error_message=match result {Err(error)=>error.message().into(),_=>String::new()};}
                     }
                 }
             }
@@ -311,6 +316,11 @@ pub async fn run_with_chat_sources(
                         let rejected=match action {
                             crate::message_actions::Command::Star {request,..}=>Some((request,8)),
                             crate::message_actions::Command::Pin {request,..}=>Some((request,9)),
+                            crate::message_actions::Command::Contacts {request,..}=>Some((request,10)),
+                            crate::message_actions::Command::SendContacts {request,..}=>Some((request,11)),
+                            crate::message_actions::Command::CreatePoll {request,..}=>Some((request,12)),
+                            crate::message_actions::Command::VotePoll {request,..}=>Some((request,13)),
+                            crate::message_actions::Command::PollResults {request,..}=>Some((request,14)),
                             _=>None,
                         };
                         if let Some((request,kind))=rejected {
@@ -321,6 +331,31 @@ pub async fn run_with_chat_sources(
                     continue;
                 };
                 let result = match command {
+                    Command::Action(crate::message_actions::Command::CreatePoll {chat,draft,reply,request})=>{
+                        let result=match fresh_id(){Ok(id)=>db.queue_poll(chat,id,draft,reply).await,Err(e)=>Err(e)};
+                        operation=Some(operation_reply(request,12,&result));result
+                    }
+                    Command::Action(crate::message_actions::Command::VotePoll {chat,message,option,request})=>{
+                        let result=match fresh_id(){Ok(id)=>db.queue_vote(chat,message,id,option).await,Err(e)=>Err(e)};
+                        operation=Some(operation_reply(request,13,&result));result
+                    }
+                    Command::Action(crate::message_actions::Command::PollResults {chat,message,option,limit,request})=>{
+                        info_target=Some(Details::Poll(chat,message,option,limit,request));Ok(())
+                    }
+                    Command::Action(crate::message_actions::Command::Contacts {query,request})=>{
+                        let mut response=operation_reply(request,10,&Ok(()));
+                        match db.contact_choices(query).await {Ok(page)=>response.contacts=Some(page),Err(e)=>response=operation_reply(request,10,&Err(e))}
+                        operation=Some(response);
+                        updates.send_modify(|snapshot|snapshot.operation=operation.clone());
+                        continue;
+                    }
+                    Command::Action(crate::message_actions::Command::SendContacts {chat,contacts,reply,request})=>{
+                        let result=match fresh_id(){Ok(id)=>db.queue_contacts(chat,id,contacts,reply).await,Err(e)=>Err(e)};
+                        operation=Some(operation_reply(request,11,&result));
+                        // Publish the durable-save result before rebuilding the conversation.
+                        updates.send_modify(|snapshot|snapshot.operation=operation.clone());
+                        result
+                    }
                     Command::Navigation(crate::message_navigation::Command::Search {chat,query,request,revision:seen}) => {
                         if chat!=selected || seen!=revision {continue;}
                         search=crate::message_navigation::Search {chat,query,request,..Default::default()};
@@ -342,7 +377,7 @@ pub async fn run_with_chat_sources(
                                     jump=crate::message_navigation::Jump {request,message:target,browsing:true,returning:false};
                                     Ok(())
                                 }
-                                Err(_)=>{jump=crate::message_navigation::Jump {request,browsing:window.is_some(),..Default::default()};notice="The original message is not available in saved history.".into();Ok(())}
+                                Err(_)=>{jump=crate::message_navigation::Jump {request,browsing:window.is_some(),..Default::default()};error_message="The original message is not available in saved history.".into();Ok(())}
                             }
                         }
                     }
@@ -354,7 +389,7 @@ pub async fn run_with_chat_sources(
                     Command::Folder {archived:folder,previous,draft,draft_version,revision:next}=>{
                         revision=next;
                         if let Err(error)=save_draft(db,previous,draft,draft_version,&sent_draft).await {
-                            updates.send_replace(Snapshot {chat_busy:chat_pending.is_some(),revision,notice:error.to_string(),..Snapshot::empty()});
+                            updates.send_replace(Snapshot {chat_busy:chat_pending.is_some(),revision,error:error.to_string(),..Snapshot::empty()});
                             continue;
                         }
                         archived=folder;selected=0;revision=next;query.clear();unread=false;limit=100;
@@ -371,7 +406,7 @@ pub async fn run_with_chat_sources(
                         let result=match fresh_id(){Ok(id)=>db.queue_pin(chat,message,id,seconds).await,Err(e)=>Err(e)};
                         operation=Some(operation_reply(request,9,&result));result
                     }
-                    Command::Action(crate::message_actions::Command::Info {chat,message,request})=>{info_target=Some((chat,message,request));Ok(())}
+                    Command::Action(crate::message_actions::Command::Info {chat,message,request})=>{info_target=Some(Details::Message(chat,message,request));Ok(())}
                     Command::Action(crate::message_actions::Command::Edit {chat,message,expected,text,request})=>{
                         let result=match fresh_id(){Ok(id)=>db.queue_edit(chat,message,id,expected,text).await,Err(e)=>Err(e)};
                         operation=Some(operation_reply(request,4,&result));result
@@ -415,15 +450,15 @@ pub async fn run_with_chat_sources(
                         let saved = save_draft(db,previous,draft,draft_version,&sent_draft).await;
                         if let Err(error)=saved {
                             revision=next;
-                            updates.send_replace(Snapshot{chat_busy:chat_pending.is_some(),search:search.clone(),jump,history,phone:Default::default(),operation:operation.clone(),destinations:destinations.clone(),revision,view:None,reply:reply.clone(),notice:error.to_string()});
+                            updates.send_replace(Snapshot{chat_busy:chat_pending.is_some(),search:search.clone(),jump,history,phone:Default::default(),operation:operation.clone(),destinations:destinations.clone(),revision,view:None,reply:reply.clone(),error:error.to_string()});
                             continue;
                         }
                         selected=id;revision=next;limit=100;window=None;
                         search=Default::default();jump=Default::default();saved
                     }
                     Command::Draft(chat,text,version) => {
-                        if save_draft(db,chat,text,version,&sent_draft).await.is_err() { notice="The draft could not be saved. Keep this window open and copy your text.".into(); }
-                        if notice.is_empty() { continue; } else { Ok(()) }
+                        if save_draft(db,chat,text,version,&sent_draft).await.is_err() { error_message="The draft could not be saved. Keep this window open and copy your text.".into(); }
+                        if error_message.is_empty() { continue; } else { Ok(()) }
                     }
                     Command::Search(value) => {query=value;Ok(())}
                     Command::Unread(value) => {unread=value;Ok(())}
@@ -448,14 +483,14 @@ pub async fn run_with_chat_sources(
                                         phone_cooldowns.retain(|_,until|*until>now);
                                         if phone_cooldowns.len()>=64 && let Some(oldest)=phone_cooldowns.iter().min_by_key(|(_,until)|**until).map(|(chat,_)|*chat){phone_cooldowns.remove(&oldest);}
                                         phone_cooldowns.insert(chat,now+crate::phone_history::COOLDOWN);
-                                        phone_context=Some((chat,request,seen));
+                                        phone_context=Some((chat,request,explicit));
                                         phone_pending=Some(crate::phone_history::request(db.clone(),phone_sources.clone(),anchor,request,seen));
                                     }
-                                    _=>{history=Some(crate::domain::HistoryReply{chat,request,success:false});notice=crate::phone_history::Failure::Failed.message().into();}
+                                    _=>{history=Some(crate::domain::HistoryReply{chat,request,success:false});if explicit {error_message=crate::phone_history::Failure::Failed.message().into();}}
                                 }
                             } else {
                                 history=Some(crate::domain::HistoryReply{chat,request,success:false});
-                                if explicit {notice=if phone_sources.borrow().is_none(){crate::phone_history::Failure::Offline.message().into()}else{"Older history is unavailable or was just requested. Please try again later.".into()};}
+                                if explicit {error_message=if phone_sources.borrow().is_none(){crate::phone_history::Failure::Offline.message().into()}else{"Older history is unavailable or was just requested. Please try again later.".into()};}
                             }
                         } else {continue;}
                         Ok(())
@@ -477,16 +512,16 @@ pub async fn run_with_chat_sources(
                         revision=next;phone_pending=None;
                 if let Some((chat,request,_))=phone_context.take(){history=Some(crate::domain::HistoryReply{chat,request,success:false});}
                         if let Err(error) = save_draft(db,previous,draft,draft_version,&sent_draft).await {
-                            updates.send_replace(Snapshot {chat_busy:chat_pending.is_some(),search:search.clone(),jump,history,phone:Default::default(),operation:operation.clone(),destinations:destinations.clone(),revision,view:None,reply:reply.clone(),notice:error.to_string()});
+                            updates.send_replace(Snapshot {chat_busy:chat_pending.is_some(),search:search.clone(),jump,history,phone:Default::default(),operation:operation.clone(),destinations:destinations.clone(),revision,view:None,reply:reply.clone(),error:error.to_string()});
                             continue;
                         }
                         match crate::protocol_messages::new_chat(&value) {
                             Ok(jid)=>match db.create_chat(jid).await {Ok(id)=>{selected=id;revision=next;limit=100;window=None;search=Default::default();jump=Default::default();Ok(())},Err(e)=>Err(e)},
-                            Err(e)=>{notice="Enter a phone number with its country code, such as +40 …".into();Err(e)}
+                            Err(e)=>{error_message="Enter a phone number with its country code, such as +40 …".into();Err(e)}
                         }
                     }
                 };
-                if let Err(error) = result && notice.is_empty() { notice=error.to_string(); }
+                if let Err(error) = result && error_message.is_empty() { error_message=error.to_string(); }
             }
         }
         if let Some(db) = &archive {
@@ -499,14 +534,14 @@ pub async fn run_with_chat_sources(
                     Err(error) => {
                         search.hits.clear();
                         search.more = false;
-                        notice = error.to_string();
+                        error_message = error.to_string();
                     }
                 }
             } else {
                 search.hits.clear();
                 search.more = false;
             }
-            if let Some((chat, message, request)) = info_target {
+            if let Some(Details::Message(chat, message, request)) = info_target {
                 operation = Some(match db.message_info(chat, message).await {
                     Ok(info) => crate::message_actions::OperationReply {
                         request,
@@ -514,9 +549,21 @@ pub async fn run_with_chat_sources(
                         saved: true,
                         error: String::new(),
                         info: Some(info),
+                        contacts: None,
+                        poll_results: None,
                     },
                     Err(e) => operation_reply(request, 7, &Err(e)),
                 });
+            }
+            if let Some(Details::Poll(chat, message, option, limit, request)) = info_target {
+                let result = db.poll_results(chat, message, option, limit).await;
+                let mut response = operation_reply(
+                    request,
+                    14,
+                    &result.as_ref().map(|_| ()).map_err(|_| Error::Invalid),
+                );
+                response.poll_results = result.ok().map(Arc::new);
+                operation = Some(response);
             }
             let probe = db.measurements();
             let view_started = probe.as_ref().map(|_| std::time::Instant::now());
@@ -588,7 +635,7 @@ pub async fn run_with_chat_sources(
                         revision,
                         view: Some(Arc::new(view)),
                         reply: reply.clone(),
-                        notice,
+                        error: error_message,
                     });
                 }
                 Err(error) => {
@@ -610,7 +657,7 @@ pub async fn run_with_chat_sources(
                         revision,
                         view: None,
                         reply: reply.clone(),
-                        notice: error.to_string(),
+                        error: error.to_string(),
                     });
                 }
             }
@@ -635,6 +682,8 @@ fn operation_reply(
 ) -> crate::message_actions::OperationReply {
     crate::message_actions::OperationReply {
         info: None,
+        contacts: None,
+        poll_results: None,
         request,
         kind,
         saved: result.is_ok(),
@@ -930,7 +979,7 @@ mod tests {
         let failed = page(&mut views, 4).await;
         assert!(!failed.history.unwrap().success);
         assert!(failed.view.is_none());
-        assert!(!failed.notice.is_empty());
+        assert!(!failed.error.is_empty());
         db.call(|c| {
             c.execute_batch("ALTER TABLE unavailable_messages RENAME TO messages")?;
             Ok(())
@@ -1146,7 +1195,7 @@ mod tests {
             .unwrap();
         revision(&mut views, 2).await;
         assert!(views.borrow().view.is_none());
-        assert!(!views.borrow().notice.is_empty());
+        assert!(!views.borrow().error.is_empty());
         let view = db
             .view(chat, 100, String::new(), false, false)
             .await

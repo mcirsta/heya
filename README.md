@@ -48,11 +48,22 @@ video validation remains open.
 Nearby video cards use supplied sharp posters or generate a frame before playback;
 the existing preview cache preserves the result without leaving a decoder running.
 
+Received contact cards show contact details, start chats and save `.vcf` files.
+Use **+ → Contact** to search synced contacts, select one or several, review
+their names/numbers and send a card or bundle through the normal outbox.
+Round video messages share the native video player and appear as circular tiles.
+Previously saved unsupported messages are upgraded locally. See
+[received contacts and round videos](docs/shared-contacts.md).
+
 Received fixed locations display map cards with OpenStreetMap previews, place
 details and copy/open actions. Existing saved unsupported locations are repaired
-in place. See [location behavior and map caching](docs/locations.md).
+in place. Live-location shares show Web’s static unavailable card, sender photo
+and caption, with guidance to view the live position on the phone. See
+[location behavior and map caching](docs/locations.md).
 
-Edits and poll-vote updates stay out of ordinary chat bubbles; retained edits
+Polls support creation, sending, voting, vote removal and live results via **+ → Poll**.
+See [poll behavior and limits](docs/polls.md). Vote updates remain hidden add-ons.
+Edits stay out of ordinary chat bubbles; retained edits
 wait for their original message. History-sharing notices and phone-only codes
 have explicit display rules. See [message events](docs/message-events.md).
 
@@ -110,8 +121,18 @@ run `cargo run --release --locked -- --offline`; **Connect** remains available.
 This explicit offline launch opens saved chats regardless of the automatic
 connection setting; encrypted storage still needs the key from the OS keyring.
 **Disconnect** closes the connection and retains the session. The SDK handles
-temporary network interruptions while the connection is active, and a banner
-shows the connection state without hiding cached conversations.
+temporary network interruptions while the connection is active. The status icon
+beside **Chats** shows connection and visibility without moving the conversation.
+Click it for **Online**, **Invisible**, **Offline**, or **Edit status message…**.
+Invisible keeps Heya connected; other linked devices can still show you online.
+The status message is your profile's About text. Account controls stay in
+**Settings → Account**. Routine copy/queued confirmations are silent; necessary
+errors appear with their action or in a compact dialog. See [status controls](docs/own-status.md).
+
+Settings uses category tabs on the left and a separate content pane. Search
+matches names and descriptions across every category; choosing a tab clears the
+search. Narrow windows use a category selector. Selecting a chat, including the
+current chat, closes Settings once the navigation command is accepted.
 
 **Settings → System → Encrypt local data** changes how the saved session, chats,
 drafts and cached media are stored. Encryption is recommended and selected by
@@ -449,7 +470,7 @@ references; business cards forward as their readable text. View-once, expired
 and deleted sources cannot be used. Reply drafts and pending operations survive
 restart in the encrypted archive. Reactions do not become separate chat bubbles.
 A chevron in the hovered bubble opens a shared menu and quick-reaction strip.
-Reply, React, Forward, Copy text/caption and attachment Download are connected.
+Reply, React, Forward, Copy message/caption and attachment Download are connected.
 Pin, Star, Report and Ask Meta AI remain visibly disabled. The menu supports
 keyboard navigation, Escape and outside-click dismissal, and fits short windows
 with a scrollable list. Attachment classification for older messages is recovered
@@ -460,8 +481,9 @@ participant list for reactions, multi-recipient forwarding and expired-media
 re-upload recovery remain pending.
 
 Right-clicking a message opens a ZapFast-style integrated quick-reaction/menu
-card. Reply, Forward, Select, Copy text, eligible own-text Edit, Delete for
-everyone, Delete for me, Message info and Copy message ID are connected. Own
+card. Copy selection (when text is selected), Reply, Forward, Select, Copy message,
+eligible own-text Edit, Delete for everyone, Delete for me, Message info and
+Copy message ID are connected. Own
 text edits are offered for 15 minutes and sender deletion for 48 hours, matching
 the pinned reference; the archive and transport recheck eligibility. Edit uses
 a separate dialog so an unsent composer draft is preserved. Deletion requires
@@ -514,6 +536,12 @@ audio, download and upload sources are cleared before waiting for SDK ownership 
 the audio channel value previously caused a 15-second cleanup timeout after closing.
 There is no background/tray mode. Cleanup failures now log a fixed stage or
 persistence flags without account identifiers.
+
+The main window remembers its normal size, maximized state and fullscreen state.
+Closing while minimized reopens it visibly. macOS uses AppKit frame preferences;
+Windows uses native window placement with a small saved state file; Linux saves
+size and mode while the desktop chooses placement. See [window state](docs/window-state.md)
+for platform details and offscreen restart checks.
 
 ## Offline demo
 

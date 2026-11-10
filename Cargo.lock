@@ -2511,6 +2511,7 @@ dependencies = [
  "url",
  "webbrowser",
  "whatsapp-rust",
+ "windows-sys 0.61.2",
  "zbus 5.19.0",
  "zeroize",
 ]
@@ -7745,8 +7746,6 @@ dependencies = [
 [[package]]
 name = "winit-x11"
 version = "0.31.0-beta.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb5746cd907e514b7895491a1c6f7d0cb70077f9e16928cd74ae6f987ffd96aa"
 dependencies = [
  "bitflags 2.13.2",
  "bytemuck",

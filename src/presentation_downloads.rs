@@ -54,13 +54,17 @@ pub(crate) fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>) {
             || panel.as_ref().is_some_and(|row| row.kind == 0)
             || viewing;
         let audio = row.as_ref().is_some_and(|row| row.message.has_audio);
-        let demo = ui.get_demo_mode().then_some(if photo {
-            Kind::Photo
-        } else if audio {
-            Kind::Audio
-        } else {
-            Kind::Document
-        });
+        let demo = ui.get_demo_mode().then_some(
+            if row.as_ref().is_some_and(|r| r.message.contact_count > 0) {
+                Kind::Contact
+            } else if photo {
+                Kind::Photo
+            } else if audio {
+                Kind::Audio
+            } else {
+                Kind::Document
+            },
+        );
         if tx
             .try_send(Command::Start(Target {
                 chat,
@@ -70,7 +74,7 @@ pub(crate) fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>) {
             }))
             .is_err()
         {
-            ui.set_notice("Downloads are busy. Please try again.".into());
+            ui.invoke_show_error("Downloads are busy. Please try again.".into());
             if viewing {
                 ui.set_action_error("Downloads are busy. Please try again.".into());
             }
@@ -87,7 +91,7 @@ pub(crate) fn bind(ui: &AppWindow, commands: mpsc::Sender<Command>) {
         if commands.try_send(command).is_err()
             && let Some(ui) = weak.upgrade()
         {
-            ui.set_notice("Download controls are busy. Please try again.".into());
+            ui.invoke_show_error("Download controls are busy. Please try again.".into());
         }
     });
 }
