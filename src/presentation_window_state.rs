@@ -85,7 +85,9 @@ impl State {
             #[cfg(target_os = "macos")]
             if native_macos {
                 ui.window().with_winit_window(|w| {
-                    use slint::winit_031::winit::raw_window_handle::RawWindowHandle;
+                    use slint::winit_031::winit::raw_window_handle::{
+                        HasWindowHandle, RawWindowHandle,
+                    };
                     if let Ok(handle) = w.window_handle()
                         && let RawWindowHandle::AppKit(h) = handle.as_raw()
                     {
@@ -201,7 +203,9 @@ impl State {
             }
             #[cfg(target_os = "macos")]
             if state.native_macos && !min {
-                use slint::winit_031::winit::raw_window_handle::RawWindowHandle;
+                use slint::winit_031::winit::raw_window_handle::{
+                    HasWindowHandle, RawWindowHandle,
+                };
                 if let Ok(handle) = w.window_handle()
                     && let RawWindowHandle::AppKit(h) = handle.as_raw()
                 {
