@@ -254,6 +254,7 @@ pub(crate) fn check_ui() {
     assert_eq!(ui.get_photo_viewer_id(), 0, "removed message cannot reopen");
 
     check_album(&ui, &messages[0], &sample);
+    check_filmstrip(&messages[0], &sample);
 
     let mut many = (0..10000)
         .map(|i| {
@@ -275,6 +276,191 @@ pub(crate) fn check_ui() {
         }
     }
     check_wheel_motion(&ui, &view, &sample);
+}
+
+fn check_filmstrip(message: &crate::domain::Message, pixels: &Arc<photos::Pixels>) {
+    let mut message = message.clone();
+    let pixels = pixels.clone();
+    std::thread::spawn(move || {
+        use std::time::Duration;
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = AppWindow::new().unwrap();
+        ui.set_demo_mode(true);
+        ui.set_show_conversation(true);
+        let demand = bind(&ui);
+        let mut demo = fixtures::demo();
+        demo.select(9);
+        let mut view = demo.conversation();
+        message.id = 80000;
+        view.messages = Arc::from([message]);
+        ui.window().set_size(slint::LogicalSize::new(3840., 2160.));
+        presentation::conversation(&ui, &view, true);
+        // Settle the chat-change callbacks before opening its viewer, as a
+        // real pointer click on the displayed conversation does.
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(1));
+        ui.invoke_layout_timeline();
+        ui.invoke_activate_photo(80000);
+        assert_eq!(ui.get_photo_viewer_id(), 80000);
+        let members = (80000..90000).collect::<Vec<_>>();
+        let snapshot = |id, full: bool| {
+            Arc::new(photos::Snapshot {
+                checked: Some((9, id)),
+                gallery: Some(Arc::new(photos::Gallery {
+                    id,
+                    members: members.clone(),
+                    position: (id - 80000) as usize,
+                    ..Default::default()
+                })),
+                viewer: full.then(|| (id, pixels.clone())),
+                ..Default::default()
+            })
+        };
+        publish(&ui, &snapshot(80000, true));
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(200));
+        let model = ui.get_photo_thumbnails();
+        assert_eq!(model.row_count(), 10000);
+        let viewer = ElementHandle::find_by_element_type_name(&ui, "PhotoViewer")
+            .next()
+            .unwrap();
+        let strip = child(&viewer, "PhotoViewer::strip");
+        assert_eq!(strip.size().width, 3840.);
+        let thumbs = || {
+            strip
+                .query_descendants()
+                .match_id("PhotoViewer::thumb")
+                .find_all()
+        };
+        let settle = || {
+            // Drive layout on every synthetic frame, as the renderer does.
+            // Changed callbacks start the animation on the first frame.
+            for _ in 0..17 {
+                i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(16));
+                for thumb in thumbs() {
+                    let _ = thumb.absolute_position();
+                }
+            }
+        };
+        assert!(thumbs().len() > 40 && thumbs().len() <= ui.get_photo_thumbnail_count() as usize);
+        let right = thumbs()
+            .iter()
+            .map(|t| t.absolute_position().x + t.size().width)
+            .fold(0., f32::max);
+        assert!(
+            right >= 3832.,
+            "wide screens should be filled, not limited to seven previews"
+        );
+
+        // Off-page navigation retains the model, centers the selection and only
+        // asks the worker for a viewport-sized slice of a very large album.
+        let previous_window = demand.borrow().thumbnails;
+        ui.invoke_navigate_photo(89999);
+        assert_eq!(
+            demand.borrow().thumbnails,
+            previous_window,
+            "navigation retains the visible previews until the strip actually moves"
+        );
+        publish(&ui, &snapshot(89999, true));
+        settle();
+        assert_eq!(ui.get_photo_thumbnails(), model);
+        assert!(demand.borrow().thumbnails.first.unwrap() > 9900);
+        assert!(demand.borrow().thumbnails.count <= photos::MAX_THUMBNAILS);
+        assert_eq!(
+            demand.borrow().ids().len(),
+            2,
+            "only the selected and visible chat photo are original demand"
+        );
+        let last = thumbs()
+            .into_iter()
+            .max_by(|a, b| a.absolute_position().x.total_cmp(&b.absolute_position().x))
+            .unwrap();
+        contains(&strip, &last);
+
+        let point = slint::LogicalPosition::new(1900., strip.absolute_position().y + 40.);
+        assert!(
+            (ui.get_photo_filmstrip_top() - strip.absolute_position().y).abs() < 0.5,
+            "wheel bounds top={}, height={}; actual strip {:?}/{:?}",
+            ui.get_photo_filmstrip_top(),
+            ui.get_photo_filmstrip_height(),
+            strip.absolute_position(),
+            strip.size()
+        );
+        assert_eq!(ui.get_photo_filmstrip_height(), strip.size().height);
+        assert_eq!(
+            crate::presentation_scroll::viewer_wheel(&ui, point, 0., 120., false),
+            (120., 0.)
+        );
+        assert_eq!(
+            crate::presentation_scroll::viewer_wheel(&ui, point, 0., 120., true),
+            (0., 120.)
+        );
+        let start = last.absolute_position().x;
+        let (x, y) = crate::presentation_scroll::viewer_wheel(&ui, point, 0., 120., false);
+        crate::presentation_scroll::dispatch_wheel(ui.window(), point, x, y);
+        assert!(
+            (last.absolute_position().x - start).abs() < 1.,
+            "wheel scrolling starts smoothly"
+        );
+        let full = snapshot(89999, true);
+        let mut progressive = (*full).clone();
+        let first = demand.borrow().thumbnails.first.unwrap();
+        let thumbnail_id = members[first];
+        progressive.thumbnails.insert(
+            thumbnail_id,
+            photos::Thumbnail {
+                pixels: pixels.clone(),
+                key: 99001,
+            },
+        );
+        let progressive = Arc::new(progressive);
+        let mut moved = false;
+        for _ in 0..14 {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(16));
+            let before = last.absolute_position().x;
+            publish(&ui, &progressive);
+            assert_eq!(
+                ui.get_photo_thumbnails(),
+                model,
+                "texture arrival never replaces the strip model"
+            );
+            assert!(
+                (last.absolute_position().x - before).abs() < 0.5,
+                "texture arrival cannot reset scrolling"
+            );
+            moved |= last.absolute_position().x > start + 1.
+                && last.absolute_position().x < start + 119.;
+        }
+        assert!(moved, "wheel animation includes intermediate positions");
+        assert_eq!(
+            ui.get_photo_viewer_id(),
+            89999,
+            "scrolling browses previews without opening a photo"
+        );
+        let image = model.row_data(first).unwrap().picture;
+        publish(&ui, &progressive);
+        assert_eq!(
+            model.row_data(first).unwrap().picture,
+            image,
+            "unchanged thumbnails retain their texture"
+        );
+        ui.invoke_navigate_photo(thumbnail_id);
+        assert!(!ui.get_photo_viewer_ready());
+        assert_eq!(
+            ui.get_photo_viewer_image(),
+            image,
+            "use the selected thumbnail while its original is loading"
+        );
+
+        ui.window().set_size(slint::LogicalSize::new(520., 500.));
+        settle();
+        assert!(thumbs().len() <= 12, "narrow layouts keep work bounded");
+        assert_eq!(strip.size().width, 520.);
+        ui.invoke_close_photo();
+        assert_eq!(ui.get_photo_thumbnails().row_count(), 0);
+        assert!(demand.borrow().viewer.is_none());
+        assert!(!ui.invoke_photo_filmstrip_hit(point.x, point.y));
+    })
+    .join()
+    .unwrap();
 }
 
 fn check_stickers() {
@@ -815,17 +1001,16 @@ fn check_album(ui: &AppWindow, message: &crate::domain::Message, pixels: &Arc<ph
                 strip.absolute_position().y
                     >= caption.absolute_position().y + caption.size().height + 7.5
             );
+            assert!(
+                (strip.size().width - viewer.size().width).abs() < 0.5,
+                "the filmstrip uses the whole viewer width"
+            );
             let thumbs = strip
                 .query_descendants()
-                .match_type_name("Rectangle")
+                .match_id("PhotoViewer::thumb")
                 .find_all();
-            for thumb in thumbs
-                .iter()
-                .filter(|t| t.id().as_deref() == Some("PhotoViewer::thumb"))
-            {
-                contains(&strip, thumb);
-            }
-            assert_eq!(ui.get_photo_thumbnails().row_count(), photos::THUMB_COUNT);
+            assert_eq!(ui.get_photo_thumbnails().row_count(), members.len());
+            assert!(thumbs.len() <= ui.get_photo_thumbnail_count() as usize);
         }
     }
     assert_eq!(ui.get_photo_viewer_previous(), 0);

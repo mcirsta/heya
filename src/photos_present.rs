@@ -63,7 +63,7 @@ pub(super) async fn present_with_decode<F, Fut>(
         let thumb_ids = gallery
             .as_ref()
             .filter(|g| g.members.len() > 1)
-            .map(|g| g.thumbnails().to_vec())
+            .map(|g| g.thumbnails(wanted.thumbnails).to_vec())
             .unwrap_or_default();
         thumbs.retain(|id, _| thumb_ids.contains(id));
         known.retain(|id, _| ids.contains(id));
@@ -147,6 +147,51 @@ pub(super) async fn present_with_decode<F, Fut>(
                 // Inline pixels are already usable while the larger viewer
                 // decode is pending. Never decode an obsolete viewer request.
                 if demand.borrow().viewer == Some(row.id) {
+                    // Fill the visible strip before the expensive full-size decode.
+                    // Navigation/scrolling coalesces through the same demand channel.
+                    let thumb_ids = result
+                        .gallery
+                        .as_ref()
+                        .filter(|g| g.members.len() > 1)
+                        .map(|g| g.thumbnails(demand.borrow().thumbnails).to_vec())
+                        .unwrap_or_default();
+                    thumbs.retain(|id, _| thumb_ids.contains(id));
+                    result.thumbnails.retain(|id, _| thumb_ids.contains(id));
+                    let keys = thumbs
+                        .iter()
+                        .map(|(id, (revision, _))| (*id, *revision))
+                        .collect();
+                    if let Ok(thumbnail_rows) = db.album_thumbnails(thumb_ids, keys).await {
+                        for (id, revision, bytes) in thumbnail_rows {
+                            let current = demand.borrow().clone();
+                            if current.viewer != wanted.viewer {
+                                break;
+                            }
+                            if !result
+                                .gallery
+                                .as_ref()
+                                .is_some_and(|g| g.thumbnails(current.thumbnails).contains(&id))
+                            {
+                                continue;
+                            }
+                            let pixels = decode(bytes, THUMB_EDGE).await.map(Thumbnail::new);
+                            thumbs.insert(id, (revision, pixels.clone()));
+                            if let Some(pixels) = pixels {
+                                result.thumbnails.insert(id, pixels);
+                            } else {
+                                result.thumbnails.remove(&id);
+                            }
+                            if !publish(&result) {
+                                break;
+                            }
+                        }
+                    }
+                    if !publish(&result) {
+                        break;
+                    }
+                    if demand.borrow().viewer != Some(row.id) {
+                        continue;
+                    }
                     if let Some(original) = row.original {
                         let pixels = decode(original, VIEWER_EDGE).await.map(Arc::new);
                         viewer = Some((row.id, row.revision, pixels));
@@ -158,29 +203,6 @@ pub(super) async fn present_with_decode<F, Fut>(
                         && let Some(photo) = result.rows.get_mut(&row.id)
                     {
                         photo.state = State::Invalid;
-                    }
-                    if !publish(&result) {
-                        break;
-                    }
-                }
-            }
-        }
-        // The selected image has priority. Filmstrip work is bounded to seven
-        // 96px cached previews and shares the same decoder/cache worker.
-        if publish(&result) && demand.borrow().viewer == wanted.viewer {
-            let keys = thumbs
-                .iter()
-                .map(|(id, (revision, _))| (*id, *revision))
-                .collect();
-            if let Ok(rows) = db.album_thumbnails(thumb_ids, keys).await {
-                for (id, revision, bytes) in rows {
-                    if demand.borrow().viewer != wanted.viewer {
-                        break;
-                    }
-                    let pixels = decode(bytes, THUMB_EDGE).await.map(Thumbnail::new);
-                    thumbs.insert(id, (revision, pixels.clone()));
-                    if let Some(pixels) = pixels {
-                        result.thumbnails.insert(id, pixels);
                     }
                     if !publish(&result) {
                         break;
@@ -200,6 +222,12 @@ pub(super) async fn present_with_decode<F, Fut>(
 
 fn publish_current(updates: &watch::Sender<Arc<Snapshot>>, result: &Snapshot, wanted: &Demand) {
     let ids = wanted.ids();
+    let thumbnail_ids = result
+        .gallery
+        .as_ref()
+        .filter(|g| wanted.viewer == Some(g.id) && result.checked == Some((wanted.chat, g.id)))
+        .map(|g| g.thumbnails(wanted.thumbnails))
+        .unwrap_or_default();
     let result = Snapshot {
         rows: result
             .rows
@@ -220,11 +248,12 @@ fn publish_current(updates: &watch::Sender<Arc<Snapshot>>, result: &Snapshot, wa
             .as_ref()
             .filter(|g| wanted.viewer == Some(g.id) && result.checked == Some((wanted.chat, g.id)))
             .cloned(),
-        thumbnails: if result.checked == wanted.viewer.map(|id| (wanted.chat, id)) {
-            result.thumbnails.clone()
-        } else {
-            Default::default()
-        },
+        thumbnails: result
+            .thumbnails
+            .iter()
+            .filter(|(id, _)| thumbnail_ids.contains(id))
+            .map(|(id, p)| (*id, p.clone()))
+            .collect(),
     };
     updates.send_if_modified(|old| {
         let same_pixels = |a: &Option<Arc<Pixels>>, b: &Option<Arc<Pixels>>| match (a, b) {

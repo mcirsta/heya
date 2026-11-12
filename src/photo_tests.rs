@@ -798,6 +798,10 @@ async fn album_decode_coalesces_navigation_reuses_small_thumbnails_and_releases_
     let (demand, demand_rx) = watch::channel(Demand {
         chat,
         viewer: Some(ids[0]),
+        thumbnails: ThumbnailWindow {
+            first: None,
+            count: 7,
+        },
         ..Default::default()
     });
     let (updates, mut snapshots) = watch::channel(Arc::new(Snapshot::default()));
@@ -828,11 +832,16 @@ async fn album_decode_coalesces_navigation_reuses_small_thumbnails_and_releases_
         archive_rx, demand_rx, updates, decode,
     ));
     started_rx.recv().await.unwrap();
+    let before_full = snapshot(&mut snapshots, |s| s.thumbnails.len() == 7).await;
+    assert!(
+        before_full.viewer.is_none(),
+        "the strip must load before a slow full-size decode finishes"
+    );
     demand.send_modify(|d| d.viewer = Some(ids[1]));
     demand.send_modify(|d| d.viewer = Some(ids[8]));
     gate.add_permits(10);
     let ready = snapshot(&mut snapshots, |s| {
-        s.viewer.as_ref().is_some_and(|v| v.0 == ids[8]) && s.thumbnails.len() == THUMB_COUNT
+        s.viewer.as_ref().is_some_and(|v| v.0 == ids[8]) && s.thumbnails.len() == 7
     })
     .await;
     let gallery = ready.gallery.as_ref().unwrap();
@@ -849,6 +858,12 @@ async fn album_decode_coalesces_navigation_reuses_small_thumbnails_and_releases_
         1,
         "other originals never join viewer demand"
     );
+    for &id in &ids[3..7] {
+        assert_eq!(
+            before_full.thumbnails[&id].key, ready.thumbnails[&id].key,
+            "overlapping strip previews survive photo navigation"
+        );
+    }
     let before = calls.load(Ordering::SeqCst);
     db.changed();
     assert!(
@@ -861,6 +876,28 @@ async fn album_decode_coalesces_navigation_reuses_small_thumbnails_and_releases_
         before,
         "unchanged notifications reuse decoded pixels"
     );
+    demand.send_modify(|d| d.thumbnails.first = Some(0));
+    let scrolled = snapshot(&mut snapshots, |s| {
+        s.thumbnails.len() == 7 && s.thumbnails.contains_key(&ids[0])
+    })
+    .await;
+    assert!(
+        Arc::ptr_eq(
+            &ready.viewer.as_ref().unwrap().1,
+            &scrolled.viewer.as_ref().unwrap().1
+        ),
+        "scrolling the strip must not decode or change the selected full-size photo"
+    );
+    for &id in &ids[3..7] {
+        assert_eq!(ready.thumbnails[&id].key, scrolled.thumbnails[&id].key);
+    }
+    demand.send_modify(|d| d.thumbnails.count = 40);
+    let widened = snapshot(&mut snapshots, |s| s.thumbnails.len() == ids.len()).await;
+    assert!(Arc::ptr_eq(
+        &scrolled.viewer.as_ref().unwrap().1,
+        &widened.viewer.as_ref().unwrap().1
+    ));
+    assert_eq!(widened.rows.len(), 1, "widening never requests originals");
     demand.send_replace(Demand::default());
     let closed = snapshot(&mut snapshots, |s| {
         s.viewer.is_none() && s.rows.is_empty() && s.thumbnails.is_empty() && s.gallery.is_none()

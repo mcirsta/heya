@@ -7,6 +7,9 @@ struct Publications {
     apply: Vec<f64>,
     pending: Option<(i32, Instant)>,
     ready: Vec<f64>,
+    strip_pending: Option<(i32, Instant)>,
+    strip_ready: Vec<f64>,
+    max_previews: usize,
 }
 
 pub fn start(
@@ -63,6 +66,7 @@ pub fn start(
     ui.set_show_conversation(true);
     ui.window().set_size(slint::LogicalSize::new(1200., 800.));
     let demand = presentation_photos::bind(ui);
+    let viewport = demand.clone();
     let (updates, snapshots) = watch::channel(Arc::new(photos::Snapshot::default()));
     let producer = runtime.spawn(async move {
         let (_archives, archives) = watch::channel(Some(db));
@@ -79,6 +83,20 @@ pub fn start(
             presentation_photos::publish(ui, snapshot);
             let mut samples = applied.lock().unwrap();
             samples.apply.push(started.elapsed().as_secs_f64() * 1000.);
+            samples.max_previews = samples.max_previews.max(snapshot.thumbnails.len());
+            if let Some((id, start)) = samples.strip_pending
+                && let Some(gallery) = &snapshot.gallery
+                && gallery.id == id
+                && gallery
+                    .thumbnails(viewport.borrow().thumbnails)
+                    .iter()
+                    .all(|id| snapshot.thumbnails.contains_key(id))
+            {
+                samples
+                    .strip_ready
+                    .push(start.elapsed().as_secs_f64() * 1000.);
+                samples.strip_pending = None;
+            }
             if ui.get_photo_viewer_ready()
                 && samples
                     .pending
@@ -89,6 +107,8 @@ pub fn start(
             }
         },
     ));
+    let stop_previews = producer.abort_handle();
+    let stop_publications = pump.abort_handle();
     let samples = Rc::new(RefCell::new(Samples::default()));
     let rendered = samples.clone();
     let pending = Rc::new(RefCell::new(None::<(i32, Instant)>));
@@ -158,7 +178,7 @@ pub fn start(
     ];
     const ENDS: [u64; 8] = [2, 6, 9, 12, 15, 18, 21, 23];
     println!(
-        "Album benchmark: SQLCipher with 10,000 messages, 100 album photos, ONE loaded timeline row; one 2048px viewer and seven 96px cached thumbnails. Resize repeats the same size sequence with the strip removed, then the photo removed, then the viewer closed. Timings exclude network/GPU completion/compositor presentation; frame callbacks force full redraws."
+        "Album benchmark: SQLCipher with 10,000 messages, 100 album photos, ONE loaded timeline row; one 2048px viewer and a viewport-sized strip of 128px cached thumbnails. Resize repeats the same size sequence with the strip removed, then the photo removed, then the viewer closed. Timings exclude network/GPU completion/compositor presentation; frame callbacks force full redraws."
     );
     timer.start(TimerMode::Repeated, TICK, move || {
         let Some(ui) = weak.upgrade() else {
@@ -204,6 +224,7 @@ pub fn start(
             if next == NAMES.len() {
                 let mut ready=apply.lock().unwrap();
                 println!("Album selection-to-UI-ready: samples={}, p50={:.2}ms p95={:.2}ms max={:.2}ms",ready.ready.len(),percentile(&mut ready.ready,0.5),percentile(&mut ready.ready,0.95),percentile(&mut ready.ready,1.));
+                println!("Album visible-strip-ready: samples={}, p50={:.2}ms p95={:.2}ms max={:.2}ms; peak decoded previews={}",ready.strip_ready.len(),percentile(&mut ready.strip_ready,0.5),percentile(&mut ready.strip_ready,0.95),percentile(&mut ready.strip_ready,1.),ready.max_previews);
                 if renderer_seen.get() {
                     let mut times=latencies.borrow_mut();
                     println!("Album selection-to-render: samples={}, p50={:.2}ms p95={:.2}ms max={:.2}ms",times.len(),percentile(&mut times,0.5),percentile(&mut times,0.95),percentile(&mut times,1.));
@@ -217,6 +238,10 @@ pub fn start(
             phase = next;
             phase_started = now;
             if phase == 4 {
+                // Isolate rendering after the real viewer phases. Width changes
+                // now request a new thumbnail window, which would restore the strip.
+                stop_previews.abort();
+                stop_publications.abort();
                 ui.set_photo_thumbnails(Default::default());
             }
             if phase == 5 {
@@ -242,6 +267,7 @@ pub fn start(
                 let selection=Some((id,Instant::now()));
                 *pending.borrow_mut()=selection;
                 apply.lock().unwrap().pending=selection;
+                apply.lock().unwrap().strip_pending=selection;
                 ui.invoke_navigate_photo(id);
             }
         }

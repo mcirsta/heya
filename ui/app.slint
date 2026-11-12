@@ -13,7 +13,7 @@ import {
     RaisedSurface,
     PanelShadow,
 } from "components.slint";
-import { PhotoViewer, PhotoThumbnail } from "photo.slint";
+import { PhotoViewer, PhotoThumbnail, PhotoMetrics } from "photo.slint";
 export { PhotoThumbnail }
 import { Composer } from "composer.slint";
 import { LiveLocationDialog } from "location.slint";
@@ -343,7 +343,18 @@ export component AppWindow inherits Window {
     in-out property <int> photo-viewer-next;
     in-out property <[int]> photo-gallery-ids;
     in-out property <[PhotoThumbnail]> photo-thumbnails;
+    in-out property <int> photo-viewer-position;
+    in-out property <int> photo-thumbnail-first: -1;
+    in-out property <length> photo-filmstrip-top;
+    in-out property <length> photo-filmstrip-height;
+    out property <int> photo-thumbnail-count: min(128,ceil(root.width / PhotoMetrics.thumbnail-step) + 4);
+    changed photo-thumbnail-count => {root.request-photos();}
     callback navigate-photo(int);
+    public function photo-filmstrip-hit(x: float, y: float) -> bool {
+        return root.photo-viewer-id>0 && root.message-dialog==0 && !AudioCall.shown
+            && x>=0 && x<=root.width/1px && y>=root.photo-filmstrip-top/1px
+            && y<(root.photo-filmstrip-top + root.photo-filmstrip-height)/1px;
+    }
     changed photo-viewer-id => { if root.photo-viewer-id==0 {root.reset-photo-gallery();} root.request-photos(); }
     in-out property <bool> show-shortcut-hint: true;
     in-out property <bool> storage-encrypted: true;
@@ -570,6 +581,8 @@ export component AppWindow inherits Window {
         root.photo-viewer-chat=0;
         root.photo-gallery-ids = [];
         root.photo-thumbnails = [];
+        root.photo-viewer-position = 0;
+        root.photo-thumbnail-first = -1;
         root.photo-viewer-sender = "";
         root.photo-viewer-caption = "";
         root.photo-viewer-date = "";
@@ -1503,6 +1516,10 @@ export component AppWindow inherits Window {
             caption: root.photo-viewer-caption; counter: root.photo-viewer-counter;
             previous-id: root.photo-viewer-previous; next-id: root.photo-viewer-next;
             thumbnails: root.photo-thumbnails;
+            position: root.photo-viewer-position;
+            thumbnail-count: root.photo-thumbnail-count;
+            filmstrip-geometry(top,height) => {root.photo-filmstrip-top=top;root.photo-filmstrip-height=height;}
+            thumbnail-range(first) => {root.photo-thumbnail-first=first;root.request-photos();}
             navigate(id) => { root.navigate-photo(id); }
             picture: root.photo-viewer-image; status: root.photo-viewer-status;
             ready: root.photo-viewer-ready;

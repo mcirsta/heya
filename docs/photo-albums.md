@@ -119,7 +119,10 @@ invisible metadata; their advertised photo/video counts are not used as the
 number of available photos.
 
 The viewer has a sender/date toolbar, fitted image, previous/next controls,
-caption, photo counter and a centered thumbnail strip. The neutral canvas,
+caption, photo counter and a full-width, horizontally scrolling thumbnail strip.
+Short albums stay centered; longer albums use the available width. Selecting a
+photo brings its thumbnail into view. The wheel, horizontal trackpad gestures
+and dragging browse the strip without changing the current photo. The neutral canvas,
 side chevrons and selected thumbnail treatment follow WhatsApp Web's visual
 layout and Heya's existing theme tokens. Original icons are in `ui/icons/viewer-*`.
 The public [WhatsApp Web screenshot](https://www.aiseesoft.es/images/tutorial/whatsapp-screenshot/select-a-mode-to-screenshot.jpg)
@@ -240,10 +243,17 @@ The existing photo presentation/download workers are reused; there is no new
 service thread or polling timer. Archive access and image decoding stay off the
 Slint loop. Navigation coalesces through the existing latest-value channel.
 Only the selected photo has a full decode, capped at a 2048px edge. The strip
-holds at most seven 96px previews from cached/embedded thumbnails, centered on
-the selected member. Overlapping thumbnails retain their pixels and toolkit
-images. Gallery navigation adds no original prefetch or extra timeline widgets.
-Closing clears viewer pixels, album metadata and strip textures.
+decodes cached/embedded previews for the viewport plus four overscan tiles, capped
+at 128 previews with a 128px edge. Its 64px tiles support 2× display scaling.
+All album identities remain available, but only that bounded window creates UI
+elements and owns decoded previews. Overlapping previews retain their pixels and
+toolkit images; arrivals update individual rows without replacing the model or
+resetting the scroll position.
+
+The selected inline preview appears first, followed by the strip, then the
+full-size decode. Clicking a loaded thumbnail shows it immediately until larger
+pixels arrive. Gallery navigation adds no original prefetch or extra timeline
+widgets. Closing clears viewer pixels, album metadata and strip textures.
 
 Synthetic tests cover wrapped/ordinary children, privacy, missing headers,
 explicit ordering, unrelated senders/chats, off-page navigation, mixed media,
@@ -348,3 +358,47 @@ Reproduce with `HEYA_BENCHMARK_ALBUM=1 HEYA_TEST_RENDERER=winit-skia-opengl
 MESA_SHADER_CACHE_DISABLE=true scripts/ui-offscreen.sh --ui-benchmark`; set
 `TMPDIR` to a disposable directory on the data filesystem and use
 `HEYA_TEST_BINARY` to select a baseline.
+
+## Full-width filmstrip validation — 12 November 2026
+
+416 Linux application tests passed with media and 397 without it, plus the
+protocol-storage integration test. Strict Clippy passed in both configurations.
+The synthetic UI suite covers 10,000 album identities, bounded visible widgets,
+rapid navigation, delayed full-image decoding, overlapping preview reuse,
+mouse-wheel animation, resizing, model identity and cleanup. Native offscreen
+captures were inspected at 1920px wide and 520px narrow, in light/dark themes;
+a private-X11 wheel check scrolled the strip without changing the selected photo.
+Native close/reopen checks found no idle media workers and exited in 30–45 ms.
+
+Sequential optimized comparisons used the same SQLCipher fixture on the project
+filesystem: 10,000 messages, 100 album photos and one loaded timeline row.
+The new strip held at most 23 decoded previews during this size sequence, versus
+seven in the old viewer. Navigation did no timeline layout work in either build.
+
+| Measurement, p95 | Seven-preview baseline | Full-width strip |
+| --- | --- | --- |
+| OpenGL navigation render CPU | 23.18 ms | 21.30 ms |
+| OpenGL snapshot application | 1.64 ms | 1.67 ms |
+| OpenGL selection to full-photo render callback | 216.86 ms | 214.53 ms |
+| OpenGL settled resize render CPU | 11.94 ms | 16.61 ms |
+| Software selection to full-photo UI readiness | 155.72 ms | 177.13 ms |
+| Visible cached previews after selection, software/OpenGL | unmeasured | 2.98 / 3.40 ms |
+
+The wider strip adds resize rendering work; this is not a claim of zero overhead.
+Software resize timer lateness p95 rose from 0.77 to 14.44 ms. Initial OpenGL
+runs had seconds-long stalls, alongside substantial system swapping; the repeat
+above returned to normal across both builds. The first rapid-resize phase still
+reached about 173 ms in each build. These measurements do not establish that
+all renderer stalls are fixed. Xvfb reports unavailable DRI3 acceleration, and
+render callbacks force full redraws. Software render counters are unavailable.
+Neither run measures native GPU completion, macOS rendering, live downloads or
+equivalence to WhatsApp Web's speed.
+
+Reproduce with `HEYA_BENCHMARK_ALBUM=1 MESA_SHADER_CACHE_DISABLE=true
+HEYA_TEST_RENDERER=winit-skia-opengl scripts/ui-offscreen.sh --ui-benchmark`;
+repeat using `winit-skia-software`. Use the same on-disk `TMPDIR` and
+`HEYA_TEST_BINARY` for the baseline, with compilation stopped.
+Baseline binary SHA-256:
+`1416bbfa362ceee2287d026504bc4c171fec5555a7e45cae061f64a96d6dc7de`.
+Tested binary SHA-256:
+`6d64d48107532610d513ba6605b51e0790905d5e3c13ac8bd4741e88d8841b79`.

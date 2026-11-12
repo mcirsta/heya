@@ -75,9 +75,14 @@ export component PhotoGrid inherits Rectangle {
     }
 }
 
-// The gallery exists only while open. Seven small cached thumbnails surround
-// the selection; full-size pixels belong only to the current photo.
+// The gallery exists only while open. The strip materializes its viewport;
+// full-size pixels belong only to the current photo.
 export struct PhotoThumbnail { id: int, picture: image, key: string }
+
+export global PhotoMetrics {
+    out property <length> thumbnail-size: 64px;
+    out property <length> thumbnail-step: 72px;
+}
 
 component ViewerButton inherits IconButton {
     width: 40px; height: 40px; border-radius: 20px;
@@ -100,6 +105,15 @@ export component PhotoViewer inherits Rectangle {
     in property <int> previous-id;
     in property <int> next-id;
     in property <[PhotoThumbnail]> thumbnails;
+    in property <int> thumbnail-count;
+    in property <int> position;
+    callback thumbnail-range(int);
+    callback filmstrip-geometry(length, length);
+    private property <length> filmstrip-top: footer.y + strip.y;
+    private property <length> filmstrip-height: strip.height;
+    init => {root.filmstrip-geometry(root.filmstrip-top,root.filmstrip-height);}
+    changed filmstrip-top => {root.filmstrip-geometry(root.filmstrip-top,root.filmstrip-height);}
+    changed filmstrip-height => {root.filmstrip-geometry(root.filmstrip-top,root.filmstrip-height);}
     in property <bool> actions-enabled;
     in property <bool> busy;
     in property <bool> starred;
@@ -118,12 +132,15 @@ export component PhotoViewer inherits Rectangle {
     callback copy();
     private property <float> zoom:1;
     changed photo-id => {root.zoom=1; viewport.content-x=0px; viewport.content-y=0px;}
+    changed position => {strip.center-selection(true);}
+    changed width => {strip.center-selection(false);}
+    private property <int> album-length: root.thumbnails.length;
+    changed album-length => {strip.center-selection(false);}
     private property <bool> album: root.thumbnails.length>1;
     private property <bool> wide-toolbar: root.width>=900px;
     private property <length> toolbar-width: root.wide-toolbar ? 480px : 216px;
-    private property <length> thumb-size: min(64px, (root.width - 32px - max(0,root.thumbnails.length - 1) * 8px) / max(1,root.thumbnails.length));
     private property <length> caption-height: root.caption=="" ? 0px : min(76px, caption-text.preferred-height + 12px);
-    private property <length> footer-height: root.caption-height + (root.album ? root.thumb-size + 36px : 0px) + 40px;
+    private property <length> footer-height: root.caption-height + (root.album ? PhotoMetrics.thumbnail-size + 24px : 0px) + 32px;
     background: Theme.panel;
     TouchArea {clicked => {}}
     focus := FocusScope {
@@ -217,21 +234,38 @@ export component PhotoViewer inherits Rectangle {
                 content-width: self.visible-width; content-height: caption-text.preferred-height;
                 caption-text := Text {x: 0px; y: 0px; height: self.preferred-height; width: parent.visible-width; text: root.caption; wrap: word-wrap; color: Theme.text; font-size: 14px; horizontal-alignment: center;}
             }
-            if root.album: strip := Rectangle {
-                x: (parent.width - self.width)/2; y: root.caption-height + 12px;
-                width: root.thumbnails.length * root.thumb-size + max(0,root.thumbnails.length - 1)*8px; height: root.thumb-size + 8px;
-                for thumbnail[i] in root.thumbnails: thumb := Rectangle {
-                    x: i * (root.thumb-size + 8px); width: root.thumb-size; height: root.thumb-size;
-                    border-radius: 8px; border-width: thumbnail.id==root.photo-id ? 3px : 1px;
-                    border-color: thumbnail.id==root.photo-id ? Theme.accent : Theme.outline;
+            Text {x: 24px; y: root.caption-height + 4px; width: parent.width - 48px; height: 20px; text: root.counter; font-size: 12px; color: Theme.secondary; horizontal-alignment: center;}
+            strip := Flickable {
+                x: 0px; y: root.caption-height + 32px; width: parent.width;
+                height: root.album ? PhotoMetrics.thumbnail-size + 24px : 0px;
+                visible: root.album;
+                content-width: max(self.width,root.thumbnails.length * PhotoMetrics.thumbnail-step + 8px);
+                content-height: self.height;
+                mouse-drag-pan-enabled: true;
+                private property <length> inset: max(8px,(self.width - root.thumbnails.length * PhotoMetrics.thumbnail-step + 8px)/2);
+                private property <int> count: min(root.thumbnails.length,root.thumbnail-count);
+                private property <int> first: min(max(0,floor((-self.content-x - self.inset)/PhotoMetrics.thumbnail-step) - 2),max(0,root.thumbnails.length - self.count));
+                private property <bool> animate-scroll;
+                animate content-x {duration: self.animate-scroll ? 160ms : 0ms; easing: ease-out;}
+                function center-selection(animate: bool) {
+                    self.animate-scroll=animate;
+                    self.content-x=min(0px,max(self.width - self.content-width,self.width/2 - self.inset - root.position*PhotoMetrics.thumbnail-step - PhotoMetrics.thumbnail-size/2));
+                }
+                init => {self.center-selection(false);if root.album {root.thumbnail-range(self.first);}}
+                changed first => {if root.album {root.thumbnail-range(self.first);}}
+                for i in strip.count: thumb := Rectangle {
+                    private property <PhotoThumbnail> thumbnail: root.thumbnails[strip.first + i];
+                    x: strip.inset + (strip.first + i) * PhotoMetrics.thumbnail-step; y: 12px;
+                    width: PhotoMetrics.thumbnail-size; height: PhotoMetrics.thumbnail-size;
+                    border-radius: 6px; border-width: self.thumbnail.id==root.photo-id ? 3px : 1px;
+                    border-color: self.thumbnail.id==root.photo-id ? Theme.accent : Theme.outline;
                     background: Theme.surface;
-                    opacity: thumbnail.id==root.photo-id || area.has-hover ? 1 : 0.65;
-                    Image {x: 5px; y: 5px; width: parent.width - 10px; height: parent.height - 10px; source: thumbnail.picture.width>0 ? thumbnail.picture : @image-url("icons/photo.svg"); colorize: thumbnail.picture.width>0 ? transparent : Theme.secondary; image-fit: contain;}
-                    accessible-role: button; accessible-label: @tr("View album photo"); accessible-action-default => {root.navigate(thumbnail.id);}
-                    area := TouchArea {mouse-cursor: pointer; clicked => {focus.focus();root.navigate(thumbnail.id);}}
+                    opacity: self.thumbnail.id==root.photo-id || area.has-hover ? 1 : 0.65;
+                    Image {x: 4px; y: 4px; width: parent.width - 8px; height: parent.height - 8px; source: thumb.thumbnail.picture; image-fit: contain;}
+                    accessible-role: button; accessible-label: @tr("View album photo"); accessible-action-default => {root.navigate(self.thumbnail.id);}
+                    area := TouchArea {mouse-cursor: pointer; clicked => {focus.focus();root.navigate(thumb.thumbnail.id);}}
                 }
             }
-            Text {x: 24px; y: parent.height - 30px; width: parent.width - 48px; height: 20px; text: root.counter; font-size: 12px; color: Theme.secondary; horizontal-alignment: center;}
         }
     }
 }

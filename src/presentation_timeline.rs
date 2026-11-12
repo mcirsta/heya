@@ -941,7 +941,17 @@ fn viewer(ui: &AppWindow, state: &mut State) {
         .viewer
         .as_ref()
         .map(|v| v.2.clone())
-        .or_else(|| inline.map(|p| p.image.clone()))
+        .or_else(|| {
+            inline
+                .filter(|p| p.image.size().width > 0)
+                .map(|p| p.image.clone())
+        })
+        .or_else(|| {
+            ui.get_photo_thumbnails()
+                .row_data(ui.get_photo_viewer_position().max(0) as usize)
+                .filter(|p| p.id == id && p.picture.size().width > 0)
+                .map(|p| p.picture)
+        })
         .unwrap_or_default();
     if !same_image(&ui.get_photo_viewer_image(), &image) {
         ui.set_photo_viewer_image(image);

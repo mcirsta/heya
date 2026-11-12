@@ -78,7 +78,7 @@ impl Archive {
         self.call(move |db| {
             let mut query=db.prepare_cached(&format!("SELECT coalesce(p.revision,0),coalesce(nullif(p.preview,X''),m.thumbnail) FROM messages m LEFT JOIN message_photos p ON p.message_id=m.id WHERE m.id=?1 AND {} AND coalesce(p.revision,0)<>?2",photos::ELIGIBLE))?;
             let mut rows=Vec::new();
-            for id in ids.into_iter().take(crate::photos::THUMB_COUNT) {
+            for id in ids.into_iter().take(crate::photos::MAX_THUMBNAILS) {
                 if let Some((revision,bytes))=query.query_row(params![id,known.get(&id).copied().unwrap_or(-1)],|r|Ok((r.get(0)?,r.get(1)?))).optional()? {rows.push((id,revision,bytes));}
             }
             Ok(rows)

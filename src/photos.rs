@@ -10,8 +10,24 @@ pub const MAX_BYTES: usize = 20 * 1024 * 1024;
 pub const MAX_DEMAND: usize = 24;
 pub const INLINE_EDGE: u32 = 640;
 pub const VIEWER_EDGE: u32 = 2048;
-pub const THUMB_EDGE: u32 = 96;
-pub const THUMB_COUNT: usize = 7;
+pub const THUMB_EDGE: u32 = 128;
+pub const MAX_THUMBNAILS: usize = 128;
+
+/// A viewport-sized slice, including a small margin on either side. Before the
+/// viewer knows the album's position, center this slice on the selected photo.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ThumbnailWindow {
+    pub first: Option<usize>,
+    pub count: usize,
+}
+impl Default for ThumbnailWindow {
+    fn default() -> Self {
+        Self {
+            first: None,
+            count: 20,
+        }
+    }
+}
 
 /// A viewer selection resolved from the archive, independent of timeline paging.
 #[derive(Clone, Default, PartialEq, Eq)]
@@ -26,12 +42,13 @@ pub struct Gallery {
     pub message: Option<crate::domain::Message>,
 }
 impl Gallery {
-    pub fn thumbnails(&self) -> &[i32] {
-        let start = self
-            .position
-            .saturating_sub(THUMB_COUNT / 2)
-            .min(self.members.len().saturating_sub(THUMB_COUNT));
-        &self.members[start..(start + THUMB_COUNT).min(self.members.len())]
+    pub fn thumbnails(&self, window: ThumbnailWindow) -> &[i32] {
+        let count = window.count.min(MAX_THUMBNAILS).min(self.members.len());
+        let start = window
+            .first
+            .unwrap_or_else(|| self.position.saturating_sub(count / 2))
+            .min(self.members.len().saturating_sub(count));
+        &self.members[start..start + count]
     }
 }
 
@@ -87,6 +104,7 @@ pub struct Demand {
     pub chat: i32,
     pub visible: Vec<i32>,
     pub viewer: Option<i32>,
+    pub thumbnails: ThumbnailWindow,
     pub automatic: bool,
     // A monotonic serial makes two explicit retries distinguishable.
     pub retry: Option<(i32, u64)>,
@@ -338,6 +356,7 @@ pub async fn demo_present(
 ) {
     let mut samples = Vec::new();
     let mut sticker = None;
+    let mut thumbnails = BTreeMap::<i32, Thumbnail>::new();
     let mut viewer: Option<(i32, Arc<Pixels>)> = None;
     loop {
         let wanted = demand.borrow_and_update().clone();
@@ -370,6 +389,36 @@ pub async fn demo_present(
                 },
             );
         }
+        if let Some(id) = wanted.viewer {
+            let gallery = demo_gallery(wanted.chat, id);
+            result.checked = Some((wanted.chat, id));
+            let thumb_ids = if gallery.members.len() > 1 {
+                gallery.thumbnails(wanted.thumbnails)
+            } else {
+                &[]
+            };
+            thumbnails.retain(|id, _| thumb_ids.contains(id));
+            for &id in thumb_ids {
+                if let std::collections::btree_map::Entry::Vacant(entry) = thumbnails.entry(id)
+                    && let Some(thumbnail) = blocking(move || {
+                        Thumbnail::new(crate::fixtures::photo_pixels(
+                            id.unsigned_abs() as usize,
+                            THUMB_EDGE,
+                        ))
+                    })
+                    .await
+                {
+                    entry.insert(thumbnail);
+                }
+            }
+            result.thumbnails = thumbnails.clone();
+            result.gallery = Some(Arc::new(gallery));
+        } else {
+            thumbnails.clear();
+        }
+        // Publish the same small previews first as the archive-backed presenter.
+        result.viewer = viewer.clone().filter(|v| wanted.viewer == Some(v.0));
+        updates.send_replace(Arc::new(result.clone()));
         if wanted.viewer != viewer.as_ref().map(|v| v.0) {
             viewer = if let Some(id) = wanted.viewer {
                 blocking(move || {
@@ -382,25 +431,6 @@ pub async fn demo_present(
             };
         }
         result.viewer = viewer.clone();
-        if let Some(id) = wanted.viewer {
-            let gallery = demo_gallery(wanted.chat, id);
-            result.checked = Some((wanted.chat, id));
-            if gallery.members.len() > 1 {
-                for &id in gallery.thumbnails() {
-                    if let Some(thumbnail) = blocking(move || {
-                        Thumbnail::new(crate::fixtures::photo_pixels(
-                            id.unsigned_abs() as usize,
-                            THUMB_EDGE,
-                        ))
-                    })
-                    .await
-                    {
-                        result.thumbnails.insert(id, thumbnail);
-                    }
-                }
-            }
-            result.gallery = Some(Arc::new(gallery));
-        }
         updates.send_replace(Arc::new(result));
         if demand.changed().await.is_err() {
             return;

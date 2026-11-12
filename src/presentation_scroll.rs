@@ -12,9 +12,13 @@ pub(crate) const WHEEL_STEP: f32 = 120.;
 pub fn bind(ui: &AppWindow) {
     let mut pointer = None;
     let mut context_pressed = None;
+    let mut shift = false;
     let weak = ui.as_weak();
     ui.window().on_winit_window_event(move |window, event| {
         match event {
+            event::WindowEvent::ModifiersChanged(modifiers) => {
+                shift = modifiers.state().shift_key();
+            }
             event::WindowEvent::Focused(focused) => {
                 if let Some(ui) = weak.upgrade() {
                     ui.set_read_window_active(*focused);
@@ -59,7 +63,11 @@ pub fn bind(ui: &AppWindow) {
                 // gesture phases go through the backend completely unchanged.
                 if let (Some(position), Some((x, y))) = (pointer, wheel_delta(delta)) {
                     let p = position.to_logical::<f32>(f64::from(window.scale_factor()));
-                    dispatch_wheel(window, LogicalPosition::new(p.x, p.y), x, y);
+                    let position = LogicalPosition::new(p.x, p.y);
+                    let (x, y) = weak
+                        .upgrade()
+                        .map_or((x, y), |ui| viewer_wheel(&ui, position, x, y, shift));
+                    dispatch_wheel(window, position, x, y);
                     return EventResult::PreventDefault;
                 }
             }
@@ -67,6 +75,22 @@ pub fn bind(ui: &AppWindow) {
         }
         EventResult::Propagate
     });
+}
+
+/// A normal wheel browses the horizontal filmstrip; Slint still owns its
+/// animation and hit testing. Shift-wheel and touchpad gestures keep their axes.
+pub(crate) fn viewer_wheel(
+    ui: &AppWindow,
+    position: LogicalPosition,
+    x: f32,
+    y: f32,
+    shift: bool,
+) -> (f32, f32) {
+    if !shift && x == 0. && ui.invoke_photo_filmstrip_hit(position.x, position.y) {
+        (y, 0.)
+    } else {
+        (x, y)
+    }
 }
 
 /// Share the exact native input transition with synthetic layout tests. A child

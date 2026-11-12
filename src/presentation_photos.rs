@@ -4,6 +4,9 @@ use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::{cell::Cell, rc::Rc, sync::Arc};
 use tokio::sync::watch;
 
+#[path = "presentation_photo_strip.rs"]
+mod strip;
+
 #[cfg(test)]
 #[path = "presentation_photo_tests.rs"]
 mod tests;
@@ -49,6 +52,11 @@ pub fn bind(ui: &AppWindow) -> watch::Receiver<photos::Demand> {
                 chat: ui.get_selected_id(),
                 visible,
                 viewer,
+                thumbnails: photos::ThumbnailWindow {
+                    first: (ui.get_photo_thumbnail_first() >= 0)
+                        .then_some(ui.get_photo_thumbnail_first().max(0) as usize),
+                    count: ui.get_photo_thumbnail_count().max(0) as usize,
+                },
                 automatic: ui.get_auto_download_photos(),
                 retry: old.retry,
             };
@@ -127,16 +135,11 @@ fn open(
         ui.set_photo_viewer_chat(0);
         ui.set_action_error(Default::default());
     }
-    ui.set_photo_viewer_id(id);
-    ui.invoke_request_photos();
-    if retry {
-        serial.set(serial.get().wrapping_add(1));
-        tx.send_modify(|v| v.retry = Some((id, serial.get())));
-    }
     // Navigation remains responsive while decoding: the complete ID list is
-    // small metadata, while only seven thumbnails become UI elements.
+    // small metadata, while only the visible strip becomes UI elements.
     let ids = ui.get_photo_gallery_ids();
     if let Some(position) = ids.iter().position(|member| member == id) {
+        ui.set_photo_viewer_position(position as i32);
         ui.set_photo_viewer_previous(
             position
                 .checked_sub(1)
@@ -147,6 +150,12 @@ fn open(
         ui.set_photo_viewer_counter(
             format!("Photo {} of {}", position + 1, ids.row_count()).into(),
         );
+    }
+    ui.set_photo_viewer_id(id);
+    ui.invoke_request_photos();
+    if retry {
+        serial.set(serial.get().wrapping_add(1));
+        tx.send_modify(|v| v.retry = Some((id, serial.get())));
     }
 }
 
@@ -189,9 +198,12 @@ pub fn publish(ui: &AppWindow, snapshot: &Arc<photos::Snapshot>) {
         "Photo".into()
     });
     let ids = ui.get_photo_gallery_ids();
-    if ids.row_count() != gallery.members.len() || ids.iter().ne(gallery.members.iter().copied()) {
+    let members_changed =
+        ids.row_count() != gallery.members.len() || ids.iter().ne(gallery.members.iter().copied());
+    if members_changed {
         ui.set_photo_gallery_ids(ModelRc::new(VecModel::from(gallery.members.clone())));
     }
+    ui.set_photo_viewer_position(gallery.position as i32);
     ui.set_photo_viewer_previous(
         gallery
             .position
@@ -206,47 +218,14 @@ pub fn publish(ui: &AppWindow, snapshot: &Arc<photos::Snapshot>) {
             .copied()
             .unwrap_or(0),
     );
-    let old = ui.get_photo_thumbnails();
-    let thumbnails = if gallery.members.len() > 1 {
-        gallery.thumbnails()
-    } else {
-        &[]
-    };
-    let rows = thumbnails
-        .iter()
-        .map(|&id| {
-            let pixels = snapshot.thumbnails.get(&id);
-            // Pixel identity changes only on a new decode. Retain the Slint image
-            // so publications for loading/status don't upload its texture again.
-            let key = pixels.map(|p| p.key.to_string()).unwrap_or_default();
-            let picture = old
-                .iter()
-                .find(|row| row.id == id && row.key == key)
-                .map(|row| row.picture)
-                .unwrap_or_else(|| {
-                    pixels
-                        .map(|p| {
-                            slint::Image::from_rgba8(slint::SharedPixelBuffer::clone_from_slice(
-                                &p.pixels.rgba,
-                                p.pixels.width,
-                                p.pixels.height,
-                            ))
-                        })
-                        .unwrap_or_default()
-                });
-            crate::ui::PhotoThumbnail {
-                id,
-                picture,
-                key: key.into(),
-            }
-        })
-        .collect::<Vec<_>>();
-    if rows.len() != old.row_count()
-        || rows
-            .iter()
-            .zip(old.iter())
-            .any(|(a, b)| a.id != b.id || a.key != b.key)
-    {
-        ui.set_photo_thumbnails(ModelRc::new(VecModel::from(rows)));
+    if members_changed || !ui.get_photo_thumbnails().as_any().is::<strip::StripModel>() {
+        ui.set_photo_thumbnails(ModelRc::new(strip::StripModel::new(&gallery.members)));
     }
+    let model = ui.get_photo_thumbnails();
+    model
+        .as_any()
+        .downcast_ref::<strip::StripModel>()
+        .unwrap()
+        .update(&snapshot.thumbnails);
+    timeline::refresh_photo_viewer(ui);
 }
