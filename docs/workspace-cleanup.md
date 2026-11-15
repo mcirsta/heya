@@ -40,6 +40,14 @@ speed for disk space; debug information and release optimization are unchanged.
 If needed for a short development session, `CARGO_INCREMENTAL=1 cargo build
 --locked` opts back in. Clean those outputs afterwards.
 
+Release builds keep speed-oriented optimization (`opt-level = 3` and thin LTO)
+and strip symbols from the executable. Symbol stripping does not change the
+compiled application code, but removes function names used for crash backtraces.
+Build caches need separate cleanup: dependency artifacts, test executables and
+past build configurations can occupy many GiB even when the installed binary is
+small. Use `cargo run --release --locked` for ordinary desktop use; development
+and test profiles remain available for debugging and validation.
+
 ## Reproduce build inputs and checks
 
 - Runtime SVGs, palette JSON, macOS icon PNGs and the small synthetic media/PDF

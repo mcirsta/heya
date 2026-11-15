@@ -93,8 +93,9 @@ incremental = false
 incremental = false
 
 [profile.release]
+opt-level = 3
 lto = "thin"
-strip = "debuginfo"
+strip = "symbols"
 
 [lints.rust]
 # Slint's generated bindings contain narrowly scoped unsafe code.
