@@ -49,6 +49,7 @@ fn prepare() -> (tempfile::TempDir, Archive) {
     let db = Archive::open(files.clone(), &files.key_sql).unwrap();
     let settings = std::env::var_os("HEYA_BENCHMARK_CHAT_SETTINGS").is_some();
     let unlinked = std::env::var_os("HEYA_BENCHMARK_UNLINKED_ALBUM").is_some();
+    let pending_reads = std::env::var_os("HEYA_BENCHMARK_PENDING_READS").is_some();
     if unlinked {
         println!(
             "Archive benchmark: unlinked 37-photo batches separated by text; inferred metadata uses production queries"
@@ -56,6 +57,11 @@ fn prepare() -> (tempfile::TempDir, Archive) {
     }
     if settings {
         println!("Archive benchmark chat settings: 1500 indexed flags, 250 muted chats");
+    }
+    if pending_reads {
+        println!(
+            "Archive benchmark: 200 unresolved phone read receipts in the 10,000-message chat"
+        );
     }
     db.blocking(|c| {
         let tx=c.transaction()?;
@@ -80,6 +86,11 @@ fn prepare() -> (tempfile::TempDir, Archive) {
                 body:Some(String::new()),photo:Some(crate::message_content::Photo {width:900,height:1200,size:Some(12345)}),..Default::default()
             }).unwrap()} else {String::new()};
             tx.execute("INSERT INTO messages(chat_id,sender,wire_id,stamp,outgoing,sender_name,body,raw,visible,source_chat,source_sender,content) VALUES(?1,'synthetic',?2,?3,0,'Synthetic',?4,X'00',1,'synthetic','synthetic',?5)",rusqlite::params![chat,format!("SEED-{i}"),1700000000+i,if photo {"[Photo]".into()} else {text},content])?;
+        }
+        if pending_reads {
+            for i in 0..200 {
+                tx.execute("INSERT INTO pending_reads(chat_id,wire_id) VALUES(1,?1)",[format!("MISSING-{i}")])?;
+            }
         }
         tx.commit()?;Ok(())
     }).unwrap();

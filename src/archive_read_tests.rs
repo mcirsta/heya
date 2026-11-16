@@ -30,6 +30,108 @@ fn read(through: i64) -> ReadUpdate {
     }
 }
 
+#[test]
+fn unresolved_reads_use_key_lookups_and_preserve_boundary_rules() {
+    let (_temp, db) = fixture();
+    db.blocking(|db| {
+        let tx = db.transaction()?;
+        let chat = ensure(&tx, PN)?;
+        tx.execute(
+            "WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<10000)
+             INSERT INTO messages(chat_id,sender,wire_id,source_chat,source_sender,
+                 stamp,outgoing,sender_name,body,raw,visible)
+             SELECT ?1,'synthetic','message-'||i,'synthetic','synthetic',
+                 i,0,'Synthetic','Synthetic message',X'00',1 FROM n",
+            [chat],
+        )?;
+        tx.execute(
+            "WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<200)
+             INSERT INTO pending_reads(chat_id,wire_id) SELECT ?1,'missing-'||i FROM n",
+            [chat],
+        )?;
+        tx.execute_batch(
+            "UPDATE messages SET deleted=1,read_wire='delete-envelope' WHERE wire_id='message-2';
+             UPDATE messages SET outgoing=1 WHERE wire_id='message-3';
+             UPDATE messages SET visible=0 WHERE wire_id='message-4';
+             UPDATE messages SET read_wire=wire_id WHERE wire_id='message-5';
+             INSERT INTO messages(chat_id,sender,wire_id,source_chat,source_sender,
+                 stamp,outgoing,sender_name,body,raw,visible)
+             SELECT chat_id,'another-sender',wire_id,source_chat,'another-sender',
+                 stamp,outgoing,sender_name,body,raw,visible FROM messages WHERE wire_id='message-6';",
+        )?;
+        for key in ["message-1", "delete-envelope", "message-3", "message-4", "message-5", "message-6"] {
+            tx.execute(
+                "INSERT INTO pending_reads(chat_id,wire_id) VALUES(?1,?2)",
+                params![chat, key],
+            )?;
+        }
+        let mut position = tx.prepare(READ_POSITION)?;
+        let boundary: Option<(i64,i64)> = position.query_row([chat], |r| Ok((r.get(0)?,r.get(1)?))).optional()?;
+        assert_eq!(boundary, Some((5,5)), "the dual-key row counts once; the shared incoming ID is ambiguous");
+        let position_steps = position.get_status(rusqlite::StatementStatus::VmStep);
+        let mut cleanup = tx.prepare(CLEAR_RESOLVED_READS)?;
+        assert_eq!(cleanup.execute([chat])?, 5);
+        let steps = cleanup.get_status(rusqlite::StatementStatus::VmStep);
+        // Count database work, not elapsed time on a shared CI machine.
+        eprintln!("Read reconciliation SQL steps: boundary={position_steps}, cleanup={steps}");
+        assert!(
+            position_steps < 20_000 && steps < 20_000,
+            "read reconciliation scanned history: boundary={position_steps}, cleanup={steps} SQL steps"
+        );
+        assert_eq!(
+            tx.query_row("SELECT count(*) FROM pending_reads", [], |r| r
+                .get::<_, i32>(0))?,
+            201,
+            "unknown keys and a hidden envelope must remain pending"
+        );
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[tokio::test]
+async fn phone_backlog_does_not_count_own_messages_and_settles_reads_in_either_order() {
+    for receipts_first in [false, true] {
+        let (_temp, db) = fixture();
+        let receipt = vec!["incoming-2".into()];
+        if receipts_first {
+            db.read_receipts(PN.into(), receipt.clone()).await.unwrap();
+        }
+        let messages = (1..=4)
+            .map(|i| {
+                let mut message = record(&format!(
+                    "{}-{i}",
+                    if i <= 2 { "incoming" } else { "phone" }
+                ));
+                message.timestamp = 100 + i;
+                message.outgoing = i > 2;
+                message
+            })
+            .collect();
+        db.ingest(Batch {
+            messages,
+            live: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            summary(&db).await.unread,
+            if receipts_first { 0 } else { 2 }
+        );
+        db.read_receipts(PN.into(), receipt).await.unwrap();
+        assert_eq!(summary(&db).await.unread, 0);
+        // A late old envelope stays read; a genuinely newer incoming one does not.
+        incoming(&db, "late", 100).await;
+        incoming(&db, "new", 105).await;
+        assert_eq!(summary(&db).await.unread, 1);
+        assert!(
+            db.next_read_sync().await.unwrap().is_none(),
+            "remote reads must not create a read-sync echo"
+        );
+    }
+}
+
 #[tokio::test]
 async fn taskbar_counts_chats_before_filters_and_tracks_manual_marks_and_reads() {
     let (_temp, db) = fixture();

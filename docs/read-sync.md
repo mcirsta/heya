@@ -59,6 +59,59 @@ DM played receipts and does not override account privacy to force a public one.
 
 ## Private linked-device unread synchronization
 
+### Offline backlog reconciliation
+
+Phone-sent messages are outgoing and never increment Heya's unread count. A
+backlog can deliver incoming messages before the phone's corresponding read
+updates, temporarily showing an unread badge beside a newer outgoing preview.
+Read receipts may also precede their messages; their unresolved keys must survive
+until those messages arrive.
+
+On 16 November 2026, startup timing isolated a 95-second connection attempt:
+login completed in 543 ms, but saving three offline batches took 93.4 seconds.
+The pending-read cleanup scanned a 9,930-message chat for each of 196 unresolved
+keys, repeatedly during ingestion. That held the archive connection and delayed
+both navigation and read-state updates. Read-only measurements of that cleanup
+took 1,348 ms, versus 0.43 ms using the existing message-key indexes.
+
+Reconciliation now looks up original and deletion keys separately. The read
+boundary still requires one visible incoming row per key; the union deduplicates
+a row matching both keys. Cleanup consumes known visible keys, including outgoing
+ones, while retaining unknown/hidden keys. Existing archives use these indexes
+without a migration or resynchronization.
+
+The synthetic regression counts SQL operations with 10,000 messages and 200
+unresolved receipts, avoiding a timing threshold dependent on CI hardware. It
+also covers normal/deleted keys, outgoing messages, hidden envelopes and phone
+backlogs whose read receipts arrive before or after the messages. The offscreen
+archive benchmark accepts `HEYA_BENCHMARK_PENDING_READS=1` for the same workload
+through the production archive, messaging worker and UI publication path.
+
+Before the fix, the regression's cleanup executed 16,081,548 SQL steps. After
+the fix, cleanup uses 5,416 and boundary selection 4,163, including additional
+checks for a shared incoming ID and a row matching both key fields.
+
+Sequential optimized offscreen runs used the same 10,000-message SQLCipher
+archive with 200 unresolved receipts, Xvfb and Skia/OpenGL, with no other build
+or benchmark running:
+
+| Workload | Before | After |
+| --- | --- | --- |
+| Single arrival, archive commit | 2,450 ms (2 samples) | 5.87 ms p95 (54 samples) |
+| 20-message burst, archive commit | 46,480 ms (1 burst) | 37.36 ms p95 (35 bursts) |
+| 20-message burst, ingest to rendered UI | 46,536 ms (1 burst) | 98.07 ms p95 (35 bursts) |
+
+Each traffic phase lasts three seconds; a slow in-flight batch is allowed to
+finish, explaining the different sample counts. These measure synthetic local
+archive/UI work, not network latency or replay of the owner's original backlog.
+The optimized Linux suite passed 418 application tests plus the encrypted-storage
+integration test; 14 deliberate native/account checks stayed ignored. The UI
+suite used `--config 'profile.release.build-override.debug-assertions=true'` to
+retain Slint's element metadata. The normal optimized binary was measured
+offscreen separately, without that test-only metadata.
+
+### Observing and publishing reads
+
 The previous build only cleared Heya's archive badge. The protocol adapter now
 uses the pinned SDK's public `chat_actions().mark_chat_as_read` API to synchronize
 that state with WhatsApp's other linked clients. This is a private app-state

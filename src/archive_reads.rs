@@ -1,6 +1,21 @@
 //! Durable incoming read state. Outgoing delivery status is deliberately separate.
 use super::*;
 
+// Look up the pending keys through their existing indexes. Combining the key
+// comparisons in one OR lets SQLite scan the entire chat for every receipt.
+// UNION counts a row matching both keys once; shared incoming IDs stay ambiguous.
+const READ_POSITION: &str = "SELECT m.stamp,m.id FROM pending_reads p
+    JOIN messages m ON m.id IN (
+        SELECT id FROM messages WHERE chat_id=p.chat_id AND wire_id=p.wire_id
+        UNION
+        SELECT id FROM messages WHERE chat_id=p.chat_id AND read_wire<>'' AND read_wire=p.wire_id
+    ) WHERE p.chat_id=?1 AND m.outgoing=0 AND m.visible=1
+    GROUP BY p.wire_id HAVING count(*)=1 ORDER BY m.stamp DESC,m.id DESC LIMIT 1";
+const CLEAR_RESOLVED_READS: &str = "DELETE FROM pending_reads WHERE chat_id=?1 AND (
+    EXISTS(SELECT 1 FROM messages m WHERE m.chat_id=?1 AND m.visible=1 AND m.wire_id=pending_reads.wire_id)
+    OR EXISTS(SELECT 1 FROM messages m WHERE m.chat_id=?1 AND m.visible=1 AND m.read_wire<>'' AND m.read_wire=pending_reads.wire_id)
+)";
+
 #[derive(Clone)]
 pub struct ReadUpdate {
     pub jid: String,
@@ -195,13 +210,15 @@ pub(super) fn settle(db: &Connection, chat: i32) -> Result<()> {
         return Ok(());
     }
     // Receipts can precede offline message delivery. Keep unresolved identities
-    // encrypted across restarts; never interpret their receipt time as a range.
-    let position: Option<(i64,i64)> = db.query_row("SELECT m.stamp,m.id FROM messages m JOIN pending_reads p ON p.chat_id=m.chat_id AND (p.wire_id=m.wire_id OR (m.read_wire<>'' AND p.wire_id=m.read_wire)) WHERE m.chat_id=?1 AND m.outgoing=0 AND m.visible=1 AND (SELECT count(*) FROM messages x WHERE x.chat_id=m.chat_id AND (x.wire_id=p.wire_id OR (x.read_wire<>'' AND x.read_wire=p.wire_id)) AND x.outgoing=0 AND x.visible=1)=1 ORDER BY m.stamp DESC,m.id DESC LIMIT 1", [chat], |r| Ok((r.get(0)?,r.get(1)?))).optional()?;
+    // across restarts; never interpret their receipt time as a range.
+    let position: Option<(i64, i64)> = db
+        .query_row(READ_POSITION, [chat], |r| Ok((r.get(0)?, r.get(1)?)))
+        .optional()?;
     if let Some((stamp, row)) = position {
         advance(db, chat, stamp, row)?;
         recount(db, chat)?;
     }
-    db.execute("DELETE FROM pending_reads WHERE chat_id=?1 AND EXISTS(SELECT 1 FROM messages m WHERE m.chat_id=?1 AND m.visible=1 AND (m.wire_id=pending_reads.wire_id OR (m.read_wire<>'' AND m.read_wire=pending_reads.wire_id)))", [chat])?;
+    db.execute(CLEAR_RESOLVED_READS, [chat])?;
     Ok(())
 }
 pub(super) fn recount(db: &Connection, chat: i32) -> Result<()> {

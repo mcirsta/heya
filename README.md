@@ -644,6 +644,10 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 ```
 
+For optimized tests, use `cargo test --release --locked --config
+'profile.release.build-override.debug-assertions=true'` so Slint retains the
+element metadata needed by the layout assertions.
+
 Tests use synthetic data and temporary databases. They cover draft/send routing,
 history ordering/replay, alias and tombstone merging, interrupted sends, durable
 inbound hooks, receipt mapping, Slint callbacks/layout and encrypted storage.
@@ -714,6 +718,10 @@ build/test jobs running:
 ```sh
 HEYA_BENCHMARK_ARCHIVE=1 HEYA_TEST_RENDERER=winit-skia-opengl scripts/ui-offscreen.sh --ui-benchmark
 ```
+
+Add `HEYA_BENCHMARK_PENDING_READS=1` to include 200 unresolved phone read receipts
+in the large chat. This exercises read-state reconciliation on every arrival,
+including the twenty-message bursts, without reading or changing account data.
 
 It creates a disposable SQLCipher archive with 500 chats and a 10,000-message
 conversation, then uses the real messaging worker and coalesced Slint handoff.
