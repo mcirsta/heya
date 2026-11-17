@@ -50,7 +50,8 @@ export struct MessageRow {
     preview-domain: string,
     has-thumbnail: bool,
     thumbnail: image,
-    body-url: string,
+    has-links: bool,
+    linked-text: styled-text,
     actions: [MessageActionRow],
     has-audio: bool,
     has-document: bool,
@@ -102,6 +103,7 @@ export struct MessageTextSelection {
     anchor: int,
     cursor: int,
     focused: bool,
+    left: float, top: float, width: float, height: float,
 }
 
 export component MessageBubble inherits Rectangle {
@@ -113,10 +115,15 @@ export component MessageBubble inherits Rectangle {
     callback video-control(int,float);
     callback message-action(int,length,length);
     callback text-selection-changed(MessageTextSelection);
+    callback open-link(int);
     private property <MessageTextSelection> text-selection: {
         message: root.message.id, text: body.text,
         anchor: body.anchor-position-byte-offset, cursor: body.cursor-position-byte-offset,
         focused: body.has-focus && body.visible,
+        left: body.has-focus ? body.absolute-position.x / 1px : 0,
+        top: body.has-focus ? body.absolute-position.y / 1px : 0,
+        width: body.has-focus ? body.width / 1px : 0,
+        height: body.has-focus ? body.height / 1px : 0,
     };
     changed text-selection => { root.text-selection-changed(root.text-selection); }
     callback photo-activate(int);
@@ -344,14 +351,22 @@ export component MessageBubble inherits Rectangle {
             can-view:root.message.poll-can-view && root.actions-enabled;
             vote(index)=>{root.activate(-100-index);}results=>{root.activate(-44);}
         }
+        if root.message.has-links: link-body := StyledText {
+            visible: body.visible;
+            x: body.x; y: body.y; width: body.width; height: body.height;
+            text: root.message.linked-text;
+            default-font-size: root.body-size; default-color: Theme.text; link-color: Theme.link;
+        }
+        // Keep Slint's native selection, copy and wrapping for linked text too.
+        // This layer paints only the selection when StyledText supplies the glyphs.
         body := TextInput {
-            visible: root.message.body-url == "" && !root.photo-only && !root.video-only && !root.sticker-only && !root.document-only && !root.message.has-audio && !root.location-only && !root.message.has-poll && root.message.contact-count==0;
+            visible: !root.photo-only && !root.video-only && !root.sticker-only && !root.document-only && !root.message.has-audio && !root.location-only && !root.message.has-poll && root.message.contact-count==0;
             x: 10px;
             y: 6px + root.sender-height + root.metadata-height + root.preview-height + root.photo-space + root.document-space + root.location-space;
             width: parent.width - 20px - (root.inline-time ? root.footer-width + 8px : 0px);
             height: self.preferred-height;
             text: root.message.text;
-            color: Theme.text;
+            color: root.message.has-links ? transparent : Theme.text;
             font-size: root.body-size;
             read-only: true;
             wrap: word-wrap;
@@ -359,20 +374,11 @@ export component MessageBubble inherits Rectangle {
             selection-background-color: Theme.accent;
             selection-foreground-color: Theme.on-accent;
             accessible-label: root.message.sender + ": " + root.message.text;
-        }
-
-        if root.message.body-url != "": link-body := Rectangle {
-            x: body.x; y: body.y; width: body.width; height: body.height;
-            StyledText {
-                width: parent.width; height: parent.height;
-                text: @markdown("<u>\{root.message.text}</u>");
-                default-font-size: root.body-size; default-color: Theme.link;
-            }
-            ContentTarget {
-                x: 0px; y: 0px; width: parent.width; height: parent.height;
-                label: root.message.text;
-                activated => { root.activate(-2); }
-                copy => { root.activate(-3); }
+            key-pressed(event) => {
+                if event.text=="\n" && root.message.has-links && self.anchor-position-byte-offset==self.cursor-position-byte-offset {
+                    root.open-link(self.cursor-position-byte-offset);return accept;
+                }
+                return reject;
             }
         }
 

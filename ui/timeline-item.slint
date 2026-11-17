@@ -30,6 +30,7 @@ export component TimelineItem inherits Rectangle {
     callback video-control(int,int,float);
     callback message-action(int,int,length,length);
     callback text-selection-changed(MessageTextSelection);
+    callback open-link(int,int);
     in property <bool> actions-enabled;
     in property <bool> auto-download-photos: true;
     in property <bool> menu-open;
@@ -87,6 +88,7 @@ export component TimelineItem inherits Rectangle {
         viewport-bottom: root.viewport-bottom - root.before-bubble;
         message-action(action,x,y) => {root.message-action(root.message.id,action,x,y);}
         text-selection-changed(selection) => {root.text-selection-changed(selection);}
+        open-link(offset) => {root.open-link(root.message.id,offset);}
         audio-control(action,value) => {root.audio-control(root.message.id,action,value);}
         video-control(action,value) => {root.video-control(root.message.id,action,value);}
         activate(index) => { root.activate(root.message.id,index); }

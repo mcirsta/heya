@@ -12,6 +12,7 @@ pub(crate) const WHEEL_STEP: f32 = 120.;
 pub fn bind(ui: &AppWindow) {
     let mut pointer = None;
     let mut context_pressed = None;
+    let mut link_pressed = None;
     let mut shift = false;
     let weak = ui.as_weak();
     ui.window().on_winit_window_event(move |window, event| {
@@ -20,6 +21,9 @@ pub fn bind(ui: &AppWindow) {
                 shift = modifiers.state().shift_key();
             }
             event::WindowEvent::Focused(focused) => {
+                if !focused {
+                    link_pressed = None;
+                }
                 if let Some(ui) = weak.upgrade() {
                     ui.set_read_window_active(*focused);
                 }
@@ -39,6 +43,24 @@ pub fn bind(ui: &AppWindow) {
                 ..
             } => {
                 pointer = None;
+                link_pressed = None;
+            }
+            event::WindowEvent::PointerButton {
+                state,
+                position,
+                button: event::ButtonSource::Mouse(event::MouseButton::Left),
+                ..
+            } => {
+                if let Some(ui) = weak.upgrade() {
+                    let p = position.to_logical::<f32>(f64::from(window.scale_factor()));
+                    link_pointer(
+                        &ui,
+                        LogicalPosition::new(p.x, p.y),
+                        *state == event::ElementState::Pressed,
+                        &mut link_pressed,
+                    );
+                }
+                // Slint retains every press/move/release for native text selection.
             }
             event::WindowEvent::PointerButton {
                 state,
@@ -75,6 +97,38 @@ pub fn bind(ui: &AppWindow) {
         }
         EventResult::Propagate
     });
+}
+
+/// Activate a link only on a click, never while dragging/selecting its text.
+/// The read-only TextInput supplies the same UTF-8 position used for copying.
+pub(crate) fn link_pointer(
+    ui: &AppWindow,
+    p: LogicalPosition,
+    pressed: bool,
+    start: &mut Option<(i32, LogicalPosition)>,
+) {
+    if pressed {
+        *start = Some((ui.get_selected_id(), p));
+        return;
+    }
+    let Some((chat, down)) = start.take() else {
+        return;
+    };
+    let selected = ui.get_message_text_selection();
+    if chat == ui.get_selected_id()
+        && chat == ui.get_message_text_selection_chat()
+        && ui.invoke_context_allowed(p.x, p.y)
+        && (p.x - down.x).abs() < 4.
+        && (p.y - down.y).abs() < 4.
+        && selected.focused
+        && selected.anchor == selected.cursor
+        && p.x >= selected.left
+        && p.x < selected.left + selected.width
+        && p.y >= selected.top
+        && p.y < selected.top + selected.height
+    {
+        ui.invoke_open_message_link(selected.message, selected.cursor);
+    }
 }
 
 /// A normal wheel browses the horizontal filmstrip; Slint still owns its

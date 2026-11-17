@@ -322,9 +322,12 @@ guarantee complete history: WhatsApp controls the history supplied, and some
 SDK recovery events bypass the durability hook. Archive failures stop the
 connection. Failed history chunks remain encrypted for future recovery.
 
+HTTP/HTTPS links are highlighted within messages and captions, including multiple
+links. Click a link to open it; normal text selection and copying remain available.
+
 Received link previews display the sender-supplied thumbnail, title, description
-and domain in a native card. Clicking the card or a standalone URL opens the
-system browser; focus the link and press Ctrl+C to copy its address. Heya does
+and domain in a native card. Clicking the card opens the
+system browser; focus the card and press Ctrl+C to copy its address. Heya does
 not fetch websites to generate previews. Thumbnail decoding runs off the UI
 thread and only nearby messages keep decoded pictures.
 

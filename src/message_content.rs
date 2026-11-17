@@ -321,9 +321,46 @@ pub fn caption(value: &str, limit: usize) -> String {
 }
 
 pub fn first_link(text: &str) -> Option<String> {
-    text.split_whitespace().find_map(|word| {
-        web_url(word.trim_matches(|c| matches!(c, '<' | '>' | '"' | '(' | ')' | ',')))
-    })
+    links(text).next().map(|(_, url)| url)
+}
+
+/// Byte ranges refer to the original text, including Unicode and line breaks.
+pub fn links(text: &str) -> impl Iterator<Item = (std::ops::Range<usize>, String)> + '_ {
+    let mut offset = 0;
+    text.split_inclusive(char::is_whitespace)
+        .filter_map(move |part| {
+            let base = offset;
+            offset += part.len();
+            if !part.contains("://") {
+                return None;
+            }
+            let word = part
+                .trim()
+                .trim_start_matches(['<', '>', '"', '\'', '(', '[', '{']);
+            let mut end =
+                word.trim_end_matches(['.', ',', ';', ':', '!', '?', '<', '>', '"', '\'']);
+            // Keep balanced URL parentheses (e.g. Wikipedia), remove prose wrappers.
+            for (open, close) in [('(', ')'), ('[', ']'), ('{', '}')] {
+                let extra = end
+                    .matches(close)
+                    .count()
+                    .saturating_sub(end.matches(open).count());
+                for _ in 0..extra {
+                    if !end.ends_with(close) {
+                        break;
+                    }
+                    end = &end[..end.len() - 1];
+                }
+            }
+            let url = web_url(end)?;
+            let start =
+                base + part.len() - part.trim_start().len() + part.trim().len() - word.len();
+            Some((start..start + end.len(), url))
+        })
+}
+
+pub fn link_at(text: &str, offset: usize) -> Option<String> {
+    links(text).find_map(|(range, url)| range.contains(&offset).then_some(url))
 }
 
 pub fn action(label: Option<&str>, value: Option<&str>, kind: &str) -> Action {
@@ -347,6 +384,26 @@ pub fn action(label: Option<&str>, value: Option<&str>, kind: &str) -> Action {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn inline_links_keep_original_offsets_and_leave_prose_punctuation_out() {
+        let text = "Știință 🦀 (https://example.invalid/one).\nNext: [http://example.invalid/A_(B)], done.";
+        let found: Vec<_> = links(text).collect();
+        assert_eq!(found.len(), 2);
+        for ((range, url), expected) in found.iter().zip([
+            "https://example.invalid/one",
+            "http://example.invalid/A_(B)",
+        ]) {
+            assert_eq!(&text[range.clone()], expected);
+            assert_eq!(url, expected);
+            assert_eq!(link_at(text, range.start + 1).as_deref(), Some(expected));
+            assert_eq!(link_at(text, range.end), None);
+        }
+        assert!(links("Plain text; file:///tmp/a javascript:alert(1) https://user:pass@example.invalid https://example.invalid\\bad").next().is_none());
+        assert_eq!(
+            first_link(text).as_deref(),
+            Some("https://example.invalid/one")
+        );
+    }
     #[test]
     fn destinations_are_validated_independently_from_display_labels() {
         for bad in [

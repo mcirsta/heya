@@ -49,6 +49,16 @@ pub fn publish_images(ui: &AppWindow, snapshot: &crate::message_thumbnails::Snap
 pub fn bind_actions(ui: &AppWindow, runtime: &Runtime) {
     crate::presentation_shared_contacts::bind(ui);
     let (requests, mut pending) = mpsc::channel::<String>(8);
+    let links = requests.clone();
+    let weak = ui.as_weak();
+    ui.on_open_message_link(move |id, offset| {
+        let Some(ui) = weak.upgrade() else { return };
+        if let Some(url) = crate::presentation_actions::source_row(&ui, id)
+            .and_then(|row| message_content::link_at(&row.text, offset.max(0) as usize))
+        {
+            open_url(&ui, &links, &url);
+        }
+    });
     let weak = ui.as_weak();
     ui.on_activate_message(move |id, index| {
         let Some(ui) = weak.upgrade() else {
@@ -85,15 +95,7 @@ pub fn bind_actions(ui: &AppWindow, runtime: &Runtime) {
         };
         match target {
             Target::Copy(value) => ui.invoke_copy_value(value.into()),
-            Target::Url(value) => {
-                if let Some(url) = message_content::web_url(&value) {
-                    if requests.try_send(url).is_err() {
-                        ui.invoke_show_error("Opening links is busy. Please try again.".into());
-                    }
-                } else {
-                    ui.invoke_show_error("This link cannot be opened.".into());
-                }
-            }
+            Target::Url(value) => open_url(&ui, &requests, &value),
             Target::Unavailable => {
                 ui.invoke_show_error("This action is available on your phone.".into())
             }
@@ -113,4 +115,14 @@ pub fn bind_actions(ui: &AppWindow, runtime: &Runtime) {
             }
         }
     });
+}
+
+fn open_url(ui: &AppWindow, requests: &mpsc::Sender<String>, value: &str) {
+    if let Some(url) = message_content::web_url(value) {
+        if requests.try_send(url).is_err() {
+            ui.invoke_show_error("Opening links is busy. Please try again.".into());
+        }
+    } else {
+        ui.invoke_show_error("This link cannot be opened.".into());
+    }
 }

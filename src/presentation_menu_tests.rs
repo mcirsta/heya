@@ -225,7 +225,7 @@ pub(crate) fn check_ui() {
     demo.select(1);
     let mut view = demo.conversation();
     let mut message = view.messages[0].clone();
-    message.text = "Complete caption\nȘtiință 🦀\n第二行".into();
+    message.text = "Complete caption https://example.invalid\nȘtiință 🦀\n第二行".into();
     Arc::make_mut(&mut message.content).body = None;
     let id = message.id;
     view.messages = Arc::from([message]);
@@ -233,7 +233,10 @@ pub(crate) fn check_ui() {
     ui.invoke_layout_timeline();
     click(&ui, center(&element(&ui, "MessageBubble::menu-arrow")));
     click(&ui, center(&label(&ui, "Copy message")));
-    assert_eq!(ui.get_transcript(), "Complete caption\nȘtiință 🦀\n第二行");
+    assert_eq!(
+        ui.get_transcript(),
+        "Complete caption https://example.invalid\nȘtiință 🦀\n第二行"
+    );
     assert_eq!(ui.get_message_dialog(), 0);
     assert!(commands.borrow().is_empty());
     // Select the last line with the actual read-only TextInput, then use the
@@ -332,7 +335,10 @@ pub(crate) fn check_ui() {
             .any(|e| e.label == "Copy selection")
     );
     click(&ui, center(&label(&ui, "Copy message")));
-    assert_eq!(ui.get_transcript(), "Complete caption\nȘtiință 🦀\n第二行");
+    assert_eq!(
+        ui.get_transcript(),
+        "Complete caption https://example.invalid\nȘtiință 🦀\n第二行"
+    );
     assert!(commands.borrow().is_empty());
     // Quick reaction uses the captured source and the existing durable command.
     ui.invoke_message_action(id, 3, 790., 650.);

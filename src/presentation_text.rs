@@ -1,6 +1,40 @@
 //! Shared display rules; the original message and selection offsets stay intact.
 use unicode_segmentation::UnicodeSegmentation;
 
+/// Only URLs receive markup. Message text remains literal, including markdown,
+/// whitespace and line breaks, so the native selection layer uses identical offsets.
+pub fn linked_text(text: &str) -> Option<slint::StyledText> {
+    use std::fmt::Write;
+    fn literal(out: &mut String, text: &str) {
+        for c in text.chars() {
+            if c.is_whitespace() {
+                let _ = write!(out, "&#{};", c as u32);
+            } else {
+                if c.is_ascii_punctuation() {
+                    out.push('\\');
+                }
+                out.push(c);
+            }
+        }
+    }
+    let mut markup = String::new();
+    let mut cursor = 0;
+    for (range, url) in crate::message_content::links(text) {
+        literal(&mut markup, &text[cursor..range.start]);
+        markup.push('[');
+        literal(&mut markup, &text[range.clone()]);
+        markup.push_str("](<");
+        markup.push_str(&url.replace('&', "&amp;"));
+        markup.push_str(">)");
+        cursor = range.end;
+    }
+    if cursor == 0 {
+        return None;
+    }
+    literal(&mut markup, &text[cursor..]);
+    slint::StyledText::from_markdown(&markup).ok()
+}
+
 /// Match the reference's 2.4× body size for one to three complete emoji.
 /// Graphemes keep flags, skin tones and ZWJ sequences together. Whitespace is
 /// allowed, but text-presentation selectors and ordinary symbols stay text.
@@ -87,11 +121,134 @@ pub(crate) fn check_ui() {
         }
     }
     ui.hide().unwrap();
+    check_links_ui();
+}
+
+#[cfg(test)]
+fn check_links_ui() {
+    use crate::{AppWindow, Theme, fixtures, presentation, presentation_scroll::link_pointer};
+    use i_slint_backend_testing::ElementHandle;
+    use slint::{
+        ComponentHandle, LogicalPosition,
+        platform::{PointerEventButton, WindowEvent},
+    };
+    use std::{cell::RefCell, rc::Rc, sync::Arc, time::Duration};
+    std::thread::spawn(|| {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = AppWindow::new().unwrap();
+        ui.set_demo_mode(true);
+        ui.set_show_conversation(true);
+        let mut demo = fixtures::demo();
+        demo.select(1);
+        let mut view = demo.conversation();
+        let mut message = view.messages[0].clone();
+        let text =
+            "Go: https://example.invalid/one\nThen http://example.invalid/two\nȘtiință 🦀 *literal*.";
+        message.text = text.into();
+        message.content = Default::default();
+        view.messages = Arc::from([message]);
+        let opened = Rc::new(RefCell::new(Vec::new()));
+        ui.on_open_message_link({
+            let opened = opened.clone();
+            move |_, offset| {
+                if let Some(url) = crate::message_content::link_at(text, offset as usize) {
+                    opened.borrow_mut().push(url);
+                }
+            }
+        });
+        ui.show().unwrap();
+        for dark in [false, true] {
+            ui.global::<Theme>().set_dark(dark);
+            for width in [1200., 520., 800.] {
+                ui.window().set_size(slint::LogicalSize::new(width, 800.));
+                presentation::conversation(&ui, &view, true);
+                ui.invoke_layout_timeline();
+                let body = ElementHandle::find_by_element_id(&ui, "MessageBubble::body")
+                    .next()
+                    .unwrap();
+                let styled = ElementHandle::find_by_element_id(&ui, "MessageBubble::link-body")
+                    .next()
+                    .unwrap();
+                assert_eq!(body.absolute_position(), styled.absolute_position());
+                assert_eq!(body.size(), styled.size());
+                let p = body.absolute_position();
+                let mut down = None;
+                for (x, link) in [(65., true), (2., false)] {
+                    i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+                    let hit = LogicalPosition::new(p.x + x, p.y + 6.);
+                    link_pointer(&ui, hit, true, &mut down);
+                    ui.window().dispatch_event(WindowEvent::PointerPressed {
+                        position: hit,
+                        button: PointerEventButton::Left,
+                    });
+                    slint::platform::update_timers_and_animations();
+                    link_pointer(&ui, hit, false, &mut down);
+                    ui.window().dispatch_event(WindowEvent::PointerReleased {
+                        position: hit,
+                        button: PointerEventButton::Left,
+                    });
+                    let urls = std::mem::take(&mut *opened.borrow_mut());
+                    assert_eq!(
+                        urls,
+                        if link {
+                            vec!["https://example.invalid/one"]
+                        } else {
+                            vec![]
+                        }
+                    );
+                }
+                // Selecting across a URL keeps native selection and never opens it.
+                i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+                let from = LogicalPosition::new(p.x + 2., p.y + 6.);
+                let to = LogicalPosition::new(p.x + 100., p.y + 6.);
+                link_pointer(&ui, from, true, &mut down);
+                ui.window().dispatch_event(WindowEvent::PointerPressed {
+                    position: from,
+                    button: PointerEventButton::Left,
+                });
+                ui.window()
+                    .dispatch_event(WindowEvent::PointerMoved { position: to });
+                slint::platform::update_timers_and_animations();
+                link_pointer(&ui, to, false, &mut down);
+                ui.window().dispatch_event(WindowEvent::PointerReleased {
+                    position: to,
+                    button: PointerEventButton::Left,
+                });
+                let selected = ui.get_message_text_selection();
+                assert_eq!(selected.text, text);
+                assert_ne!(selected.anchor, selected.cursor);
+                assert!(opened.borrow().is_empty());
+            }
+        }
+        ui.hide().unwrap();
+    })
+    .join()
+    .unwrap();
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn link_styling_preserves_literal_text_and_whitespace() {
+        for text in [
+            "Before https://example.invalid/one and http://example.invalid/two after.",
+            "  Știință 🦀\n\nhttps://example.invalid/é?q=a&b=2\n\t第二行  ",
+            "# *literal* <u>text</u> [not a link](javascript:bad) &#32; https://example.invalid/A_(B)",
+        ] {
+            let styled = linked_text(text).expect("inline URLs must be styled");
+            assert_eq!(i_slint_core::styled_text::get_raw_text(&styled), text);
+        }
+        assert_eq!(linked_text("Plain text, no link"), None);
+        assert_eq!(
+            linked_text("Visit https://example.invalid/a now").unwrap(),
+            slint::StyledText::from_markdown(
+                "Visit [https://example.invalid/a](https://example.invalid/a) now"
+            )
+            .unwrap()
+        );
+    }
 
     /// Real shaper/font routing, without a GUI or a renderer. These fonts are
     /// development prerequisites on Linux; other platforms use native fonts.

@@ -83,7 +83,10 @@ pub(crate) fn message_row(
             .unwrap_or(&message.text)
             .to_owned(),
     };
+    let linked_text = crate::presentation_text::linked_text(&text);
     MessageRow {
+        has_links: linked_text.is_some(),
+        linked_text: linked_text.unwrap_or_default(),
         long_text: text.len() > 4096,
         large_emoji: crate::presentation_text::large_emoji(&text),
         wire_id: message.content.metadata.wire.as_str().into(),
@@ -371,11 +374,6 @@ pub(crate) fn message_row(
         photo_status: crate::photos::State::Idle
             .image_label(message.content.sticker.is_some())
             .into(),
-        body_url: crate::message_content::web_url(
-            message.content.body.as_deref().unwrap_or(&message.text),
-        )
-        .unwrap_or_default()
-        .into(),
         preview_url: message
             .content
             .preview

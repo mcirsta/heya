@@ -161,10 +161,6 @@ pub(crate) fn check_ui() {
         Target::Copy("DEMO-42".into())
     );
     assert_eq!(
-        presentation::timeline::action(&ui, 20001, -3),
-        Target::Copy("https://example.invalid/community/news".into())
-    );
-    assert_eq!(
         presentation::timeline::action(&ui, 20002, 99),
         Target::Unavailable
     );

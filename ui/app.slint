@@ -560,6 +560,7 @@ export component AppWindow inherits Window {
     callback download-message(int,int);
     callback download-control(int);
     callback activate-message(int,int);
+    callback open-message-link(int,int);
     callback request-message-images();
     public function copy-value(value: string) {
         root.transcript = value;
@@ -1263,6 +1264,7 @@ export component AppWindow inherits Window {
                                             root.message-text-selection-chat=root.selected-id;
                                         }
                                     }
+                                    open-link(id,offset) => {root.open-message-link(id,offset);}
                                     audio-control(id,action,value) => {root.audio-control(id,action,value);}
                                     video-control(id,action,value) => {root.video-control(id,action,value);}
                                     activate(id,index) => { if index == -7 {root.navigate-message(id,true);} else if index == -5 { root.activate-photo(id); } else { root.activate-message(id,index); } }

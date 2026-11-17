@@ -724,7 +724,7 @@ pub fn content_samples() -> (
     let preview=Content { preview:Some(Preview {url:"https://example.invalid/community/news".into(),title:"Community news · a small shared project".into(),description:"A synthetic preview supplied with the message. It works without fetching the website.".into(),has_thumbnail:true}),..Default::default() };
     let business = Content {
         body: Some(
-            "Your sample parcel is ready.\n\nUse code DEMO-42 at the collection point.".into(),
+            "Your sample parcel is ready. Track it at https://example.invalid/parcel.\n\nUse code DEMO-42 at the collection point.".into(),
         ),
         actions: vec![
             action(

@@ -785,7 +785,8 @@ fn same_row(a: &TimelineRow, b: &TimelineRow) -> bool {
         && am.preview_title == bm.preview_title
         && am.preview_description == bm.preview_description
         && am.preview_domain == bm.preview_domain
-        && am.body_url == bm.body_url
+        && am.has_links == bm.has_links
+        && am.linked_text == bm.linked_text
         && am.actions == bm.actions
         && am.has_thumbnail == bm.has_thumbnail
         && am.has_attachment == bm.has_attachment
@@ -1252,17 +1253,6 @@ pub(crate) fn action(ui: &AppWindow, id: i32, index: i32) -> crate::message_cont
                     }
                 })
                 .unwrap_or_default(),
-            -2 | -3 => crate::message_content::web_url(
-                message.content.body.as_deref().unwrap_or(&message.text),
-            )
-            .map(|url| {
-                if index == -2 {
-                    Target::Url(url)
-                } else {
-                    Target::Copy(url)
-                }
-            })
-            .unwrap_or_default(),
             n if n >= 0 => message
                 .content
                 .actions
