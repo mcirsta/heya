@@ -1,21 +1,26 @@
 import { ListView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { IconButton } from "components.slint";
-export struct MessageSearchHit {id:int,text:string,time:string}
+export struct MessageSearchHit {id:int,chat:int,title:string,text:string,time:string}
 export component MessageSearch inherits Rectangle {
     in property <[MessageSearchHit]> hits;
     in property <string> status;
     in property <bool> busy;
+    in property <bool> all-chats;
+    in-out property <string> query;
     callback search(string);
-    callback choose(int);
+    callback choose(int,int);
     callback close();
     background:Theme.panel;
+    // Empty space in the sidebar search must not click the contact list below it.
+    TouchArea {}
     FocusScope {
         width:parent.width;height:parent.height;
         init=>{field.focus();}
         key-pressed(event)=>{if event.text==Key.Escape {root.close();return accept;} return reject;}
         VerticalLayout {
             padding:10px;spacing:6px;
+            if root.all-chats: Text {height:32px;text:@tr("Search messages");color:Theme.text;font-size:18px;font-weight:600;}
             HorizontalLayout {
                 height:34px;spacing:8px;
                 Rectangle {
@@ -23,24 +28,26 @@ export component MessageSearch inherits Rectangle {
                     Text {x:10px;height:parent.height;text:@tr("Search saved messages");visible:field.text=="";color:Theme.dim;vertical-alignment:center;}
                     field:=TextInput {
                         x:10px;width:parent.width - 20px;height:parent.height;single-line:true;
-                        color:Theme.text;vertical-alignment:center;accessible-label:@tr("Search saved messages in this conversation");
+                        text <=> root.query;
+                        color:Theme.text;vertical-alignment:center;accessible-label:root.all-chats ? @tr("Search messages across all chats") : @tr("Search saved messages in this conversation");
                         edited=>{root.search(self.text);}
-                        accepted=>{if !root.busy && root.hits.length>0 {root.choose(root.hits[0].id);}}
+                        accepted=>{if !root.busy && root.hits.length>0 {root.choose(root.hits[0].chat,root.hits[0].id);}}
                     }
                 }
                 IconButton {icon:@image-url("icons/close.svg");label:@tr("Close message search");activated=>{root.close();}}
             }
-            Text {height:20px;text:root.status;color:Theme.secondary;font-size:12px;overflow:elide;}
+            Text {height:root.all-chats ? 36px : 20px;text:root.status;color:Theme.secondary;font-size:12px;wrap:word-wrap;overflow:elide;}
             ListView {
                 for hit in root.hits: Rectangle {
-                    height:52px;background:area.has-hover ? Theme.hover : transparent;
-                    Text {x:8px;y:3px;width:parent.width - 16px;height:24px;text:hit.text;color:Theme.text;overflow:elide;}
-                    Text {x:8px;y:29px;width:parent.width - 16px;height:17px;text:hit.time;color:Theme.secondary;font-size:11px;overflow:elide;}
+                    height:root.all-chats ? 80px : 52px;background:area.has-hover ? Theme.hover : transparent;
+                    if root.all-chats: Text {x:8px;y:4px;width:parent.width - 16px;height:24px;text:hit.title;color:Theme.text;font-weight:600;overflow:elide;}
+                    Text {x:8px;y:root.all-chats ? 29px : 3px;width:parent.width - 16px;height:24px;text:hit.text;color:Theme.text;overflow:elide;}
+                    Text {x:8px;y:root.all-chats ? 55px : 29px;width:parent.width - 16px;height:17px;text:hit.time;color:Theme.secondary;font-size:11px;overflow:elide;}
                     area:=TouchArea {
                         enabled:!root.busy;mouse-cursor:pointer;
-                        accessible-role:button;accessible-label:hit.text + " " + hit.time;
-                        accessible-action-default=>{root.choose(hit.id);}
-                        clicked=>{root.choose(hit.id);}
+                        accessible-role:button;accessible-label:(root.all-chats ? hit.title+" · " : "") + hit.text + " " + hit.time;
+                        accessible-action-default=>{root.choose(hit.chat,hit.id);}
+                        clicked=>{root.choose(hit.chat,hit.id);}
                     }
                 }
             }

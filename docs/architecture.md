@@ -362,7 +362,16 @@ Maintain separate files for upstream session state and Heya's archive. Heya owns
 only the archive schema. Recommended tables are `chats`, `contacts`,
 `identity_aliases`, `messages`, `reactions`, `receipts`, `media`, `drafts`,
 `outbox`, `history_chunks` and `schema_migrations`, with an FTS index over
-searchable message content. Verify FTS support in the chosen SQLCipher build.
+searchable message content. The bundled SQLCipher includes FTS5. Schema 23 uses
+an external-content `message_words` index with the `unicode61` tokenizer and
+secure deletion. Triggers maintain new messages, edits and removals in the same
+transaction; the messaging worker backfills pre-existing IDs in batches of 128,
+with a durable cursor. No separate search service or startup-wide rebuild is
+needed. Global search tokenizes literal input with the same tokenizer and joins
+the words with AND. `ORDER BY message_words.rowid DESC LIMIT 100` uses FTS5's
+reverse traversal without sorting all matches; availability and chat-lock checks
+are applied before the limit. Search result snapshots reuse the current chat
+view, and stale query responses are rejected using the existing request number.
 
 The inbound identity starts with `(account, chat, sender, message_id)`; message
 IDs alone are not globally unique. Resolve PN/LID aliases explicitly while

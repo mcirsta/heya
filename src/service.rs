@@ -50,13 +50,73 @@ pub async fn run(
 ) {
     let mut return_count = None;
     while let Some(command) = commands.recv().await {
+        let command = if let Command::Navigation(crate::message_navigation::Command::Open {
+            chat,
+            message,
+            previous,
+            draft,
+            request,
+            revision,
+            ..
+        }) = command
+        {
+            if !state.chats.iter().any(|c| {
+                c.id == chat
+                    && c.messages
+                        .iter()
+                        .any(|m| m.id == message && !m.content.unavailable)
+            }) {
+                if !publish(Update::Navigation {
+                    view: state.conversation(),
+                    jump: crate::message_navigation::Jump {
+                        request,
+                        ..Default::default()
+                    },
+                }) {
+                    break;
+                }
+                continue;
+            }
+            state.set_draft(previous, draft);
+            if state.selected != chat {
+                state.select(chat);
+                return_count = None;
+            }
+            if !publish(Update::Sidebar(state.sidebar())) {
+                break;
+            }
+            Command::Navigation(crate::message_navigation::Command::Navigate {
+                chat,
+                message,
+                quote: false,
+                request,
+                revision,
+            })
+        } else {
+            command
+        };
         let update = match command {
+            Command::Navigation(crate::message_navigation::Command::Open { .. }) => unreachable!(),
             Command::Navigation(crate::message_navigation::Command::Search {
                 chat,
                 query,
                 request,
                 ..
             }) => {
+                if chat == 0 {
+                    let search = demo_search(&state, &query, request).unwrap_or_else(|_| {
+                        crate::message_navigation::Search {
+                            query,
+                            request,
+                            error: "Search is unavailable.".into(),
+                            ..Default::default()
+                        }
+                    });
+                    if !publish(Update::Search(search)) {
+                        break;
+                    }
+                    continue;
+                }
                 if chat != state.selected {
                     continue;
                 }
@@ -86,6 +146,8 @@ pub async fn run(
                         }
                         search.hits.push(crate::message_navigation::Hit {
                             id: message.id,
+                            chat,
+                            title: String::new(),
                             text: crate::domain::single_line_summary(&message.text),
                             time: message.time.clone(),
                         });
@@ -212,4 +274,49 @@ pub async fn run(
             break;
         }
     }
+}
+
+// The synthetic demo uses the same tokenizer and query semantics on its worker.
+// It has no persistent archive; rebuilding here also includes demo edits/sends.
+fn demo_search(
+    state: &DemoState,
+    query: &str,
+    request: i32,
+) -> rusqlite::Result<crate::message_navigation::Search> {
+    let mut result = crate::message_navigation::Search {
+        query: query.into(),
+        request,
+        ..Default::default()
+    };
+    if query.trim().is_empty() {
+        return Ok(result);
+    }
+    let mut db = rusqlite::Connection::open_in_memory()?;
+    db.execute_batch("PRAGMA temp_store=MEMORY; CREATE VIRTUAL TABLE words USING fts5(body,chat UNINDEXED,title UNINDEXED,time UNINDEXED,tokenize='unicode61 remove_diacritics 2');")?;
+    let terms = crate::message_navigation::word_query(&db, query)?;
+    if terms.is_empty() {
+        return Ok(result);
+    }
+    let tx = db.transaction()?;
+    {
+        let mut insert =
+            tx.prepare("INSERT INTO words(rowid,body,chat,title,time) VALUES(?1,?2,?3,?4,?5)")?;
+        for chat in &state.chats {
+            for message in chat.messages.iter().filter(|m| !m.content.unavailable) {
+                insert.execute(rusqlite::params![
+                    message.id,
+                    message.text,
+                    chat.id,
+                    chat.title,
+                    message.time
+                ])?;
+            }
+        }
+    }
+    tx.commit()?;
+    result.hits=db.prepare("SELECT rowid,body,chat,title,time FROM words WHERE words MATCH ?1 ORDER BY rowid DESC LIMIT 100")?
+        .query_map([terms],|r|Ok(crate::message_navigation::Hit {id:r.get(0)?,text:crate::domain::single_line_summary(&r.get::<_,String>(1)?),chat:r.get(2)?,title:r.get(3)?,time:r.get(4)?}))?
+        .collect::<rusqlite::Result<_>>()?;
+    result.more = result.hits.len() == 100;
+    Ok(result)
 }

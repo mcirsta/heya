@@ -11,6 +11,14 @@ pub(crate) fn fixture() -> (tempfile::TempDir, Archive) {
     let db = Archive::open(files, KEY).unwrap();
     (temp, db)
 }
+/// Downgrade fixtures that start from a current archive must remove newer tables.
+pub(crate) fn remove_search_schema(db: &Connection) -> Result<()> {
+    db.execute_batch(
+        "DROP TRIGGER message_words_insert; DROP TRIGGER message_words_update;
+        DROP TRIGGER message_words_delete; DROP TABLE message_words; DROP TABLE search_progress;",
+    )?;
+    Ok(())
+}
 pub(crate) fn record(id: &str) -> Record {
     Record {
         chat: PN.into(),

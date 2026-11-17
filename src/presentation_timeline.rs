@@ -1360,6 +1360,7 @@ pub(crate) fn navigate(ui: &AppWindow, message: i32, returning: bool) -> bool {
     let found = Cell::new(false);
     with(ui, |model| {
         let mut state = model.state.borrow_mut();
+        let no_return_anchor = returning && state.return_anchor.is_none();
         let target = if returning {
             state.return_anchor.take()
         } else {
@@ -1391,6 +1392,8 @@ pub(crate) fn navigate(ui: &AppWindow, message: i32, returning: bool) -> bool {
             // Expired/deleted anchors have no exact position to restore.
             state.bottom = true;
             state.restore((0, 0.));
+            // Opening a search result in another chat starts without an anchor.
+            found.set(no_return_anchor);
         }
         drop(state);
         model.layout(ui, false);

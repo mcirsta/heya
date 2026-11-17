@@ -4,7 +4,7 @@ use crate::{
     AppWindow, live_presentation, message_navigation::Command, messaging::Snapshot,
     presentation::timeline,
 };
-use slint::{ComponentHandle, ModelRc, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::rc::Rc;
 use tokio::sync::mpsc;
 
@@ -32,14 +32,22 @@ pub(crate) fn bind(ui: &AppWindow, submit: impl Fn(&AppWindow, Command) -> bool 
             ui.set_message_search_busy(!query.trim().is_empty());
             ui.set_message_search_status(
                 if query.trim().is_empty() {
-                    "Search this conversation’s saved history"
+                    if ui.get_message_search_all() {
+                        "Whole words · all words must match"
+                    } else {
+                        "Search this conversation’s saved history"
+                    }
                 } else {
                     "Searching…"
                 }
                 .into(),
             );
             let command = Command::Search {
-                chat: ui.get_selected_id(),
+                chat: if ui.get_message_search_all() {
+                    0
+                } else {
+                    ui.get_selected_id()
+                },
                 query: query.into(),
                 request,
                 revision: ui.get_live_revision(),
@@ -53,6 +61,7 @@ pub(crate) fn bind(ui: &AppWindow, submit: impl Fn(&AppWindow, Command) -> bool 
                     std::time::Duration::from_millis(250),
                     move || {
                         if let Some(ui) = weak.upgrade()
+                            && ui.get_message_search_request() == request
                             && let Some(command) = command.take()
                             && !submit(&ui, command)
                         {
@@ -65,6 +74,37 @@ pub(crate) fn bind(ui: &AppWindow, submit: impl Fn(&AppWindow, Command) -> bool 
                 );
             } else {
                 submit(&ui, command);
+            }
+        }
+    });
+    ui.on_open_search_result({
+        let weak = ui.as_weak();
+        let submit = submit.clone();
+        move |chat, message| {
+            let Some(ui) = weak.upgrade() else { return };
+            if ui.get_navigation_request() != ui.get_navigation_shown() {
+                return;
+            }
+            let request = ui.get_navigation_request().wrapping_add(1).max(1);
+            let revision = ui.get_live_revision().wrapping_add(1);
+            if submit(
+                &ui,
+                Command::Open {
+                    chat,
+                    message,
+                    previous: ui.get_selected_id(),
+                    draft: ui.get_draft().into(),
+                    draft_version: ui.get_draft_revision(),
+                    request,
+                    revision,
+                },
+            ) {
+                if chat == ui.get_selected_id() && !ui.get_browsing_history() {
+                    timeline::save_position(&ui);
+                }
+                ui.set_navigation_request(request);
+                ui.set_live_revision(revision);
+                ui.invoke_reveal_chat();
             }
         }
     });
@@ -102,34 +142,7 @@ pub(crate) fn prepare(ui: &AppWindow, snapshot: &Snapshot) {
     }
 }
 pub(crate) fn publish(ui: &AppWindow, snapshot: &Snapshot) {
-    let search = &snapshot.search;
-    if ui.get_message_search_open()
-        && search.chat == ui.get_selected_id()
-        && search.request == ui.get_message_search_request()
-        && ui.get_message_search_query() == search.query
-    {
-        ui.set_message_search_busy(false);
-        ui.set_message_search_hits(ModelRc::new(VecModel::from(
-            search
-                .hits
-                .iter()
-                .map(|h| MessageSearchHit {
-                    id: h.id,
-                    text: h.text.clone().into(),
-                    time: h.time.clone().into(),
-                })
-                .collect::<Vec<_>>(),
-        )));
-        ui.set_message_search_status(if search.query.trim().is_empty() {
-            "Search this conversation’s saved history".into()
-        } else if search.more {
-            "Showing the newest 100 matches · refine your search".into()
-        } else if search.hits.is_empty() {
-            "No matches in saved history".into()
-        } else {
-            format!("{} matches in saved history", search.hits.len()).into()
-        });
-    }
+    publish_search(ui, &snapshot.search);
     let jump = snapshot.jump;
     if jump.request == ui.get_navigation_request() && jump.request != ui.get_navigation_shown() {
         if (jump.message != 0 || jump.returning)
@@ -141,6 +154,53 @@ pub(crate) fn publish(ui: &AppWindow, snapshot: &Snapshot) {
         }
         ui.set_highlighted_message(timeline::display_id(ui, jump.message));
         ui.set_navigation_shown(jump.request);
+    }
+}
+
+pub(crate) fn publish_search(ui: &AppWindow, search: &crate::message_navigation::Search) {
+    if ui.get_message_search_open()
+        && search.chat
+            == if ui.get_message_search_all() {
+                0
+            } else {
+                ui.get_selected_id()
+            }
+        && search.request == ui.get_message_search_request()
+        && ui.get_message_search_query() == search.query
+    {
+        ui.set_message_search_busy(search.indexing);
+        let rows = search
+            .hits
+            .iter()
+            .map(|h| MessageSearchHit {
+                id: h.id,
+                chat: h.chat,
+                title: h.title.clone().into(),
+                text: h.text.clone().into(),
+                time: h.time.clone().into(),
+            })
+            .collect::<Vec<_>>();
+        if !ui.get_message_search_hits().iter().eq(rows.iter().cloned()) {
+            ui.set_message_search_hits(ModelRc::new(VecModel::from(rows)));
+        }
+        ui.set_message_search_status(if !search.error.is_empty() {
+            search.error.as_str().into()
+        } else if search.query.trim().is_empty() {
+            if ui.get_message_search_all() {
+                "Whole words · all words must match"
+            } else {
+                "Search this conversation’s saved history"
+            }
+            .into()
+        } else if search.indexing {
+            "Preparing saved history for search…".into()
+        } else if search.more {
+            "Showing 100 matches · add words to narrow your search".into()
+        } else if search.hits.is_empty() {
+            "No matches in saved history".into()
+        } else {
+            format!("{} matches in saved history", search.hits.len()).into()
+        });
     }
 }
 
@@ -258,10 +318,13 @@ pub(crate) fn check_ui() {
             query: "日本語".into(),
             hits: vec![crate::message_navigation::Hit {
                 id: message,
+                chat: ui.get_selected_id(),
+                title: String::new(),
                 text: "日本語".into(),
                 time: "12:00".into(),
             }],
             more: false,
+            ..Default::default()
         },
         ..Snapshot::empty()
     };
@@ -285,5 +348,130 @@ pub(crate) fn check_ui() {
     crate::presentation::conversation(&ui, &state.conversation(), true);
     assert_eq!(ui.get_navigation_request(), ui.get_navigation_shown());
     assert!(!ui.get_message_search_open());
+    ui.hide().unwrap();
+    check_global_search_ui();
+}
+
+#[cfg(test)]
+fn check_global_search_ui() {
+    use crate::message_navigation::{Hit, Jump, Search};
+    use i_slint_backend_testing::ElementHandle;
+    let ui = AppWindow::new().unwrap();
+    ui.set_live_chat_view(true);
+    ui.window().set_size(slint::LogicalSize::new(1200., 800.));
+    let mut state = crate::fixtures::demo();
+    crate::presentation::conversation(&ui, &state.conversation(), true);
+    ui.set_draft("Keep this draft".into());
+    ui.show().unwrap();
+    let (tx, mut rx) = mpsc::channel(1);
+    bind_live(&ui, tx);
+    ElementHandle::find_by_accessible_label(&ui, "Search in all chats")
+        .next()
+        .unwrap()
+        .invoke_accessible_default_action();
+    assert!(ui.get_message_search_all() && ui.get_message_search_open());
+    assert!(matches!(
+        rx.try_recv().unwrap(),
+        crate::messaging::Command::Navigation(Command::Search { chat: 0, .. })
+    ));
+    ui.set_message_search_query("meeting".into());
+    ui.invoke_search_messages("meeting".into());
+    let old = ui.get_message_search_request();
+    ui.set_message_search_query("meeting project".into());
+    ui.invoke_search_messages("meeting project".into());
+    // This aggregate UI test uses the system-time testing backend.
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    slint::platform::update_timers_and_animations();
+    let crate::messaging::Command::Navigation(Command::Search { request, query, .. }) =
+        rx.try_recv().unwrap()
+    else {
+        panic!("global search expected")
+    };
+    assert_eq!(query, "meeting project");
+    assert!(rx.try_recv().is_err(), "superseded input is not submitted");
+    let mut search = Search {
+        request: old,
+        query: "meeting".into(),
+        hits: vec![Hit {
+            id: 1,
+            chat: 2,
+            title: "Other chat".into(),
+            text: "A meeting for the project".into(),
+            time: "12:00".into(),
+        }],
+        ..Default::default()
+    };
+    publish_search(&ui, &search);
+    assert_eq!(ui.get_message_search_hits().row_count(), 0);
+    search.request = request;
+    search.query = query;
+    publish_search(&ui, &search);
+    assert_eq!(ui.get_message_search_hits().row_count(), 1);
+    let model = ui.get_message_search_hits();
+    publish_search(&ui, &search);
+    assert_eq!(
+        model,
+        ui.get_message_search_hits(),
+        "unchanged results reuse their model"
+    );
+    state.select(2);
+    let view = state.conversation();
+    let target = view.messages[0].id;
+    ui.invoke_open_search_result(2, target);
+    ui.invoke_open_search_result(2, target);
+    let crate::messaging::Command::Navigation(Command::Open { request, draft, .. }) =
+        rx.try_recv().unwrap()
+    else {
+        panic!("open result expected")
+    };
+    assert_eq!(draft, "Keep this draft");
+    assert!(
+        rx.try_recv().is_err(),
+        "pending navigation absorbs double clicks"
+    );
+    let snapshot = Snapshot {
+        search: search.clone(),
+        jump: Jump {
+            request,
+            message: target,
+            browsing: true,
+            ..Default::default()
+        },
+        ..Snapshot::empty()
+    };
+    prepare(&ui, &snapshot);
+    crate::presentation::conversation(&ui, &view, true);
+    publish(&ui, &snapshot);
+    assert_eq!(ui.get_selected_id(), 2);
+    assert!(ui.get_message_search_open());
+    assert_eq!(ui.get_message_search_query(), "meeting project");
+    assert_eq!(ui.get_navigation_shown(), request);
+    assert_eq!(ui.get_highlighted_message(), target);
+    for width in [1200., 620., 360.] {
+        ui.window().set_size(slint::LogicalSize::new(width, 800.));
+        ui.set_show_conversation(false);
+        let field =
+            ElementHandle::find_by_accessible_label(&ui, "Search messages across all chats")
+                .next()
+                .unwrap();
+        assert!(field.size().width > 100.);
+        assert!(field.absolute_position().x >= 0.);
+        assert!(field.absolute_position().x + field.size().width <= width);
+    }
+    search.error = "Storage is unavailable".into();
+    search.hits.clear();
+    publish_search(&ui, &search);
+    assert!(!ui.get_message_search_busy());
+    assert_eq!(ui.get_message_search_status(), "Storage is unavailable");
+    ui.invoke_close_message_search();
+    assert!(!ui.get_message_search_open());
+    // The close command occupies the one-slot queue. A rejected jump must not
+    // advance the navigation gate or discard the current draft.
+    let request = ui.get_navigation_request();
+    let draft = ui.get_draft();
+    ui.invoke_open_search_result(2, target);
+    assert_eq!(ui.get_navigation_request(), request);
+    assert_eq!(ui.get_draft(), draft);
+    assert!(!ui.get_error_message().is_empty());
     ui.hide().unwrap();
 }

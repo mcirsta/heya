@@ -61,6 +61,8 @@ mod photo_groups;
 mod photos;
 #[path = "archive_repair.rs"]
 mod repair;
+#[path = "archive_search.rs"]
+mod search;
 #[path = "archive_timeline.rs"]
 mod timeline;
 #[path = "archive_video.rs"]
@@ -185,7 +187,7 @@ impl Archive {
         db.busy_timeout(Duration::from_secs(5))?;
         db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA secure_delete=ON; PRAGMA temp_store=MEMORY;")?;
         let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if version > 22 {
+        if version > 23 {
             return Err(Error::Database);
         }
         if version == 0 {
@@ -322,6 +324,12 @@ impl Archive {
             let tx = db.transaction()?;
             tx.execute_batch(include_str!("archive_polls.sql"))?;
             tx.pragma_update(None, "user_version", 22)?;
+            tx.commit()?;
+        }
+        if version < 23 {
+            let tx = db.transaction()?;
+            tx.execute_batch(include_str!("archive_search.sql"))?;
+            tx.pragma_update(None, "user_version", 23)?;
             tx.commit()?;
         }
         // Never resend something that may have reached the network before a crash.

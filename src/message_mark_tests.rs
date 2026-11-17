@@ -205,7 +205,8 @@ fn migrating_existing_controls_keeps_old_payloads_and_adds_marker_controls() {
     db.blocking(|c| {
         c.execute_batch("DROP TABLE message_marks; DROP TABLE message_controls;")?;
         c.execute_batch(include_str!("archive_controls.sql"))?;
-        c.execute_batch("INSERT INTO message_controls VALUES('old-edit','edit','original','#self',1,100,'Keep this edit',200,0,0); DROP INDEX messages_read_wire; ALTER TABLE messages DROP COLUMN read_wire; ALTER TABLE outgoing_reads DROP COLUMN keys; DROP TABLE IF EXISTS poll_events; PRAGMA user_version=18;")?;
+        crate::archive::tests::remove_search_schema(c)?;
+            c.execute_batch("INSERT INTO message_controls VALUES('old-edit','edit','original','#self',1,100,'Keep this edit',200,0,0); DROP INDEX messages_read_wire; ALTER TABLE messages DROP COLUMN read_wire; ALTER TABLE outgoing_reads DROP COLUMN keys; DROP TABLE IF EXISTS poll_events; PRAGMA user_version=18;")?;
         Ok(())
     }).unwrap();
     drop(db);
@@ -216,7 +217,7 @@ fn migrating_existing_controls_keeps_old_payloads_and_adds_marker_controls() {
         assert_eq!(control.text, "Keep this edit");
         assert_eq!(
             c.pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))?,
-            22
+            23
         );
         Ok(())
     })

@@ -190,12 +190,18 @@ that reports no more accessible history stops further requests. Navigation,
 disconnect and close cancel pending request work; late replies still import
 safely. The owner confirmed older messages loading from the phone on 17 October
 2026. Recovery across phone/network failures still needs deliberate live checks.
-Chat search matches the displayed chat name (or number for unnamed chats).
+**Filter contacts** matches chat/contact names and phone numbers. The search
+button beside **Chats** searches messages across all saved chats, including
+archived chats. It matches whole words, ignoring case and accents; multiple words
+must all occur in the same message. Results are capped at 100, in descending local
+message ID order. Add words to narrow the results. Selecting a result opens that
+message while keeping your draft and search results. Existing history is indexed
+in small, resumable batches; locked chats and unavailable messages are excluded.
 The conversation header’s search button searches saved message text and captions,
 including older cached messages. It shows the newest 100 matches; narrow the query
 for more. Select a result or click a quoted message to highlight the original.
 **Back to previous view** restores the earlier timeline position and keeps the draft.
-Search stays local to the encrypted archive; missing, deleted or expired originals
+Search stays local to the account archive; missing, deleted or expired originals
 are reported as unavailable, without automatically requesting phone history.
 Cached chats remain
 available after Disconnect and can be reopened with `--offline`.
@@ -740,3 +746,27 @@ and missed updates are retained in the output. No live account or protocol
 connection is opened. Instrumentation is enabled only on that temporary archive.
 These are application CPU and event-loop measurements; compositor presentation,
 GPU completion, actual device input and phone/network latency are not measured.
+
+Global word search has a separate synthetic archive benchmark:
+
+```sh
+cargo test --release --locked --bin heya --config 'profile.release.build-override.debug-assertions=true' archive::search::tests::indexed_search_benchmark -- --ignored --exact --nocapture
+```
+
+On Linux (17 November 2026), with 100,000 synthetic messages, nine calls per
+query measured these medians through the archive worker, including tokenization
+and result summaries. They exclude UI rendering and the 250 ms typing debounce.
+
+| Query | Returned matches | Median |
+| --- | ---: | ---: |
+| Common word | 100 | 0.401 ms |
+| Two common words, AND | 100 | 0.454 ms |
+| Rare word | 1 | 0.133 ms |
+| Missing word | 0 | 0.116 ms |
+| Common AND missing | 0 | 0.131 ms |
+
+The query-plan regression checks that FTS5 supplies descending IDs without a
+temporary sort. Migration tests cover interrupted indexing, concurrent edits,
+deletions and restart. Offscreen UI tests cover stale queries, failed submissions,
+draft preservation and opening results across chats; native screenshots exercise
+keyboard input and navigation in light and narrow dark layouts.

@@ -465,13 +465,20 @@ pub(crate) fn conversation(
         view.chat.tint as u8,
     );
     if restore_draft {
-        ui.set_message_search_open(false);
-        ui.set_message_search_query("".into());
-        ui.set_browsing_history(false);
-        ui.set_highlighted_message(0);
-        ui.set_navigation_shown(ui.get_navigation_request());
-        ui.set_message_search_busy(false);
-        ui.set_message_search_hits(ModelRc::default());
+        if !(ui.get_message_search_open() && ui.get_message_search_all()) {
+            ui.set_message_search_open(false);
+            ui.set_message_search_query("".into());
+            ui.set_message_search_busy(false);
+            ui.set_message_search_hits(ModelRc::default());
+        }
+        // A search-result jump can switch chats; acknowledge it only after the
+        // target is laid out, even if the user closed the search in the meantime.
+        if !ui.get_message_search_all() || ui.get_navigation_request() == ui.get_navigation_shown()
+        {
+            ui.set_browsing_history(false);
+            ui.set_highlighted_message(0);
+            ui.set_navigation_shown(ui.get_navigation_request());
+        }
     }
     ui.set_selected_id(view.chat.id);
     ui.set_read_needs_clear(view.chat.unread > 0 || view.chat.marked_unread);
@@ -557,7 +564,7 @@ fn publish(ui: &AppWindow, update: Update) {
                 ..crate::messaging::Snapshot::empty()
             };
             crate::presentation_navigation::prepare(ui, &snapshot);
-            conversation(ui, &view, false);
+            conversation(ui, &view, ui.get_selected_id() != view.chat.id);
             crate::presentation_navigation::publish(ui, &snapshot);
             if jump.message == 0 && !jump.returning {
                 ui.invoke_show_error(
@@ -685,6 +692,10 @@ pub fn attach(
                     },
                 )
             {
+                if ui.get_message_search_open() {
+                    ui.invoke_close_message_search();
+                }
+                ui.set_message_search_all(false);
                 ui.invoke_reveal_chat();
             }
         }

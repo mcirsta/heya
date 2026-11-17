@@ -55,6 +55,12 @@ deleted and expired messages and refreshes after archive changes. Both platforms
 share the worker and UI code; local macOS synthetic tests and Linux CI cover the
 implementation. Deliberate live-account checks and later Linux desktop validation
 remain open.
+Global search is also available from the Chats header. It uses SQLite FTS5 for
+case/accent-insensitive whole words joined with AND, returning at most 100 matches
+by descending local message ID. Archived chats are included; locked chats and
+unavailable messages are excluded. The index stays in the account archive and
+existing history is indexed in resumable batches. Selecting a result preserves
+the draft and opens a bounded history window while retaining the search results.
 Clipboard/drop handling shares the existing attachment flow rather than creating
 a second sending pipeline.
 
@@ -269,14 +275,14 @@ aggregate reaction snapshots in history remain pending. These paths have
 synthetic validation only; live account interoperability is still open.
 
 Remaining: full local account/data removal, complete edit/delete variants,
-typing, broader account privacy controls, full-text search, live chat
+typing, broader account privacy controls, live chat
 metadata/settings updates, recovery UI and deliberate account tests. Received media support is described under M3. Basic disappearing-message expiry does not establish
 complete lifecycle parity. M2 is not complete.
 
 Implement the protocol adapter, QR pairing, session resume, connection states,
 encrypted archive, migrations, inbound/history durability and persistent outbox.
 Wire direct/group text, history pagination, quotes, reactions, edits/deletes,
-typing and receipts. Add local search over the archive.
+typing and receipts. Local and global search over the archive are implemented.
 
 Done when deliberate testing with the owner's chosen account covers pairing,
 restart without re-pairing, send/receive, phone edits/deletes, history overlap,

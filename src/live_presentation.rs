@@ -477,6 +477,10 @@ pub(crate) fn bind_messages(ui: &AppWindow, commands: mpsc::Sender<Command>) {
                 ui.set_live_revision(revision);
                 navigation_requested(revision);
                 ui.set_query("".into());
+                if ui.get_message_search_open() {
+                    ui.invoke_close_message_search();
+                }
+                ui.set_message_search_all(false);
                 ui.set_unread_only(false);
             }
         }
@@ -543,6 +547,10 @@ pub(crate) fn bind_messages(ui: &AppWindow, commands: mpsc::Sender<Command>) {
                 ) {
                     ui.set_live_revision(revision);
                     navigation_requested(revision);
+                    if ui.get_message_search_open() {
+                        ui.invoke_close_message_search();
+                    }
+                    ui.set_message_search_all(false);
                     ui.invoke_reveal_chat();
                 }
             }
@@ -641,6 +649,10 @@ pub(crate) fn bind_messages(ui: &AppWindow, commands: mpsc::Sender<Command>) {
                     ui.set_live_revision(revision);
                     navigation_requested(revision);
                     ui.set_show_conversation(true);
+                    if ui.get_message_search_open() {
+                        ui.invoke_close_message_search();
+                    }
+                    ui.set_message_search_all(false);
                     ui.set_new_chat_open(false);
                     ui.set_settings_open(false);
                 } else {
@@ -716,6 +728,7 @@ pub(crate) fn publish_messages(ui: &AppWindow, snapshot: &messaging::Snapshot) {
         }
     }
     // A save reply must not refresh models, reset navigation or trigger layout.
+    crate::presentation_navigation::publish_search(ui, &snapshot.search);
     if snapshot.view.is_none() && snapshot.error.is_empty() {
         return;
     }

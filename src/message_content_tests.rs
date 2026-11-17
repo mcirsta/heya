@@ -276,6 +276,7 @@ async fn archived_cards_upgrade_repair_alias_merge_and_mutations_keep_privacy() 
     // Reopen the actual pre-feature schema, with real encrypted envelopes.
     archive
         .blocking(|db| {
+            crate::archive::tests::remove_search_schema(db)?;
             db.execute_batch(
                 "DROP TRIGGER discard_changed_video; DROP TABLE message_videos; DROP TRIGGER discard_changed_document_preview; DROP TABLE document_previews; DROP TABLE outgoing_reads; DROP INDEX messages_action_wire; DROP TABLE reply_drafts; DROP TABLE reactions; DROP TRIGGER discard_changed_audio; DROP TABLE message_audio; DROP TRIGGER discard_changed_photo;
                           DROP TABLE message_photos;

@@ -37,6 +37,8 @@ impl Archive {
                 }
                 result.hits.push(Hit {
                     id: row.get(0)?,
+                    chat,
+                    title: String::new(),
                     text: domain::single_line_summary(&text),
                     time: time(row.get(2)?),
                 });

@@ -235,6 +235,7 @@ pub async fn run_with_chat_sources(
     let mut sent_draft: Option<([i32; 2], String, i32)> = None;
     let mut history = None;
     let mut search = crate::message_navigation::Search::default();
+    let mut search_index_pending = false;
     let mut jump = crate::message_navigation::Jump::default();
     let mut window = None;
     let mut return_limit = 100;
@@ -252,6 +253,23 @@ pub async fn run_with_chat_sources(
         let mut page = None;
         let mut work: Option<(&'static str, std::time::Instant)> = None;
         tokio::select! {
+            _ = tokio::task::yield_now(), if search_index_pending => {
+                if let Some(db) = &archive {
+                    match db.index_search_batch().await {
+                        Ok(done) => search_index_pending = !done,
+                        Err(_) => search_index_pending = false,
+                    }
+                    if !search_index_pending && search.chat == 0 {
+                        refresh_search(db, &mut search).await;
+                        if search.indexing {
+                            search.indexing = false;
+                            search.error = "Search could not prepare saved history. Reopen Heya to try again.".into();
+                        }
+                        updates.send_modify(|snapshot| snapshot.search = search.clone());
+                    }
+                }
+                continue;
+            }
             result=async {match &mut chat_pending {Some(pending)=>pending.await,None=>std::future::pending().await}}=>{
                 chat_pending=None;
                 error_message=match result {Ok(())=>String::new(),Err(error)=>error.message().into()};
@@ -269,7 +287,13 @@ pub async fn run_with_chat_sources(
                 phone_pending=None;
                 if let Some((chat,request,_))=phone_context.take(){history=Some(crate::domain::HistoryReply{chat,request,success:false});}
                 archive = archives.borrow_and_update().clone();
-                window=None;search=Default::default();jump=Default::default();
+                search_index_pending = archive.is_some();
+                window=None;jump=Default::default();
+                if search.chat==0 {
+                    search.hits.clear();search.indexing=false;search.more=false;
+                    search.error=if archive.is_some() {String::new()} else {"Unlock your saved chats to search messages.".into()};
+                    updates.send_modify(|snapshot|snapshot.search=search.clone());
+                } else {search=Default::default();}
                 changed = archive.as_ref().map(Archive::subscribe);
                 let enabled=preferences.borrow().send_receipts;
                 if !enabled && let Some(db)=&archive
@@ -312,6 +336,13 @@ pub async fn run_with_chat_sources(
                         // Retain the rejection just like a durable-save reply.
                         reply=Some(SendReply{chat,target:chat,text,request,saved:false});
                         updates.send_modify(|snapshot|snapshot.reply=reply.clone());
+                    } else if let Command::Navigation(crate::message_navigation::Command::Search {chat,query,request,..})=command {
+                        search=crate::message_navigation::Search {chat,query,request,error:"Unlock your saved chats to search messages.".into(),..Default::default()};
+                        updates.send_modify(|snapshot|snapshot.search=search.clone());
+                    } else if let Command::Navigation(crate::message_navigation::Command::Open {revision:next,request,..} | crate::message_navigation::Command::Navigate {revision:next,request,..})=command {
+                        revision=next;
+                        jump=crate::message_navigation::Jump {request,..Default::default()};
+                        updates.send_replace(Snapshot {revision,jump,error:"Saved chats are unavailable. Your draft has been kept.".into(),..Snapshot::empty()});
                     } else if let Command::Action(action)=command {
                         let rejected=match action {
                             crate::message_actions::Command::Star {request,..}=>Some((request,8)),
@@ -357,9 +388,33 @@ pub async fn run_with_chat_sources(
                         result
                     }
                     Command::Navigation(crate::message_navigation::Command::Search {chat,query,request,revision:seen}) => {
-                        if chat!=selected || seen!=revision {continue;}
+                        if chat!=0 && (chat!=selected || seen!=revision) {continue;}
                         search=crate::message_navigation::Search {chat,query,request,..Default::default()};
-                        Ok(())
+                        refresh_search(db,&mut search).await;
+                        if search.indexing {search_index_pending=true;}
+                        updates.send_modify(|snapshot|snapshot.search=search.clone());
+                        continue;
+                    }
+                    Command::Navigation(crate::message_navigation::Command::Open {chat,message,previous,draft,draft_version,request,revision:next}) => {
+                        revision=next;
+                        let target: Result<_,Error> = async {
+                            let (target,end)=db.navigation_target(chat,message,false).await?;
+                            Ok((target,end,db.chat_archived(chat).await?))
+                        }.await;
+                        match target {
+                            Ok((target,end,folder))=>match save_draft(db,previous,draft,draft_version,&sent_draft).await {
+                                Ok(())=>{
+                                    if selected!=chat {return_limit=100;} else if window.is_none() {return_limit=limit;}
+                                    selected=chat;window=Some(end);limit=100;
+                                    archived=folder;
+                                    phone_pending=None;phone_context=None;info_target=None;
+                                    jump=crate::message_navigation::Jump {request,message:target,browsing:true,returning:false};
+                                    Ok(())
+                                }
+                                Err(error)=>{jump=crate::message_navigation::Jump {request,browsing:window.is_some(),..Default::default()};Err(error)}
+                            },
+                            Err(error)=>{jump=crate::message_navigation::Jump {request,browsing:window.is_some(),..Default::default()};Err(error)}
+                        }
                     }
                     Command::Navigation(crate::message_navigation::Command::Navigate {chat,message,quote,request,revision:seen}) => {
                         if chat!=selected || seen!=revision {continue;}
@@ -525,17 +580,12 @@ pub async fn run_with_chat_sources(
             }
         }
         if let Some(db) = &archive {
-            if search.chat == selected && !search.query.trim().is_empty() {
-                match db
-                    .search_messages(selected, search.query.clone(), search.request)
-                    .await
-                {
-                    Ok(value) => search = value,
-                    Err(error) => {
-                        search.hits.clear();
-                        search.more = false;
-                        error_message = error.to_string();
-                    }
+            if search.chat == 0 || search.chat == selected {
+                refresh_search(db, &mut search).await;
+                if search.indexing && !search_index_pending {
+                    search.indexing = false;
+                    search.error =
+                        "Search could not prepare saved history. Try searching again.".into();
                 }
             } else {
                 search.hits.clear();
@@ -585,8 +635,15 @@ pub async fn run_with_chat_sources(
                     } else if selected != 0 {
                         selected = 0;
                         window = None;
-                        search = Default::default();
-                        jump = Default::default();
+                        if search.chat != 0 {
+                            search = Default::default();
+                        }
+                        // A lock/deletion may race an accepted jump. Retain its
+                        // acknowledgement even when the destination disappears.
+                        jump = crate::message_navigation::Jump {
+                            request: jump.request,
+                            ..Default::default()
+                        };
                         history_boundary = None;
                         info_target = None;
                         page = None;
@@ -671,6 +728,32 @@ pub async fn run_with_chat_sources(
                 started.elapsed().as_millis(),
                 commands.len()
             ));
+        }
+    }
+}
+
+async fn refresh_search(db: &Archive, search: &mut crate::message_navigation::Search) {
+    if search.query.trim().is_empty() {
+        search.hits.clear();
+        search.more = false;
+        search.indexing = false;
+        search.error.clear();
+        return;
+    }
+    let result = if search.chat == 0 {
+        db.search_all_messages(search.query.clone(), search.request)
+            .await
+    } else {
+        db.search_messages(search.chat, search.query.clone(), search.request)
+            .await
+    };
+    match result {
+        Ok(value) => *search = value,
+        Err(error) => {
+            search.hits.clear();
+            search.more = false;
+            search.indexing = false;
+            search.error = error.to_string();
         }
     }
 }

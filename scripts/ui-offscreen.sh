@@ -3,13 +3,15 @@
 set -euo pipefail
 
 usage() {
-    echo "Usage: $0 {--screenshot|--framebuffer} /tmp/heya.png [--size WIDTHxHEIGHT] [--light|--dark] [--demo-chat ID] [--click XxY (framebuffer only)] [--hover XxY (framebuffer only)] | --ui-benchmark | --call-audio-check | --video-check | --window-state-check | --wayland-window-state-check | --wheel-check | --close-check | --startup-check | --clipboard-check | --wayland-clipboard-check | --wayland-drop-check | --clipboard-ui-check OUTPUT_PREFIX | --storage-check OUTPUT_PREFIX" >&2
+    echo "Usage: $0 {--screenshot|--framebuffer} /tmp/heya.png [--size WIDTHxHEIGHT] [--light|--dark] [--demo-chat ID] [--click XxY (framebuffer only)] [--hover XxY (framebuffer only)] [--type TEXT (framebuffer only)] [--key KEY (framebuffer only)] | --ui-benchmark | --call-audio-check | --video-check | --window-state-check | --wayland-window-state-check | --wheel-check | --close-check | --startup-check | --clipboard-check | --wayland-clipboard-check | --wayland-drop-check | --clipboard-ui-check OUTPUT_PREFIX | --storage-check OUTPUT_PREFIX" >&2
     exit 2
 }
 
 heya_args=("${1:-}")
 heya_click=""
 heya_hover=""
+heya_type=""
+heya_key=""
 case "${1:-}" in
     --screenshot|--framebuffer)
         [[ $# -ge 2 && -n "$2" ]] || usage
@@ -36,6 +38,16 @@ case "${1:-}" in
                 --hover)
                     [[ "${heya_args[0]}" == --framebuffer && $# -ge 2 && "$2" =~ ^[0-9]+x[0-9]+$ ]] || usage
                     heya_hover=$2
+                    shift 2
+                    ;;
+                --type)
+                    [[ "${heya_args[0]}" == --framebuffer && $# -ge 2 ]] || usage
+                    heya_type=$2
+                    shift 2
+                    ;;
+                --key)
+                    [[ "${heya_args[0]}" == --framebuffer && $# -ge 2 && "$2" =~ ^[A-Za-z0-9_+]+$ ]] || usage
+                    heya_key=$2
                     shift 2
                     ;;
                 *) usage ;;
@@ -166,7 +178,9 @@ if [[ "${heya_args[0]}" == --framebuffer ]]; then
         heya_output=$1
         heya_click=$2
         heya_hover=$3
-        shift 3
+        heya_type=$4
+        heya_key=$5
+        shift 5
         "$@" &
         heya_pid=$!
         trap '\''kill "$heya_pid" 2>/dev/null || true; wait "$heya_pid" 2>/dev/null || true'\'' EXIT
@@ -189,6 +203,17 @@ if [[ "${heya_args[0]}" == --framebuffer ]]; then
             xdotool mousemove --window "$heya_window" "${heya_hover%x*}" "${heya_hover#*x}"
             sleep 1
         fi
+        if [[ -n "$heya_type" || -n "$heya_key" ]]; then
+            xdotool windowfocus --sync "$heya_window"
+        fi
+        if [[ -n "$heya_type" ]]; then
+            xdotool type --clearmodifiers --delay 30 -- "$heya_type"
+            sleep 2
+        fi
+        if [[ -n "$heya_key" ]]; then
+            xdotool key --clearmodifiers "$heya_key"
+            sleep 1
+        fi
         if [[ "${HEYA_TEST_FRAMEBUFFER_ROOT:-0}" == 1 ]]; then
             # This root belongs to the private X server, including native popups.
             import -window root "$heya_output"
@@ -196,7 +221,7 @@ if [[ "${heya_args[0]}" == --framebuffer ]]; then
             import -window "$heya_window" "$heya_output"
         fi
         echo "Saved synthetic X11 framebuffer to $heya_output"
-    ' bash "${heya_args[1]}" "$heya_click" "$heya_hover" "$heya_binary" --demo "${heya_args[@]:2}")
+    ' bash "${heya_args[1]}" "$heya_click" "$heya_hover" "$heya_type" "$heya_key" "$heya_binary" --demo "${heya_args[@]:2}")
 fi
 
 # Optional genuine stationary pointer over the scrolling transcript. This uses
