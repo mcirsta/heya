@@ -1054,7 +1054,7 @@ pub(crate) fn check_ui(runtime: &tokio::runtime::Runtime) {
     let actions = element(&ui, "AppWindow::header-actions");
     inside(&actions, &header);
     assert!((header.size().height - 60.).abs() < 0.5);
-    assert!((actions.size().width - 106.).abs() < 0.5);
+    assert!((actions.size().width - 144.).abs() < 0.5);
     assert!((element(&ui, "AppWindow::chat-list").absolute_position().y - 148.).abs() < 0.5);
     ElementHandle::find_by_accessible_label(
         &ui,

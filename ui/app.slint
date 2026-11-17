@@ -689,9 +689,16 @@ export component AppWindow inherits Window {
                             header-actions := HorizontalLayout {
                                 x: parent.width - self.width - 14px;
                                 y: 15px;
-                                width: root.narrow ? 68px : 106px;
+                                width: root.narrow ? 106px : 144px;
                                 height: 30px;
                                 spacing: 8px;
+                                IconButton {
+                                    icon: @image-url("icons/search.svg");
+                                    label: @tr("Search in all chats");
+                                    // Global message search is awaiting its indexing implementation.
+                                    enabled: false;
+                                    Tooltip { text: @markdown("Search in all chats · not available yet"); }
+                                }
                                 if !root.narrow: IconButton {
                                     icon: @image-url("icons/panel-left.svg");
                                     label: @tr("Collapse the chat list") + " (" + Theme.primary-modifier + "B)";
@@ -735,7 +742,7 @@ export component AppWindow inherits Window {
                                 Text {
                                     x: 34px;
                                     height: parent.height;
-                                    text: @tr("Search");
+                                    text: @tr("Filter contacts");
                                     color: Theme.dim;
                                     vertical-alignment: center;
                                     visible: search.text == "";
@@ -752,7 +759,7 @@ export component AppWindow inherits Window {
                                     single-line: true;
                                     selection-background-color: Theme.accent;
                                     selection-foreground-color: Theme.on-accent;
-                                    accessible-label: @tr("Search chats");
+                                    accessible-label: @tr("Filter contacts");
                                     edited => { root.search-chats(self.text); }
                                 }
 
@@ -763,7 +770,7 @@ export component AppWindow inherits Window {
                                     height: 24px;
                                     icon-size: 15px;
                                     icon: @image-url("icons/close.svg");
-                                    label: @tr("Clear search");
+                                    label: @tr("Clear contact filter");
                                     activated => { root.query = ""; root.search-chats(""); search.focus(); }
                                 }
                             }

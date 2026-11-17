@@ -119,7 +119,7 @@ pub fn check_ui() {
     // Reproduce a newly opened chat: focus is still in the sidebar and the
     // first interaction with the composer is right-click Paste.
     let search =
-        i_slint_backend_testing::ElementHandle::find_by_accessible_label(&ui, "Search chats")
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(&ui, "Filter contacts")
             .next()
             .unwrap();
     let p = search.absolute_position();
@@ -258,7 +258,7 @@ pub fn check_ui() {
     // Search fields keep ordinary text paste and never enter the upload path.
     ui.set_settings_open(false);
     let search =
-        i_slint_backend_testing::ElementHandle::find_by_accessible_label(&ui, "Search chats")
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(&ui, "Filter contacts")
             .next()
             .unwrap();
     let p = search.absolute_position();
