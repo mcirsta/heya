@@ -1481,6 +1481,7 @@ mod tests {
         i_slint_backend_testing::init_integration_test_with_system_time();
         let runtime = Runtime::new().unwrap();
         let live_ui = check_live_message_handoff();
+        crate::whatsapp_link::check_ui();
         send_tests::check_ui();
         send_tests::check_merged_chat_ui();
         media_tests::check_ui();

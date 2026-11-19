@@ -106,6 +106,14 @@ launcher and taskbar icons for your user. The desktop integration uses the SVG
 where supported and generated PNG fallbacks otherwise. See
 [branding and desktop integration](docs/branding.md) for paths and update steps.
 
+Heya can open direct-chat `whatsapp:` links from other apps. On Linux use
+`python3 scripts/install-desktop.py --set-whatsapp-default`. In the installed
+macOS bundle choose **Settings → System → WhatsApp links → Make default**.
+When a browser offers to open the app from a `wa.me` page, choose Heya.
+Heya lets you review the recipient and any linked text before opening the chat.
+The text fills an empty composer as a draft for you to send.
+You can also pass a direct-chat URL to `heya -- URL`.
+
 Saved sessions resume automatically on a normal launch. Turn off **Settings →
 Account → Connect automatically on startup** to wait for **Connect** instead;
 this also leaves saved chats closed and avoids accessing the keyring at startup.

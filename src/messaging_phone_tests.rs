@@ -59,6 +59,7 @@ async fn empty_new_chat_allows_explicit_fetch_and_timeout_does_not_exhaust_its_h
     commands
         .send(Command::NewChat {
             phone: "+15550000001".into(),
+            prefill: String::new(),
             previous: 0,
             draft: String::new(),
             draft_version: 0,

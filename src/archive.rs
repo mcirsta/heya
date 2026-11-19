@@ -528,6 +528,32 @@ impl Archive {
         self.changed();
         Ok(id)
     }
+    pub async fn open_direct_chat(&self, jid: String, prefill: String) -> Result<i32> {
+        let id = self
+            .call(move |db| {
+                let tx = db.transaction()?;
+                let id = upsert_chat(
+                    &tx,
+                    &ChatMeta {
+                        jid,
+                        ..Default::default()
+                    },
+                )?;
+                chat_settings::unlocked(&tx, id)?;
+                if !prefill.is_empty() {
+                    tx.execute(
+                        "UPDATE chats SET draft=?2 WHERE id=?1 AND draft='' AND read_only=0
+                        AND NOT EXISTS (SELECT 1 FROM reply_drafts WHERE chat_id=?1)",
+                        params![id, prefill],
+                    )?;
+                }
+                tx.commit()?;
+                Ok(id)
+            })
+            .await?;
+        self.changed();
+        Ok(id)
+    }
     /// The command actor serializes composer edits and sends. Its send command
     /// carries the complete latest draft, even if an earlier edit was dropped
     /// under backpressure. Clear that draft atomically with durable insertion.

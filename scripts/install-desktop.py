@@ -3,6 +3,7 @@
 
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -12,6 +13,9 @@ import tempfile
 def desktop_exec(path: Path) -> str:
     # Exec quoting is followed by the desktop file's general string escaping.
     value = str(path).replace("%", "%%")
+    if re.fullmatch(r"/[A-Za-z0-9_./+-]+", value):
+        # Older xdg-utils cannot resolve a quoted executable when looking up defaults.
+        return value
     for char in ('\\', '"', '`', '$'):
         value = value.replace(char, "\\" + char)
     return ('"' + value + '"').replace("\\", "\\\\")
@@ -33,8 +37,10 @@ def install(source: Path, destination: Path, mode: int = 0o644) -> None:
 def main() -> None:
     if sys.platform != "linux":
         sys.exit("This desktop installer is for Linux.")
-    if len(sys.argv) != 1:
-        sys.exit("Usage: python3 scripts/install-desktop.py")
+    arguments = sys.argv[1:]
+    if arguments not in ([], ["--set-whatsapp-default"]):
+        sys.exit("Usage: python3 scripts/install-desktop.py [--set-whatsapp-default]")
+    set_whatsapp_default = bool(arguments)
     root = Path(__file__).resolve().parent.parent
     binary = root / "target/release/heya"
     if not binary.is_file() or not os.access(binary, os.X_OK):
@@ -45,6 +51,8 @@ def main() -> None:
                 f"Missing {command}. Install with: "
                 "sudo pacman -S librsvg desktop-file-utils"
             )
+    if set_whatsapp_default and not (shutil.which("gio") or shutil.which("xdg-mime")):
+        sys.exit("Missing gio or xdg-mime. Install with: sudo pacman -S glib2")
 
     data_home = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")
     if not data_home.is_absolute():
@@ -60,7 +68,7 @@ def main() -> None:
         desktop = stage / f"{application_id}.desktop"
         template = (root / "packaging/linux" / desktop.name).read_text()
         desktop.write_text(
-            template.replace("Exec=heya\n", f"Exec={desktop_exec(installed_binary)}\n")
+            template.replace("Exec=heya ", f"Exec={desktop_exec(installed_binary)} ", 1)
         )
         subprocess.run(["desktop-file-validate", str(desktop)], check=True)
         sizes = (16, 24, 32, 48, 64, 128, 256, 512)
@@ -91,6 +99,14 @@ def main() -> None:
             result = subprocess.run(command, check=False)
             if result.returncode:
                 print(f"Desktop cache refresh failed: {command[0]}", file=sys.stderr)
+    if set_whatsapp_default:
+        scheme = "x-scheme-handler/whatsapp"
+        if shutil.which("gio"):
+            command = ["gio", "mime", scheme, desktop.name]
+        else:
+            command = ["xdg-mime", "default", desktop.name, scheme]
+        subprocess.run(command, check=True)
+        print("Selected Heya as the default app for WhatsApp links.")
     print(f"Installed Heya: {installed_binary}")
     print(f"Desktop entry: {applications / desktop.name}")
     print(f"SVG icon: {icon_root / 'scalable/apps' / (application_id + '.svg')}")

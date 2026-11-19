@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the packaged icon and synthetic media; never opens an account or microphone."""
+"""Check bundle metadata, the icon and synthetic media without an account or microphone."""
 import argparse
 import json
 import pathlib
@@ -22,6 +22,9 @@ binary = args.bundle.resolve() / 'Contents/MacOS/heya'
 contents = args.bundle.resolve() / 'Contents'
 info = plistlib.loads((contents / 'Info.plist').read_bytes())
 assert info.get('CFBundleIconFile') == 'Heya.icns', 'Missing bundle icon declaration'
+assert any(url_type.get('CFBundleTypeRole') == 'Viewer'
+           and url_type.get('CFBundleURLSchemes') == ['whatsapp']
+           for url_type in info.get('CFBundleURLTypes', [])), 'Missing WhatsApp URL scheme declaration'
 assert info.get('NSMicrophoneUsageDescription'), 'Missing microphone permission explanation'
 assert info.get('NSCameraUsageDescription'), 'Missing camera permission explanation'
 icon = contents / 'Resources/Heya.icns'
@@ -35,7 +38,7 @@ with tempfile.TemporaryDirectory(prefix='heya-icon-check-') as temporary:
             png = (iconset / f'icon_{points}x{points}{suffix}.png').read_bytes()
             assert png[:8] == b'\x89PNG\r\n\x1a\n'
             assert struct.unpack('>II', png[16:24]) == (points * scale, points * scale)
-print('Packaged macOS icon declaration and all ten native-decoded representations passed.')
+print('Packaged WhatsApp URL scheme, icon declaration and all ten native-decoded representations passed.')
 settings = json.dumps({'input': {'id': '', 'name': ''}, 'output': {'id': '', 'name': ''},
                        'input_volume': 100, 'output_volume': 0}).encode()
 magic = b'HEYA-VOICE/1\n'

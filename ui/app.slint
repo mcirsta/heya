@@ -172,13 +172,31 @@ export component AppWindow inherits Window {
     out property <int> composer-anchor: composer.anchor;
     out property <int> composer-cursor: composer.cursor;
     public pure function can-import() -> bool {
-        return !AudioCall.shown && !root.contact-info-open && root.selected-id>0 && (root.demo-mode || root.live-can-send) && !root.storage-dialog && !root.settings-open && !root.new-chat-open && !root.shared-contacts-open && root.send-contact-phase==0 && root.account-dialog==0 && root.error-message=="" && !root.own-editor-open && root.photo-viewer-id==0 && !root.video-expanded && root.message-dialog==0 && root.attachment-phase==0 && root.voice-phase==0 && !root.microphone-dialog && !root.selection-active && (!root.narrow || root.show-conversation);
+        return !AudioCall.shown && !root.contact-info-open && root.selected-id>0 && (root.demo-mode || root.live-can-send) && !root.storage-dialog && !root.settings-open && !root.new-chat-open && !root.linked-chat-visible && !root.shared-contacts-open && root.send-contact-phase==0 && root.account-dialog==0 && root.error-message=="" && !root.own-editor-open && root.photo-viewer-id==0 && !root.video-expanded && root.message-dialog==0 && root.attachment-phase==0 && root.voice-phase==0 && !root.microphone-dialog && !root.selection-active && (!root.narrow || root.show-conversation);
     }
     callback attachment-control(int,int,string);
 
     in-out property <bool> settings-open;
     changed settings-open=>{if root.settings-open {root.selection-control(0);if root.voice-phase>0 && root.voice-phase!=5 {root.voice-control(1);}root.request-audio-devices();}}
     in-out property <bool> new-chat-open;
+    in-out property <string> linked-chat-phone;
+    in-out property <string> linked-chat-text;
+    in-out property <string> linked-chat-preview;
+    in-out property <string> linked-chat-error;
+    property <bool> linked-chat-visible: root.linked-chat-phone != ""
+        && (root.demo-mode || (root.archive-ready && root.connection-state==5 && root.live-chat-view))
+        && !root.new-chat-open && !root.storage-dialog && !AudioCall.shown
+        && !root.shared-contacts-open && root.send-contact-phase==0 && root.account-dialog==0
+        && root.error-message=="" && !root.own-editor-open && root.photo-viewer-id==0 && !root.video-expanded
+        && root.message-dialog==0 && root.attachment-phase==0 && root.voice-phase==0 && !root.microphone-dialog;
+    public function close-linked-chat() {
+        root.linked-chat-phone = "";
+        root.linked-chat-text = "";
+        root.linked-chat-preview = "";
+        root.linked-chat-error = "";
+        app-focus.focus();
+        root.focus-composer();
+    }
     in-out property <bool> shared-contacts-open;
     in-out property <int> shared-contacts-message;
     in-out property <int> shared-contact-selected: -1;
@@ -313,7 +331,7 @@ export component AppWindow inherits Window {
     callback react-message(string);
     callback forward-message(int);
     public function focus-composer() {
-        if !root.storage-dialog && !root.settings-open && !root.new-chat-open && !root.shared-contacts-open && root.send-contact-phase==0 && root.account-dialog==0 && root.error-message=="" && !root.own-editor-open
+        if !root.storage-dialog && !root.settings-open && !root.new-chat-open && !root.linked-chat-visible && !root.shared-contacts-open && root.send-contact-phase==0 && root.account-dialog==0 && root.error-message=="" && !root.own-editor-open
             && root.photo-viewer-id==0 && !root.video-expanded && root.message-dialog==0 && !root.attachment-modal
             && root.voice-phase==0 && !root.microphone-dialog && !root.selection-active && root.show-conversation && !AudioCall.shown {
             composer.focus-editor();
@@ -402,7 +420,7 @@ export component AppWindow inherits Window {
     out property <int> read-visible-message: !root.demo-mode && root.live-chat-view
         && !(root.message-search-open && !root.message-search-all) && !root.browsing-history && root.navigation-request==root.navigation-shown
         && root.read-window-active && !root.read-window-occluded && !root.minimized
-        && !root.storage-dialog && !root.settings-open && !root.new-chat-open && !root.shared-contacts-open && root.send-contact-phase==0 && root.account-dialog==0 && root.error-message=="" && !root.own-editor-open
+        && !root.storage-dialog && !root.settings-open && !root.new-chat-open && !root.linked-chat-visible && !root.shared-contacts-open && root.send-contact-phase==0 && root.account-dialog==0 && root.error-message=="" && !root.own-editor-open
         && !root.contact-info-open
         && root.photo-viewer-id==0 && !root.video-expanded && root.message-dialog==0 && !root.attachment-modal && !root.microphone-dialog
         && (!root.narrow || root.show-conversation)
@@ -415,6 +433,7 @@ export component AppWindow inherits Window {
     in property <bool> send-pending;
     callback draft-edited(string);
     callback new-chat(string);
+    callback open-linked-chat();
     callback connect-account();
     callback disconnect-account();
     callback relink-account();
@@ -456,7 +475,7 @@ export component AppWindow inherits Window {
         && (root.demo-mode || root.live-chat-view)
         && !root.settings-open && !root.minimized
         && (!root.narrow || root.show-conversation)
-        && !root.new-chat-open && !root.shared-contacts-open && root.send-contact-phase==0 && root.account-dialog==0 && root.error-message=="" && !root.own-editor-open
+        && !root.new-chat-open && !root.linked-chat-visible && !root.shared-contacts-open && root.send-contact-phase==0 && root.account-dialog==0 && root.error-message=="" && !root.own-editor-open
         && root.photo-viewer-id==0 && !root.video-expanded && root.message-dialog==0 && !root.attachment-modal && !root.microphone-dialog
         && (root.demo-mode || root.live-revision==root.live-shown-revision);
     changed history-active => {root.layout-timeline();}
@@ -604,6 +623,10 @@ export component AppWindow inherits Window {
         key-pressed(event) => {
             if root.error-message!="" || root.own-editor-open {return reject;}
             if root.storage-dialog { return reject; }
+            if root.linked-chat-visible {
+                if event.text == Key.Escape { root.close-linked-chat(); return accept; }
+                return reject;
+            }
             if root.microphone-dialog {
                 if event.text==Key.Escape || event.text==Key.Return {root.close-microphone-dialog();}
                 return accept;
@@ -632,7 +655,7 @@ export component AppWindow inherits Window {
             return reject;
         }
         main-controls := FocusScope {
-            enabled: !AudioCall.shown && !root.new-chat-open && !root.shared-contacts-open && root.send-contact-phase==0 && root.account-dialog == 0 && root.photo-viewer-id == 0 && !root.video-expanded && root.message-dialog==0 && !root.attachment-modal && !root.microphone-dialog;
+            enabled: !AudioCall.shown && !root.new-chat-open && !root.linked-chat-visible && !root.shared-contacts-open && root.send-contact-phase==0 && root.account-dialog == 0 && root.photo-viewer-id == 0 && !root.video-expanded && root.message-dialog==0 && !root.attachment-modal && !root.microphone-dialog;
             measure-row := TimelineItem {
                 visible: false;
                 measurement-only: true;
@@ -1274,7 +1297,7 @@ export component AppWindow inherits Window {
                                     tint: root.chat-tint;
                                     selection-mode:root.selection-active;
                                     selected:root.selection-active && root.message-selected(row.message.id,root.selection-revision);
-                                    actions-enabled: !root.selection-active && root.voice-phase==0 && !root.microphone-dialog && !root.settings-open && !root.new-chat-open && !root.shared-contacts-open && root.send-contact-phase==0 && root.account-dialog == 0 && root.photo-viewer-id == 0 && !root.video-expanded && root.message-dialog==0;
+                                    actions-enabled: !root.selection-active && root.voice-phase==0 && !root.microphone-dialog && !root.settings-open && !root.new-chat-open && !root.linked-chat-visible && !root.shared-contacts-open && root.send-contact-phase==0 && root.account-dialog == 0 && root.photo-viewer-id == 0 && !root.video-expanded && root.message-dialog==0;
                                     auto-download-photos:root.auto-download-photos;
                                     menu-open:root.menu-for(row.message);
                                     can-reply: (root.demo-mode || root.live-can-send) && root.voice-phase==0;
@@ -1311,7 +1334,7 @@ export component AppWindow inherits Window {
                                 enter-sends: root.enter-sends;
                                 show-hint <=> root.show-shortcut-hint;
                                 hint-dismissed => { root.preference-changed("show_shortcut_hint",0); }
-                                enabled: !root.storage-dialog && !AudioCall.shown && !root.selection-active && !root.microphone-dialog && !root.settings-open && !root.new-chat-open && !root.shared-contacts-open && root.send-contact-phase==0 && root.account-dialog == 0 && (root.demo-mode || (root.selected-id > 0 && root.live-revision == root.live-shown-revision));
+                                enabled: !root.storage-dialog && !AudioCall.shown && !root.selection-active && !root.microphone-dialog && !root.settings-open && !root.new-chat-open && !root.linked-chat-visible && !root.shared-contacts-open && root.send-contact-phase==0 && root.account-dialog == 0 && (root.demo-mode || (root.selected-id > 0 && root.live-revision == root.live-shown-revision));
                                 can-send: !root.action-pending && (root.demo-mode || (root.connection-state == 5 && root.live-can-send && !root.send-pending));
                                 saving: root.send-pending;
                                 send => { root.send-message(root.selected-id,root.draft); }
@@ -1501,6 +1524,14 @@ export component AppWindow inherits Window {
             available: !root.demo-mode && root.archive-ready && root.connection-state == 5;
             close => { root.new-chat-open = false; }
             start(phone) => { root.new-chat(phone); }
+        }
+        if root.linked-chat-visible: NewChatDialog {
+            linked-phone: root.linked-chat-phone;
+            linked-preview: root.linked-chat-preview;
+            error: root.linked-chat-error;
+            available: !root.demo-mode && root.live-revision==root.live-shown-revision;
+            close => { root.close-linked-chat(); }
+            start => { root.open-linked-chat(); }
         }
         if root.shared-contacts-open && !AudioCall.shown: SharedContactsDialog {
             contacts:root.shared-contact-rows;selected <=> root.shared-contact-selected;

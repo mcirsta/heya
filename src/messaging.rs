@@ -72,6 +72,7 @@ pub enum Command {
     },
     NewChat {
         phone: String,
+        prefill: String,
         previous: i32,
         draft: String,
         draft_version: i32,
@@ -343,6 +344,9 @@ pub async fn run_with_chat_sources(
                         revision=next;
                         jump=crate::message_navigation::Jump {request,..Default::default()};
                         updates.send_replace(Snapshot {revision,jump,error:"Saved chats are unavailable. Your draft has been kept.".into(),..Snapshot::empty()});
+                    } else if let Command::NewChat {revision:next,..}=command {
+                        revision=next;
+                        updates.send_replace(Snapshot {revision,error:"Saved chats are unavailable. Try opening the chat again after connecting.".into(),..Snapshot::empty()});
                     } else if let Command::Action(action)=command {
                         let rejected=match action {
                             crate::message_actions::Command::Star {request,..}=>Some((request,8)),
@@ -563,7 +567,7 @@ pub async fn run_with_chat_sources(
                         updates.send_replace(Snapshot {chat_busy:chat_pending.is_some(),revision,reply:reply.clone(),..Snapshot::empty()});
                         result.map(|_| ())
                     }
-                    Command::NewChat { phone: value, previous, draft, draft_version, revision: next } => {
+                    Command::NewChat { phone: value, prefill, previous, draft, draft_version, revision: next } => {
                         revision=next;phone_pending=None;
                 if let Some((chat,request,_))=phone_context.take(){history=Some(crate::domain::HistoryReply{chat,request,success:false});}
                         if let Err(error) = save_draft(db,previous,draft,draft_version,&sent_draft).await {
@@ -571,7 +575,7 @@ pub async fn run_with_chat_sources(
                             continue;
                         }
                         match crate::protocol_messages::new_chat(&value) {
-                            Ok(jid)=>match db.create_chat(jid).await {Ok(id)=>{selected=id;revision=next;limit=100;window=None;search=Default::default();jump=Default::default();Ok(())},Err(e)=>Err(e)},
+                            Ok(jid)=>match db.open_direct_chat(jid, prefill).await {Ok(id)=>{selected=id;revision=next;limit=100;window=None;search=Default::default();jump=Default::default();Ok(())},Err(e)=>Err(e)},
                             Err(e)=>{error_message="Enter a phone number with its country code, such as +40 …".into();Err(e)}
                         }
                     }
@@ -1269,6 +1273,7 @@ mod tests {
         commands
             .send(Command::NewChat {
                 phone: "+15550000002".into(),
+                prefill: String::new(),
                 previous: chat,
                 draft: "Unsaved new text".into(),
                 draft_version: 1,

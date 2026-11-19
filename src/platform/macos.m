@@ -12,6 +12,56 @@
 #include <stdio.h>
 #include <sys/sysctl.h>
 
+typedef void (*HeyaOpenURL)(const char *);
+
+@interface HeyaURLDelegate : NSObject <NSApplicationDelegate>
+@property (nonatomic, assign) HeyaOpenURL openURL;
+@end
+
+@implementation HeyaURLDelegate
+- (void)application:(NSApplication *)application openURLs:(NSArray<NSURL *> *)urls {
+    (void)application;
+    for (NSURL *url in urls) {
+        const char *value = url.absoluteString.UTF8String;
+        // The Rust callback copies the string before returning.
+        if (value) self.openURL(value);
+    }
+}
+@end
+
+int heya_whatsapp_links_install(HeyaOpenURL openURL) {
+    NSCAssert([NSThread isMainThread], @"AppKit requires the main thread");
+    @autoreleasepool {
+        // Winit 0.31 uses lifecycle notifications and leaves the delegate available.
+        // Keep our delegate alive and leave any existing delegate in place.
+        static HeyaURLDelegate *delegate;
+        if (!NSApp || NSApp.delegate) return 0;
+        delegate = [HeyaURLDelegate new];
+        delegate.openURL = openURL;
+        NSApp.delegate = delegate;
+        return 1;
+    }
+}
+
+typedef void (*HeyaDefaultURLResult)(void *, int);
+
+void heya_whatsapp_links_set_default(void *context, HeyaDefaultURLResult reply) {
+    NSCAssert([NSThread isMainThread], @"AppKit requires the main thread");
+    @autoreleasepool {
+        if (@available(macOS 12.0, *)) {
+            NSBundle *bundle = NSBundle.mainBundle;
+            if ([bundle objectForInfoDictionaryKey:@"CFBundleURLTypes"]) {
+                [NSWorkspace.sharedWorkspace setDefaultApplicationAtURL:bundle.bundleURL
+                    toOpenURLsWithScheme:@"whatsapp" completionHandler:^(NSError *error) {
+                        reply(context, error == nil);
+                    }];
+                return;
+            }
+        }
+        reply(context, 0);
+    }
+}
+
 void heya_dock_badge(uint32_t count) {
     NSCAssert([NSThread isMainThread], @"AppKit requires the main thread");
     @autoreleasepool {

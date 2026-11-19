@@ -147,6 +147,7 @@ mod video;
 mod video_process;
 mod voice;
 mod voice_recorder;
+mod whatsapp_link;
 mod window_state;
 
 use slint::ComponentHandle;
@@ -173,6 +174,7 @@ struct Options {
     software_rendering: bool,
     startup_check: bool,
     change_storage: Option<storage::Mode>,
+    link: Option<String>,
 }
 
 fn options_from(args: impl IntoIterator<Item = String>) -> Result<Option<Options>, String> {
@@ -180,6 +182,15 @@ fn options_from(args: impl IntoIterator<Item = String>) -> Result<Option<Options
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--" => {
+                if let Some(link) = args.next() {
+                    if options.link.is_some() || args.next().is_some() {
+                        return Err("Heya opens one WhatsApp link at a time.".into());
+                    }
+                    options.link = Some(link);
+                }
+                break;
+            }
             "--demo" => options.demo = true,
             "--offline" => options.offline = true,
             "--light" => options.theme = Some("Light".into()),
@@ -229,7 +240,13 @@ fn options_from(args: impl IntoIterator<Item = String>) -> Result<Option<Options
                 );
                 return Ok(None);
             }
-            other => return Err(format!("Unknown option {other}. Use --help.")),
+            link if link.split_once(':').is_some_and(|(scheme, _)| {
+                scheme.eq_ignore_ascii_case("whatsapp") || scheme.eq_ignore_ascii_case("https")
+            }) && options.link.is_none() =>
+            {
+                options.link = Some(arg)
+            }
+            _ => return Err("Unknown option. Use --help.".into()),
         }
     }
     if options.demo && options.change_storage.is_some() {
@@ -318,6 +335,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn run(options: Options, trace: &startup::Trace) -> Result<(), Box<dyn std::error::Error>> {
+    trace.record("runtime_create", "begin");
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    trace.record("runtime_create", "ok");
+    #[cfg(target_os = "linux")]
+    let (link_service, link_receiver) = if options.demo {
+        (None, None)
+    } else {
+        use whatsapp_link::linux::{Start, start};
+        let (incoming, receiver) = tokio::sync::mpsc::channel(8);
+        match runtime.block_on(start(options.link.as_deref(), move |link| {
+            incoming.try_send(link).is_ok()
+        })) {
+            Start::Primary(service) => (service, Some(receiver)),
+            Start::Forwarded => return Ok(()),
+            Start::Rejected => {
+                return Err(std::io::Error::other(
+                    "The open Heya window could not accept this launch. Try again.",
+                )
+                .into());
+            }
+        }
+    };
     let window_state = presentation_window_state::State::new(options.demo);
     startup::select_backend(
         trace,
@@ -325,11 +366,6 @@ fn run(options: Options, trace: &startup::Trace) -> Result<(), Box<dyn std::erro
         options.startup_check,
         window_state.clone(),
     )?;
-    trace.record("runtime_create", "begin");
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()?;
-    trace.record("runtime_create", "ok");
     let demo = options.demo;
     let worker_trace = trace.clone();
     let window_path = window_state.path();
@@ -380,6 +416,14 @@ fn run(options: Options, trace: &startup::Trace) -> Result<(), Box<dyn std::erro
         options.software_rendering,
         AppWindow::new,
     )?;
+    #[cfg(target_os = "macos")]
+    if !options.demo {
+        let weak = ui.as_weak();
+        whatsapp_link::macos::install(move |link| {
+            let _ =
+                weak.upgrade_in_event_loop(move |ui| whatsapp_link::receive(&ui, Some(link), true));
+        });
+    }
     // Set this after backend initialization, before creating the native window.
     // Match the desktop entry so Wayland/X11 taskbars resolve Heya's icon.
     #[cfg(target_os = "linux")]
@@ -461,6 +505,26 @@ fn run(options: Options, trace: &startup::Trace) -> Result<(), Box<dyn std::erro
     })?;
     window_state.shown(&ui);
     startup::observe_window(&ui, trace);
+    whatsapp_link::receive(&ui, options.link, false);
+    #[cfg(target_os = "linux")]
+    let link_task = link_receiver.map(|mut receiver| {
+        let weak = ui.as_weak();
+        runtime.spawn(async move {
+            while let Some(link) = receiver.recv().await {
+                let (delivered, wait) = tokio::sync::oneshot::channel();
+                if weak
+                    .upgrade_in_event_loop(move |ui| {
+                        whatsapp_link::receive(&ui, link, true);
+                        let _ = delivered.send(());
+                    })
+                    .is_err()
+                    || wait.await.is_err()
+                {
+                    break;
+                }
+            }
+        })
+    });
 
     let capture_error = std::rc::Rc::new(std::cell::RefCell::new(None));
     if let Some(path) = options.screenshot {
@@ -501,6 +565,10 @@ fn run(options: Options, trace: &startup::Trace) -> Result<(), Box<dyn std::erro
     let ui_watchdog = runtime.spawn(diagnostics::watch_ui());
     trace.record("event_loop", "enter");
     let result = slint::run_event_loop();
+    #[cfg(target_os = "linux")]
+    if let Some(task) = link_task {
+        task.abort();
+    }
     // Window close and shutdown waits are not UI freezes.
     ui_watchdog.abort();
     match &result {
@@ -542,6 +610,8 @@ fn run(options: Options, trace: &startup::Trace) -> Result<(), Box<dyn std::erro
             eprintln!("Heya's background service did not stop within 20 seconds; shutdown was interrupted.");
         }
     });
+    #[cfg(target_os = "linux")]
+    drop(link_service);
     runtime.shutdown_timeout(Duration::from_secs(2));
     trace.record(
         "shutdown_finished",

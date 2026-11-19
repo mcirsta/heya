@@ -103,10 +103,32 @@ pub fn attach(
         let settings = settings.clone();
         let weak = ui.as_weak();
         let operations = operations.clone();
+        #[cfg(target_os = "macos")]
+        let whatsapp_default_pending =
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         ui.on_preference_changed(move |key, value| {
             let Some(ui) = weak.upgrade() else {
                 return;
             };
+            #[cfg(target_os = "macos")]
+            if key == "whatsapp_default" {
+                use std::sync::atomic::Ordering::Relaxed;
+                if !ui.get_demo_mode() && !whatsapp_default_pending.swap(true, Relaxed) {
+                    let pending = whatsapp_default_pending.clone();
+                    let weak = ui.as_weak();
+                    crate::whatsapp_link::macos::set_default(move |set| {
+                        pending.store(false, Relaxed);
+                        let _ = weak.upgrade_in_event_loop(move |ui| {
+                            ui.set_settings_status(if set {
+                                "Heya is the default app for WhatsApp links."
+                            } else {
+                                "macOS could not set Heya as the default. Open the installed Heya app and try again."
+                            }.into());
+                        });
+                    });
+                }
+                return;
+            }
             if key == "encrypt_local_data" {
                 ui.invoke_open_storage_choice(value == 1);
                 return;
@@ -749,6 +771,23 @@ fn refresh(ui: &AppWindow, p: &Preferences) {
             ],
         ),
     ];
+    #[cfg(target_os = "macos")]
+    if !ui.get_demo_mode()
+        && let Some((_, rows)) = sections.iter_mut().find(|(title, _)| *title == "System")
+    {
+        rows.insert(
+            1,
+            SettingRow {
+                action: "Make default".into(),
+                ..row(
+                    "whatsapp_default",
+                    "WhatsApp links",
+                    "Open WhatsApp links from other apps in Heya.",
+                    4,
+                )
+            },
+        );
+    }
     if ui.get_history_recovery_needed()
         && let Some((_, rows)) = sections.iter_mut().find(|(title, _)| *title == "Account")
     {

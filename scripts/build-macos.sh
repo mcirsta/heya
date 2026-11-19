@@ -50,6 +50,11 @@ info={
  'CFBundleIdentifier':'org.heya.Heya','CFBundleName':'Heya','CFBundleDisplayName':'Heya',
  'CFBundleExecutable':'heya','CFBundlePackageType':'APPL',
  'CFBundleIconFile':'Heya.icns',
+ 'CFBundleURLTypes':[{
+  'CFBundleURLName':'org.heya.Heya.whatsapp',
+  'CFBundleTypeRole':'Viewer',
+  'CFBundleURLSchemes':['whatsapp'],
+ }],
  'CFBundleShortVersionString':version.split('-')[0],'CFBundleVersion':build,
  'CFBundleGetInfoString':'Heya '+version,
  'NSHighResolutionCapable':True,'NSPrincipalClass':'NSApplication',

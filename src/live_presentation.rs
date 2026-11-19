@@ -628,36 +628,35 @@ pub(crate) fn bind_messages(ui: &AppWindow, commands: mpsc::Sender<Command>) {
         let tx = commands.clone();
         move |phone| {
             if let Some(ui) = weak.upgrade() {
-                let revision = ui.get_live_revision() + 1;
                 if crate::domain::phone_number(&phone).is_none() {
                     ui.set_new_chat_error(
                         "Enter a valid phone number with its country code.".into(),
                     );
                     return;
                 }
-                if enqueue(
-                    &ui,
-                    &tx,
-                    Command::NewChat {
-                        phone: phone.into(),
-                        previous: ui.get_selected_id(),
-                        draft: ui.get_draft().into(),
-                        draft_version: ui.get_draft_revision(),
-                        revision,
-                    },
-                ) {
-                    ui.set_live_revision(revision);
-                    navigation_requested(revision);
-                    ui.set_show_conversation(true);
-                    if ui.get_message_search_open() {
-                        ui.invoke_close_message_search();
-                    }
-                    ui.set_message_search_all(false);
+                if submit_new_chat(&ui, &tx, phone.into(), String::new()) {
                     ui.set_new_chat_open(false);
-                    ui.set_settings_open(false);
                 } else {
                     ui.set_new_chat_error("Heya is busy. Please try again.".into());
                 }
+            }
+        }
+    });
+    ui.on_open_linked_chat({
+        let weak = ui.as_weak();
+        let tx = commands.clone();
+        move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let phone = ui.get_linked_chat_phone();
+            if phone.is_empty() {
+                return;
+            }
+            if ui.get_connection_state() != 5 || !ui.get_archive_ready() {
+                ui.set_linked_chat_error("Connect to WhatsApp to open this chat.".into());
+            } else if submit_new_chat(&ui, &tx, phone.into(), ui.get_linked_chat_text().into()) {
+                ui.invoke_close_linked_chat();
+            } else {
+                ui.set_linked_chat_error("Heya is busy. Please try again.".into());
             }
         }
     });
@@ -694,6 +693,36 @@ pub(crate) fn bind_messages(ui: &AppWindow, commands: mpsc::Sender<Command>) {
             }
         }
     });
+}
+
+fn submit_new_chat(
+    ui: &AppWindow,
+    tx: &mpsc::Sender<Command>,
+    phone: String,
+    prefill: String,
+) -> bool {
+    let revision = ui.get_live_revision() + 1;
+    if tx
+        .try_send(Command::NewChat {
+            phone,
+            prefill,
+            previous: ui.get_selected_id(),
+            draft: ui.get_draft().into(),
+            draft_version: ui.get_draft_revision(),
+            revision,
+        })
+        .is_err()
+    {
+        return false;
+    }
+    ui.set_live_revision(revision);
+    navigation_requested(revision);
+    ui.invoke_reveal_chat();
+    if ui.get_message_search_open() {
+        ui.invoke_close_message_search();
+    }
+    ui.set_message_search_all(false);
+    true
 }
 
 pub(crate) fn publish_messages(ui: &AppWindow, snapshot: &messaging::Snapshot) {

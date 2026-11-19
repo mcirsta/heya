@@ -140,6 +140,34 @@ async fn contacts_migrate_reopen_and_require_repair_after_unclean_exit() {
 }
 
 #[tokio::test]
+async fn linked_chat_prefill_is_only_used_for_an_empty_draft() {
+    let (_temp, db) = fixture();
+    let chat = db
+        .open_direct_chat(PN.into(), "First\nline".into())
+        .await
+        .unwrap();
+    let view = db
+        .view(chat, 100, String::new(), false, false)
+        .await
+        .unwrap();
+    assert_eq!(view.conversation.unwrap().draft, "First\nline");
+    db.draft(chat, "Original draft".into()).await.unwrap();
+    assert_eq!(
+        db.open_direct_chat(PN.into(), "New text".into())
+            .await
+            .unwrap(),
+        chat
+    );
+    let view = db
+        .view(chat, 100, String::new(), false, false)
+        .await
+        .unwrap();
+    let conversation = view.conversation.unwrap();
+    assert_eq!(conversation.draft, "Original draft");
+    assert!(conversation.messages.is_empty());
+}
+
+#[tokio::test]
 async fn multiline_sidebar_previews_preserve_full_archived_messages_and_drafts() {
     let (_temp, db) = fixture();
     let chat = db.create_chat(PN.into()).await.unwrap();

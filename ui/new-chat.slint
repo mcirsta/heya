@@ -4,6 +4,9 @@ import { SoftButton } from "settings.slint";
 export component NewChatDialog inherits Rectangle {
     in property <bool> available;
     in property <string> error;
+    in property <string> linked-phone;
+    in property <string> linked-preview;
+    property <string> entered-phone;
     callback close();
     callback start(string);
     background: #00000080;
@@ -34,7 +37,7 @@ export component NewChatDialog inherits Rectangle {
                 spacing: 16px;
                 HorizontalLayout {
                     Text {
-                        text: @tr("New chat");
+                        text: root.linked-phone == "" ? @tr("New chat") : @tr("Open WhatsApp chat");
                         color: Theme.text;
                         font-size: 20px;
                         font-weight: 700;
@@ -50,12 +53,21 @@ export component NewChatDialog inherits Rectangle {
                 }
 
                 Text {
-                    text: root.available ? @tr("Enter a phone number with its country code.") : @tr("Connect to WhatsApp to start a new chat.");
+                    text: root.linked-phone != "" ? root.linked-phone
+                        : root.available ? @tr("Enter a phone number with its country code.") : @tr("Connect to WhatsApp to start a new chat.");
                     color: Theme.secondary;
                     wrap: word-wrap;
                 }
 
-                Rectangle {
+                if root.linked-preview != "": Text {
+                    text: root.linked-preview;
+                    color: Theme.text;
+                    wrap: word-wrap;
+                    overflow: elide;
+                    height: min(self.preferred-height, 72px);
+                }
+
+                if root.linked-phone == "": Rectangle {
                     height: 36px;
                     background: Theme.surface;
                     border-radius: 8px;
@@ -65,7 +77,7 @@ export component NewChatDialog inherits Rectangle {
                         x: 12px;
                         height: parent.height;
                         text: @tr("+ Country code and number");
-                        visible: phone.text == "";
+                        visible: root.entered-phone == "";
                         color: Theme.dim;
                         vertical-alignment: center;
                     }
@@ -75,6 +87,7 @@ export component NewChatDialog inherits Rectangle {
                         width: parent.width - 24px;
                         height: parent.height;
                         enabled: root.available;
+                        text <=> root.entered-phone;
                         color: Theme.text;
                         single-line: true;
                         vertical-alignment: center;
@@ -84,9 +97,9 @@ export component NewChatDialog inherits Rectangle {
                 }
 
                 SoftButton {
-                    text: @tr("New chat");
-                    enabled: root.available && phone.text != "";
-                    activated => { root.start(phone.text); }
+                    text: root.linked-phone == "" ? @tr("New chat") : @tr("Open chat");
+                    enabled: root.available && (root.linked-phone != "" || root.entered-phone != "");
+                    activated => { root.start(root.linked-phone != "" ? root.linked-phone : root.entered-phone); }
                 }
 
                 if root.error != "": Text {

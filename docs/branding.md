@@ -31,10 +31,11 @@ directory is `~/.local/share`. PNG fallbacks at 16, 24, 32, 48, 64, 128, 256 and
 hicolor directories. Rerun the installer after rebuilding to update the copy.
 Launching from the menu uses normal saved-session startup.
 
-The template desktop entry in `packaging/linux` uses `Exec=heya` for future
-packaging. The user installer writes an absolute executable path so it does not
-depend on the desktop session's PATH. This is development desktop integration,
-not a complete distributable package or a completed M4 milestone.
+The desktop entry advertises `whatsapp:` links to the desktop. The installer
+preserves the current default app. To choose Heya as the default, run
+`python3 scripts/install-desktop.py --set-whatsapp-default`. The installer
+writes an absolute launcher path so it works regardless of the desktop session's
+PATH.
 
 ## macOS bundle icon
 

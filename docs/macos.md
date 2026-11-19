@@ -26,6 +26,12 @@ microphone and camera permission descriptions. The unbundled Cargo executable
 cannot request those permissions. Video calls use AVFoundation capture and
 VideoToolbox H.264 encoding/decoding; they do not add a GStreamer dependency.
 
+Install the bundle in Applications to make it available to macOS as a handler
+for `whatsapp:` links. macOS can open Heya or deliver the link to its running
+window. Choose **Settings → System → WhatsApp links → Make default** in Heya
+to change the macOS default for this scheme. To test the handoff directly, run
+`open -a Heya 'whatsapp://send?phone=15550101010'`.
+
 ## Apple Silicon testing release
 
 [Download v0.1.0-alpha.3](https://github.com/mcirsta/heya/releases/tag/v0.1.0-alpha.3)
@@ -89,7 +95,7 @@ keyring entries are left untouched and are not migrated or accessed.
 | Archive encryption key | Apple Keychain through keyring's `apple-native` backend |
 | Open/save/folder dialogs | Asynchronous NSOpenPanel/NSSavePanel sheets on the main thread |
 | PDF thumbnail generation | CoreGraphics/Quartz and ImageIO in a disposable helper process |
-| URL opening | Native system browser dispatch through webbrowser |
+| URLs | Native system browser dispatch through webbrowser and AppKit handling of incoming `whatsapp:` links |
 | App data and Downloads paths | Standard macOS locations through directories |
 | Audio playback | Core Audio output queues, including Ogg/Opus from memory |
 | Voice recording | Core Audio input queues and AudioToolbox Opus encoding |
