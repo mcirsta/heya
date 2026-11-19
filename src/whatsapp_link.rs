@@ -74,7 +74,8 @@ fn digits(value: &str) -> Option<String> {
     crate::domain::phone_number(value)
 }
 
-pub fn receive(ui: &AppWindow, raw: Option<String>, focus: bool) {
+/// Returns whether a direct chat preview was loaded.
+pub fn receive(ui: &AppWindow, raw: Option<String>, focus: bool) -> bool {
     if focus {
         ui.window().with_winit_window(|window| {
             window.set_minimized(false);
@@ -92,12 +93,14 @@ pub fn receive(ui: &AppWindow, raw: Option<String>, focus: bool) {
             ui.set_linked_chat_text(link.text.into());
             ui.set_linked_chat_error("".into());
             ui.set_linked_chat_phone(format!("+{}", link.phone).into());
+            return true;
         } else {
             ui.invoke_show_error(
                 "This WhatsApp link does not contain a supported direct chat.".into(),
             );
         }
     }
+    false
 }
 
 #[cfg(test)]

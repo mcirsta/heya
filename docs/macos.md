@@ -29,8 +29,10 @@ VideoToolbox H.264 encoding/decoding; they do not add a GStreamer dependency.
 Install the bundle in Applications to make it available to macOS as a handler
 for `whatsapp:` links. macOS can open Heya or deliver the link to its running
 window. Choose **Settings → System → WhatsApp links → Make default** in Heya
-to change the macOS default for this scheme. To test the handoff directly, run
-`open -a Heya 'whatsapp://send?phone=15550101010'`.
+to change the macOS default for this scheme. CI uses Launch Services to deliver
+two synthetic links to the packaged app, first with it closed and then in that
+same process. The check targets the bundle by path and uses demo mode. A
+browser's permission prompt is outside this check.
 
 ## Apple Silicon testing release
 

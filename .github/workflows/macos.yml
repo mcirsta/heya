@@ -77,7 +77,7 @@ jobs:
         env:
           HEYA_BUILD_NUMBER: ${{ github.run_number }}
         run: scripts/build-macos.sh --target aarch64-apple-darwin --package
-      - name: Check packaged helpers without an account or microphone
+      - name: Check the packaged app with synthetic data
         env:
           VERSION: ${{ steps.metadata.outputs.version }}
         run: |
@@ -92,6 +92,8 @@ jobs:
           python3 scripts/check-macos-bundle.py "$heya_mount/Heya.app"
           python3 scripts/check-gui-startup.py "$heya_mount/Heya.app/Contents/MacOS/heya" \
             --log-dir target/gui-startup-check
+          python3 scripts/check-macos-whatsapp-links.py "$heya_mount/Heya.app" \
+            --log-dir target/gui-startup-check/whatsapp-links
       - name: Keep synthetic GUI startup diagnostics
         if: always() && !cancelled()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6

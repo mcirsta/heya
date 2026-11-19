@@ -417,11 +417,23 @@ fn run(options: Options, trace: &startup::Trace) -> Result<(), Box<dyn std::erro
         AppWindow::new,
     )?;
     #[cfg(target_os = "macos")]
-    if !options.demo {
+    {
         let weak = ui.as_weak();
+        let trace = trace.clone();
         whatsapp_link::macos::install(move |link| {
-            let _ =
-                weak.upgrade_in_event_loop(move |ui| whatsapp_link::receive(&ui, Some(link), true));
+            let trace = trace.clone();
+            let _ = weak.upgrade_in_event_loop(move |ui| {
+                if whatsapp_link::receive(&ui, Some(link), true) {
+                    // Only the demo distinguishes the two synthetic CI cases.
+                    // Never record a phone number, draft or URL.
+                    let result = if ui.get_demo_mode() && !ui.get_linked_chat_text().is_empty() {
+                        "preview_with_draft"
+                    } else {
+                        "preview"
+                    };
+                    trace.record("whatsapp_link", result);
+                }
+            });
         });
     }
     // Set this after backend initialization, before creating the native window.
